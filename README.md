@@ -10,6 +10,7 @@
 - [UI 风格指南](docs/ui-style-guide.md)
 - [Supabase 接入](docs/supabase.md)
 - [运营后台](docs/admin-console.md)
+- [贡献规范](docs/contributing.md)
 - [后续路线图](docs/roadmap.md)
 - [TestFlight 检查清单](docs/testflight-checklist.md)
 

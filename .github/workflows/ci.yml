@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  repository-hygiene:
+    name: Repository hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate PR branch name
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          branch="${GITHUB_HEAD_REF}"
+          pattern='^(feature|fix|docs|chore|refactor|test|release|codex)/[a-z0-9][a-z0-9._-]*$'
+          if [[ ! "${branch}" =~ ${pattern} ]]; then
+            echo "Invalid branch name: ${branch}"
+            echo "Use feature/, fix/, docs/, chore/, refactor/, test/, release/, or codex/ followed by a lowercase slug."
+            exit 1
+          fi
+
+      - name: Check for non-public tracked files
+        shell: bash
+        run: |
+          banned='(^stargazer/|^marketing/|^admin-console/|^微信公众号文案/|^\.codex/|^supabase/\.temp/|^testPython.*\.py$|^test.*\.swift$|^test_.*\.swift$|(^|/)xcuserdata/|\.xcuserstate$|\.DS_Store$|\.mobileprovision$|GoogleService-Info\.plist$|ServiceAccount.*\.json$|\.p8$|\.p12$|\.pem$|\.key$)'
+          if git ls-files | grep -E "${banned}"; then
+            echo "Tracked non-public files were found. Remove them before merging."
+            exit 1
+          fi
+
+      - name: Check for obvious secret patterns
+        shell: bash
+        run: |
+          secret_patterns='(AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[0-9A-Za-z_]{20,}|github_pat_[0-9A-Za-z_]{20,}|sk-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{20,}|BEGIN (RSA |DSA |EC |OPENSSH |PGP )?PRIVATE KEY|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}'
+          if git grep -I -n -E "${secret_patterns}" -- .; then
+            echo "Possible secret found. Remove it and rotate the credential if it was real."
+            exit 1
+          fi
+
+  site:
+    name: Website build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build website
+        run: npm run build
+
+  xcode-project:
+    name: Xcode project metadata
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: List Xcode project
+        run: xcodebuild -list -project leafy.xcodeproj

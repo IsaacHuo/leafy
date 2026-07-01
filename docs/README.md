@@ -10,9 +10,10 @@
 4. [UI 风格指南](ui-style-guide.md)：落 UI 前对齐主题、间距、控件和状态展示。
 5. [Supabase 接入](supabase.md)：配置社区、通知、评教和 Edge Functions。
 6. [运营后台](admin-console.md)：配置 Web 后台和社区运营能力。
-7. [发布说明](release-notes.md)：准备 App Store 和 TestFlight 文案。
-8. [后续路线图](roadmap.md)：查看接下来优先处理的产品与工程事项。
-9. [TestFlight 检查清单](testflight-checklist.md)：发 TestFlight 前逐项检查。
+7. [贡献规范](contributing.md)：提交 Issue、分支、PR 和 CI 检查的轻量规则。
+8. [发布说明](release-notes.md)：准备 App Store 和 TestFlight 文案。
+9. [后续路线图](roadmap.md)：查看接下来优先处理的产品与工程事项。
+10. [TestFlight 检查清单](testflight-checklist.md)：发 TestFlight 前逐项检查。
 
 ## 文档目录
 
@@ -24,6 +25,7 @@
 | [ui-style-guide.md](ui-style-guide.md) | 主题、颜色、字体、圆角、间距、卡片、Tab、空/错/加载态 |
 | [supabase.md](supabase.md) | Supabase 配置、migration、Edge Function、客户端能力和约束 |
 | [admin-console.md](admin-console.md) | 官网 `/admin` 运营后台的配置、模块和安全边界 |
+| [contributing.md](contributing.md) | Issue、分支、PR 和 GitHub Actions 基础规范 |
 | [release-notes.md](release-notes.md) | App Store 和 TestFlight 发布说明 |
 | [roadmap.md](roadmap.md) | 当前阶段之后的实施重点 |
 | [testflight-checklist.md](testflight-checklist.md) | TestFlight 上传前检查 |
