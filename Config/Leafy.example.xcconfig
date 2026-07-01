@@ -1,0 +1,11 @@
+// Local Supabase settings template for TestFlight builds.
+// Copy this file to Leafy.local.xcconfig. Do not commit the local file.
+
+SUPABASE_URL = https:/$()/your-project-ref.supabase.co
+SUPABASE_PUBLISHABLE_KEY = sb_publishable_xxx
+SUPABASE_COMMUNITY_BOOTSTRAP_FUNCTION = community-bootstrap-user
+SUPABASE_COMMUNITY_FEED_FUNCTION = community-feed
+SUPABASE_WEATHER_FUNCTION = campus-weather
+SUPABASE_CAMPUS_AI_FUNCTION = campus-ai-assistant
+SUPABASE_COMMUNITY_EDGE_REGION = ap-northeast-1
+SUPABASE_COMMUNITY_API_BASE_URL =

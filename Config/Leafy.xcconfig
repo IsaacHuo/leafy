@@ -1,0 +1,13 @@
+// Shared Leafy build settings.
+// Copy Leafy.example.xcconfig to Leafy.local.xcconfig and fill real values locally.
+
+SUPABASE_URL =
+SUPABASE_PUBLISHABLE_KEY =
+SUPABASE_COMMUNITY_BOOTSTRAP_FUNCTION = community-bootstrap-user
+SUPABASE_COMMUNITY_FEED_FUNCTION = community-feed
+SUPABASE_WEATHER_FUNCTION = campus-weather
+SUPABASE_CAMPUS_AI_FUNCTION = campus-ai-assistant
+SUPABASE_COMMUNITY_EDGE_REGION = ap-northeast-1
+SUPABASE_COMMUNITY_API_BASE_URL =
+
+#include? "Leafy.local.xcconfig"
