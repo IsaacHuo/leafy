@@ -7,8 +7,14 @@ import {
   deepSeekAPIKeys,
   deepSeekPayload,
   drainDeepSeekSSEBuffer,
+  extractOfficialDocumentSourceFromHTML,
+  fallbackActionDrafts,
   handler,
+  isSafePublicHTTPURL,
   normalizeAgentToolCalls,
+  officialDocumentDeliverable,
+  officialDocumentFreshness,
+  officialDocumentTrustScore,
   parseActionPlannerActions,
   parseActionPlannerProviderResponse,
   parseAgentToolCallsFromProviderResponse,
@@ -17,6 +23,7 @@ import {
   processDeepSeekSSEBlock,
   redactProviderError,
   shouldRunManagedAgent,
+  shouldSearchOfficialDocument,
   systemPrompt,
   webSearch,
 } from "./index.ts";
@@ -138,6 +145,13 @@ Deno.test("campus-ai-assistant enables managed agent only for search or multi-st
     "disabled web search should force fast path",
   );
   assert(
+    shouldRunManagedAgent(
+      { web_search_enabled: false },
+      "帮我安排今天的日常计划",
+    ),
+    "disabled web search should still allow non-web planning agent",
+  );
+  assert(
     !shouldRunManagedAgent({ agent_mode: "off" }, "最近有什么通知？"),
     "agent_mode off should force fast path",
   );
@@ -158,9 +172,10 @@ Deno.test("campus-ai-assistant builds DeepSeek tool planner payload", () => {
   assert(payload.model === "deepseek-v4-flash", "expected DeepSeek V4 Flash");
   assert(payload.stream === false, "expected non-stream planner");
   assert(payload.tool_choice === "auto", "expected automatic tool choice");
-  assert(tools.length === 3, "expected three agent tools");
+  assert(tools.length === 4, "expected four agent tools");
   assert(
     JSON.stringify(tools).includes("web_search") &&
+      JSON.stringify(tools).includes("official_document_search") &&
       JSON.stringify(tools).includes("delegate_subtask") &&
       JSON.stringify(tools).includes("action_plan"),
     "expected tool definitions",
@@ -204,11 +219,15 @@ Deno.test("campus-ai-assistant parses and limits agent tool calls", () => {
     message: "帮我查一下北林通知",
   });
 
-  assert(normalized.length === 2, "expected invalid delegate to be filtered");
-  assert(normalized[0].name === "web_search", "expected web search first");
-  assert(normalized[0].arguments.count === 8, "expected count to clamp");
+  assert(normalized.length === 3, "expected invalid delegate to be filtered");
   assert(
-    normalized[1].arguments.role === "campusAnalyst",
+    normalized[0].name === "official_document_search",
+    "expected official document search first",
+  );
+  assert(normalized[1].name === "web_search", "expected web search second");
+  assert(normalized[1].arguments.count === 8, "expected count to clamp");
+  assert(
+    normalized[2].arguments.role === "campusAnalyst",
     "expected delegate role",
   );
 
@@ -217,7 +236,9 @@ Deno.test("campus-ai-assistant parses and limits agent tool calls", () => {
     message: "帮我查一下北林通知",
   });
   assert(
-    disabled.every((call) => call.name !== "web_search"),
+    disabled.every((call) =>
+      call.name !== "web_search" && call.name !== "official_document_search"
+    ),
     "disabled web search should filter search calls",
   );
 });
@@ -253,6 +274,128 @@ Deno.test("campus-ai-assistant parses Bocha search citations", () => {
   assert(citations[0].title === "北京林业大学通知", "expected title");
   assert(citations[0].siteName === "北京林业大学", "expected site name");
   assert(citations[0].publishedAt?.includes("2026"), "expected publish date");
+});
+
+Deno.test("campus-ai-assistant detects official document search intent", () => {
+  assert(
+    shouldSearchOfficialDocument("查北京林业大学论文格式官方网页和附件"),
+    "expected thesis format attachment query to trigger official search",
+  );
+  assert(
+    shouldSearchOfficialDocument("帮我找学院推免政策办法"),
+    "expected postgraduate recommendation policy query to trigger official search",
+  );
+  assert(
+    !shouldSearchOfficialDocument("明天上什么课"),
+    "ordinary schedule query should not trigger official search",
+  );
+  assert(
+    officialDocumentFreshness("今天最新的教务处通知") === "oneMonth",
+    "recent official requests should use freshness",
+  );
+  assert(
+    officialDocumentFreshness("查教务处论文格式") === "noLimit",
+    "default official search should be noLimit",
+  );
+});
+
+Deno.test("campus-ai-assistant filters unsafe official document URLs", () => {
+  assert(
+    isSafePublicHTTPURL("https://jwc.bjfu.edu.cn/info/1012/1234.htm"),
+    "expected public official URL",
+  );
+  assert(!isSafePublicHTTPURL("ftp://jwc.bjfu.edu.cn/a.pdf"), "reject ftp");
+  assert(!isSafePublicHTTPURL("http://127.0.0.1/a"), "reject localhost ipv4");
+  assert(!isSafePublicHTTPURL("http://10.1.2.3/a"), "reject private ipv4");
+  assert(!isSafePublicHTTPURL("http://[::1]/a"), "reject localhost ipv6");
+});
+
+Deno.test("campus-ai-assistant scores BJFU official domains higher", () => {
+  const officialScore = officialDocumentTrustScore({
+    id: "web-1",
+    title: "北京林业大学教务处论文格式",
+    url: "https://jwc.bjfu.edu.cn/info/1012/1234.htm",
+    siteName: "北京林业大学教务处",
+  }, { campusID: "bjfu", campusName: "北京林业大学" });
+  const genericScore = officialDocumentTrustScore({
+    id: "web-2",
+    title: "论文格式经验",
+    url: "https://example.com/bjfu-thesis",
+    siteName: "Example",
+  }, { campusID: "bjfu", campusName: "北京林业大学" });
+
+  assert(officialScore > genericScore, "expected BJFU official host boost");
+  assert(officialScore >= 0.8, "expected high official trust score");
+});
+
+Deno.test("campus-ai-assistant extracts official HTML metadata and attachments", () => {
+  const source = extractOfficialDocumentSourceFromHTML(
+    `
+    <!doctype html>
+    <html>
+      <head>
+        <title>本科毕业论文格式要求</title>
+        <link rel="canonical" href="/info/1012/5678.htm">
+        <meta name="description" content="北京林业大学本科毕业论文格式、模板与附件下载。">
+      </head>
+      <body>
+        <main>
+          <p>请下载论文格式模板和封面附件。</p>
+          <a href="/files/thesis-template.docx">论文模板</a>
+          <a href="https://jwc.bjfu.edu.cn/files/format.pdf">格式说明 PDF</a>
+          <a href="/files/unsafe.exe">不应出现</a>
+        </main>
+      </body>
+    </html>
+    `,
+    "https://jwc.bjfu.edu.cn/info/1012/1234.htm",
+    {
+      id: "web-1",
+      title: "本科毕业论文格式要求",
+      url: "https://jwc.bjfu.edu.cn/info/1012/1234.htm",
+      siteName: "北京林业大学教务处",
+    },
+    0.96,
+  );
+
+  assert(source !== null, "expected source");
+  assert(source.title === "本科毕业论文格式要求", "expected title");
+  assert(
+    source.url === "https://jwc.bjfu.edu.cn/info/1012/5678.htm",
+    "expected canonical URL",
+  );
+  assert(source.attachments.length === 2, "expected allowed attachments only");
+  assert(source.attachments[0].fileType === "DOCX", "expected docx type");
+  assert(source.attachments[1].fileType === "PDF", "expected pdf type");
+});
+
+Deno.test("campus-ai-assistant builds official document deliverable", () => {
+  const deliverable = officialDocumentDeliverable("北京林业大学 论文格式", [{
+    id: "official-1",
+    title: "本科毕业论文格式要求",
+    url: "https://jwc.bjfu.edu.cn/info/1012/5678.htm",
+    siteName: "北京林业大学教务处",
+    summary: "页面含论文格式模板。",
+    trustScore: 0.96,
+    attachments: [{
+      title: "论文模板",
+      url: "https://jwc.bjfu.edu.cn/files/thesis-template.docx",
+      fileType: "DOCX",
+    }],
+  }]);
+  const donePayload = JSON.stringify({
+    type: "done",
+    deliverables: [deliverable],
+  });
+
+  assert(deliverable.formats.includes("html"), "expected html format");
+  assert(deliverable.formats.includes("markdown"), "expected markdown format");
+  assert(deliverable.formats.includes("txt"), "expected txt format");
+  assert(
+    donePayload.includes("official-1") &&
+      donePayload.includes("thesis-template.docx"),
+    "expected done payload to serialize deliverables",
+  );
 });
 
 Deno.test("campus-ai-assistant handles missing Bocha API key before network", async () => {
@@ -337,6 +480,21 @@ Deno.test("campus-ai-assistant parses and validates action planner output", () =
   );
 });
 
+Deno.test("campus-ai-assistant falls back to schedule action cards", () => {
+  const actions = fallbackActionDrafts(
+    { web_search_enabled: false },
+    "我要新建一个日程",
+    "可以去日程页面添加。",
+  );
+
+  assert(actions.length === 1, "expected one fallback action");
+  assert(actions[0].kind === "openAcademicRoute", "expected route action");
+  assert(
+    actions[0].payload?.route === "examSchedule",
+    "expected schedule route",
+  );
+});
+
 Deno.test("campus-ai-assistant parses planner usage from provider response", () => {
   const parsed = parseActionPlannerProviderResponse(JSON.stringify({
     choices: [
@@ -407,7 +565,10 @@ Deno.test("campus-ai-assistant prompt keeps file bodies out of scope and allows 
   const prompt = systemPrompt();
   const plannerPrompt = actionPlannerSystemPrompt();
 
-  assert(prompt.includes("本机缓存"), "expected local cached scope");
+  assert(
+    prompt.includes("不要反复解释内部数据来源"),
+    "expected user-facing source wording",
+  );
   assert(
     prompt.includes("中文 Markdown"),
     "expected explicit Markdown instruction",
@@ -424,6 +585,10 @@ Deno.test("campus-ai-assistant prompt keeps file bodies out of scope and allows 
     plannerPrompt.includes("需要用户确认后执行") &&
       plannerPrompt.includes("不能输出 Markdown"),
     "expected action planner safety prompt",
+  );
+  assert(
+    plannerPrompt.includes("一般日程用 examSchedule"),
+    "expected schedule fallback route instruction",
   );
 });
 

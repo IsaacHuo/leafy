@@ -17,18 +17,18 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertTrue(initial.contextSettings.includesTimetable)
         XCTAssertTrue(initial.contextSettings.includesMedicalLedger)
         XCTAssertTrue(initial.contextSettings.includesCommunityCache)
-        XCTAssertTrue(initial.webSearchEnabled)
+        XCTAssertFalse(initial.webSearchEnabled)
 
         var changed = initial
         changed.systemPrompt = "请优先用列表回答"
         changed.contextSettings.includesMedicalLedger = false
-        changed.webSearchEnabled = false
+        changed.webSearchEnabled = true
         CampusAISettingsStore.save(changed, userDefaults: defaults)
 
         let reloaded = CampusAISettingsStore.load(userDefaults: defaults)
         XCTAssertEqual(reloaded.systemPrompt, "请优先用列表回答")
         XCTAssertFalse(reloaded.contextSettings.includesMedicalLedger)
-        XCTAssertFalse(reloaded.webSearchEnabled)
+        XCTAssertTrue(reloaded.webSearchEnabled)
 
         let reset = CampusAISettingsStore.reset(userDefaults: defaults)
         XCTAssertEqual(reset, .defaultValue)
@@ -73,7 +73,7 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertTrue(CampusAIServiceMode.allCases.contains(settings.serviceMode))
         XCTAssertEqual(settings.systemPrompt, "旧版 Prompt")
         XCTAssertFalse(settings.contextSettings.includesMedicalLedger)
-        XCTAssertTrue(settings.webSearchEnabled)
+        XCTAssertFalse(settings.webSearchEnabled)
         XCTAssertNil(defaults.data(forKey: "campusAI.userSettings.v1"))
         XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v2"))
     }
@@ -543,6 +543,81 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertEqual(payload.model, "custom-model-id")
     }
 
+    func testCampusAIRequestDefaultsWebSearchOff() {
+        let request = CampusAIRequest(
+            message: "查一下论文格式",
+            context: minimalAIContext(),
+            recentMessages: []
+        )
+
+        XCTAssertFalse(request.webSearchEnabled)
+        XCTAssertEqual(request.agentMode, .auto)
+    }
+
+    func testCampusAIServiceKeepsAgentAutoWhenWebSearchIsDisabled() async throws {
+        let service = CampusAIService { request, _ in
+            AsyncThrowingStream { continuation in
+                XCTAssertFalse(request.webSearchEnabled)
+                XCTAssertEqual(request.agentMode, .auto)
+                continuation.yield(.done(CampusAIResponse(answer: "已安排。")))
+                continuation.finish()
+            }
+        }
+        var settings = CampusAIUserSettings.defaultValue
+        settings.webSearchEnabled = false
+
+        _ = try await service.send(
+            message: "帮我安排今天的日常",
+            context: minimalAIContext(),
+            recentMessages: [],
+            settings: settings
+        )
+    }
+
+    func testDirectAgentRunsForOwnKeyPlanningIntentsWithoutWebSearch() {
+        let planningRequest = CampusAIRequest(
+            message: "帮我安排今天的日常计划",
+            context: minimalAIContext(),
+            recentMessages: [],
+            webSearchEnabled: false
+        )
+        let searchRequest = CampusAIRequest(
+            message: "查一下北京林业大学论文格式官方网页",
+            context: minimalAIContext(),
+            recentMessages: [],
+            webSearchEnabled: false
+        )
+        let disabledRequest = CampusAIRequest(
+            message: "帮我安排今天的日常计划",
+            context: minimalAIContext(),
+            recentMessages: [],
+            agentMode: .off,
+            webSearchEnabled: false
+        )
+
+        XCTAssertTrue(CampusAIService.shouldRunDirectAgent(planningRequest))
+        XCTAssertFalse(CampusAIService.shouldRunDirectAgent(searchRequest))
+        XCTAssertFalse(CampusAIService.shouldRunDirectAgent(disabledRequest))
+    }
+
+    func testActionPlannerFallbackCreatesScheduleRouteCard() {
+        let request = CampusAIRequest(
+            message: "我要新建一个日程",
+            context: minimalAIContext(),
+            recentMessages: [],
+            webSearchEnabled: false
+        )
+
+        let actions = CampusAIService.fallbackActionDrafts(
+            for: request,
+            answer: "可以去日程页面添加。"
+        )
+
+        XCTAssertEqual(actions.count, 1)
+        XCTAssertEqual(actions.first?.kind, .openAcademicRoute)
+        XCTAssertEqual(actions.first?.payload.route, "examSchedule")
+    }
+
     func testAPIKeyResolverUsesSelectedProviderKey() throws {
         let resolver = CampusAIAPIKeyResolver(
             userAPIKey: { providerID in providerID == .deepSeek ? "user-key" : nil }
@@ -565,11 +640,12 @@ final class CampusAIAssistantTests: XCTestCase {
 
         XCTAssertTrue(prompt.contains("校园学习与生活助手"))
         XCTAssertTrue(prompt.contains("一般建议"))
-        XCTAssertTrue(prompt.contains("本机缓存"))
+        XCTAssertTrue(prompt.contains("不要反复解释内部数据来源"))
         XCTAssertTrue(prompt.contains("PDF"))
         XCTAssertTrue(prompt.contains("本地文件路径"))
         XCTAssertTrue(prompt.contains("不提供诊断"))
         XCTAssertTrue(prompt.contains("中文 Markdown"))
+        XCTAssertTrue(CampusAIService.actionPlannerSystemPrompt().contains("一般日程用 examSchedule"))
         XCTAssertTrue(prompt.contains("请顺便给生活建议"))
     }
 
@@ -658,7 +734,14 @@ final class CampusAIAssistantTests: XCTestCase {
 
         """
 
-        let events = try parser.append(Data(raw.utf8))
+        var events = try parser.append(Data(raw.utf8))
+        events.append(contentsOf: try parser.finish())
+        events.removeAll {
+            if case .done = $0 {
+                return true
+            }
+            return false
+        }
 
         XCTAssertEqual(events.count, 4)
         XCTAssertEqual(events[0], .agentStatus("正在联网搜索"))
@@ -767,6 +850,21 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertEqual(message.reasoningText, "")
         XCTAssertEqual(message.agentMetadataJSON, "")
         XCTAssertEqual(message.agentMetadata.citations, [])
+        XCTAssertEqual(message.agentMetadata.deliverables, [])
+    }
+
+    func testCampusAIMetadataDecodesLegacyJSONWithoutDeliverables() {
+        let message = CampusAIMessage(
+            conversationID: UUID().uuidString,
+            roleRawValue: CampusAIMessageRole.assistant.rawValue,
+            text: "回答"
+        )
+        message.agentMetadataJSON = """
+        {"citations":[{"id":"web-1","title":"通知","url":"https://www.bjfu.edu.cn/notice"}],"agentTrace":[]}
+        """
+
+        XCTAssertEqual(message.agentMetadata.citations.first?.url, "https://www.bjfu.edu.cn/notice")
+        XCTAssertEqual(message.agentMetadata.deliverables, [])
     }
 
     func testMarkdownRendererUsesLocalResourcesAndSecurityPolicy() {
@@ -976,11 +1074,12 @@ final class CampusAIAssistantTests: XCTestCase {
     func testManagedDonePayloadDecodesActions() throws {
         var parser = CampusAISSEParser()
         let raw = """
-        data: {"type":"done","answer":"已整理。","actions":[{"kind":"open_academic_route","title":"","payload":{"route":"trainingProgram"}},{"kind":"create_countdown","title":"创建倒计时","payload":{"countdown_title":"期末考试","target_date":"2026-07-01"}}],"citations":[{"id":"web-1","title":"通知","url":"https://www.bjfu.edu.cn/notice"}],"agentTrace":[{"id":"trace-1","kind":"tool","title":"联网搜索","status":"completed"}]}
+        data: {"type":"done","answer":"已整理。","actions":[{"kind":"open_academic_route","title":"","payload":{"route":"trainingProgram"}},{"kind":"create_countdown","title":"创建倒计时","payload":{"countdown_title":"期末考试","target_date":"2026-07-01"}}],"citations":[{"id":"web-1","title":"通知","url":"https://www.bjfu.edu.cn/notice"}],"agentTrace":[{"id":"trace-1","kind":"tool","title":"联网搜索","status":"completed"}],"deliverables":[{"id":"pack-1","title":"论文格式资料包","query":"北京林业大学 论文格式","summary":"已找到教务处官方页面。","generated_at":"2026-07-02T00:00:00Z","sources":[{"id":"source-1","title":"本科论文格式","url":"https://jwc.bjfu.edu.cn/info/1012/1234.htm","site_name":"北京林业大学教务处","summary":"页面含论文格式附件。","trust_score":0.95,"attachments":[{"title":"论文模板.docx","url":"https://jwc.bjfu.edu.cn/files/template.docx","file_type":"docx"}]}],"formats":["html","markdown","txt"]}]}
 
         """
 
-        let events = try parser.append(Data(raw.utf8))
+        var events = try parser.append(Data(raw.utf8))
+        events.append(contentsOf: try parser.finish())
         let response = try XCTUnwrap(events.compactMap { event -> CampusAIResponse? in
             if case .done(let response) = event {
                 return response
@@ -994,6 +1093,10 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertEqual(response.actions.last?.payload.countdownTitle, "期末考试")
         XCTAssertEqual(response.citations.first?.url, "https://www.bjfu.edu.cn/notice")
         XCTAssertEqual(response.agentTrace.first?.title, "联网搜索")
+        XCTAssertEqual(response.deliverables.first?.title, "论文格式资料包")
+        XCTAssertEqual(response.deliverables.first?.sources.first?.siteName, "北京林业大学教务处")
+        XCTAssertEqual(response.deliverables.first?.sources.first?.attachments.first?.fileType, "docx")
+        XCTAssertEqual(response.deliverables.first?.formats, [.html, .markdown, .txt])
     }
 
     func testCampusAIServiceSendPreservesActions() async throws {
@@ -1017,6 +1120,20 @@ final class CampusAIAssistantTests: XCTestCase {
             role: nil,
             timestamp: nil
         )
+        let deliverable = CampusAIDeliverable(
+            id: "pack-1",
+            title: "论文格式资料包",
+            query: "论文格式",
+            summary: "已整理官方来源。",
+            generatedAt: "2026-07-02T00:00:00Z",
+            sources: [
+                CampusAIDeliverableSource(
+                    id: "source-1",
+                    title: "教务处页面",
+                    url: "https://jwc.bjfu.edu.cn/info/1012/1234.htm"
+                )
+            ]
+        )
         let service = CampusAIService { _, _ in
             AsyncThrowingStream { continuation in
                 continuation.yield(.delta("已整理。"))
@@ -1024,7 +1141,8 @@ final class CampusAIAssistantTests: XCTestCase {
                     answer: "已整理。",
                     actions: [action],
                     citations: [citation],
-                    agentTrace: [trace]
+                    agentTrace: [trace],
+                    deliverables: [deliverable]
                 )))
                 continuation.finish()
             }
@@ -1040,6 +1158,90 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertEqual(response.actions, [action])
         XCTAssertEqual(response.citations, [citation])
         XCTAssertEqual(response.agentTrace, [trace])
+        XCTAssertEqual(response.deliverables, [deliverable])
+    }
+
+    func testDeliverableFileBuilderEscapesHTMLAndIncludesLinks() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CampusAIDeliverableTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let deliverable = CampusAIDeliverable(
+            id: "pack-1",
+            title: "论文<格式>资料包",
+            query: "北京林业大学 论文格式",
+            summary: "已整理 <官方> 来源。",
+            generatedAt: "2026-07-02T00:00:00Z",
+            sources: [
+                CampusAIDeliverableSource(
+                    id: "source-1",
+                    title: "教务处论文格式",
+                    url: "https://jwc.bjfu.edu.cn/info/1012/1234.htm",
+                    siteName: "北京林业大学教务处",
+                    summary: "页面含论文模板。",
+                    trustScore: 0.95,
+                    attachments: [
+                        CampusAIDeliverableAttachment(
+                            title: "论文模板.docx",
+                            url: "https://jwc.bjfu.edu.cn/files/template.docx",
+                            fileType: "docx"
+                        )
+                    ]
+                )
+            ]
+        )
+
+        let htmlURL = try CampusAIDeliverableFileBuilder.writeFile(
+            for: deliverable,
+            messageID: UUID(),
+            format: .html,
+            rootDirectory: root
+        )
+        let html = try String(contentsOf: htmlURL, encoding: .utf8)
+
+        XCTAssertTrue(html.contains("论文&lt;格式&gt;资料包"))
+        XCTAssertTrue(html.contains("已整理 &lt;官方&gt; 来源。"))
+        XCTAssertTrue(html.contains("https://jwc.bjfu.edu.cn/info/1012/1234.htm"))
+        XCTAssertTrue(html.contains("https://jwc.bjfu.edu.cn/files/template.docx"))
+
+        let markdown = CampusAIDeliverableFileBuilder.content(for: deliverable, format: .markdown)
+        XCTAssertTrue(markdown.contains("[教务处论文格式](https://jwc.bjfu.edu.cn/info/1012/1234.htm)"))
+        XCTAssertTrue(markdown.contains("[论文模板.docx](https://jwc.bjfu.edu.cn/files/template.docx)"))
+    }
+
+    func testDeliverableFileBuilderRemovesStaleArtifacts() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CampusAIDeliverableLifecycleTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let retainedID = UUID()
+        let staleID = UUID()
+        let deliverable = CampusAIDeliverable(
+            id: "pack-1",
+            title: "资料包",
+            query: "论文格式",
+            summary: "已整理。",
+            generatedAt: "2026-07-02T00:00:00Z",
+            sources: []
+        )
+
+        let retainedURL = try CampusAIDeliverableFileBuilder.writeFile(
+            for: deliverable,
+            messageID: retainedID,
+            format: .txt,
+            rootDirectory: root
+        )
+        let staleURL = try CampusAIDeliverableFileBuilder.writeFile(
+            for: deliverable,
+            messageID: staleID,
+            format: .txt,
+            rootDirectory: root
+        )
+
+        try CampusAIDeliverableFileBuilder.pruneArtifacts(keeping: [retainedID], rootDirectory: root)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: retainedURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staleURL.path))
+
+        try CampusAIDeliverableFileBuilder.removeArtifacts(for: retainedID, rootDirectory: root)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: retainedURL.path))
     }
 
     func testActionPlannerExtractsAndValidatesJSONActions() {
