@@ -12,11 +12,16 @@ const corsHeaders = {
 };
 
 const deepSeekChatCompletionsURL = "https://api.deepseek.com/chat/completions";
+const bochaWebSearchURL = "https://api.bochaai.com/v1/web-search";
 const providerName = "deepseek";
 const defaultModel = "deepseek-v4-flash";
 const maxMessageLength = 1200;
 const maxRecentMessages = 10;
 const maxUserSystemPromptLength = 3000;
+const maxAgentToolCalls = 6;
+const maxAgentSearchCalls = 3;
+const maxAgentSubtasks = 3;
+const maxAgentSearchResults = 8;
 const inputCacheMissCostPerMillion = 0.14;
 const outputCostPerMillion = 0.28;
 const encoder = new TextEncoder();
@@ -34,6 +39,10 @@ type CampusAIRequest = {
   userSystemPrompt?: string;
   context_settings?: unknown;
   contextSettings?: unknown;
+  agent_mode?: string;
+  agentMode?: string;
+  web_search_enabled?: boolean;
+  webSearchEnabled?: boolean;
 };
 
 type CampusAIActionKind =
@@ -61,6 +70,71 @@ type CampusAIActionDraft = {
   title?: string;
   detail?: string;
   payload?: CampusAIActionPayload;
+};
+
+type AgentToolName = "web_search" | "delegate_subtask" | "action_plan";
+
+type AgentToolCall = {
+  name: AgentToolName;
+  arguments: Record<string, unknown>;
+};
+
+type AgentCitation = {
+  id: string;
+  title: string;
+  url: string;
+  siteName?: string;
+  snippet?: string;
+  summary?: string;
+  publishedAt?: string;
+};
+
+type AgentTraceStep = {
+  id: string;
+  kind: "planner" | "tool" | "delegate" | "synthesis" | "fallback";
+  title: string;
+  detail?: string;
+  status: "running" | "completed" | "failed" | "skipped";
+  tool?: string;
+  role?: string;
+  timestamp: string;
+};
+
+type AgentToolEvent = {
+  name: string;
+  status: "running" | "completed" | "failed" | "skipped";
+  detail?: string;
+  resultCount?: number;
+};
+
+type AgentSearchResult = {
+  query: string;
+  citations: AgentCitation[];
+};
+
+type AgentSubtaskResult = {
+  role: "researcher" | "campusAnalyst" | "operatorPlanner";
+  task: string;
+  result: string;
+};
+
+type DeepSeekStreamResult = {
+  answer: string;
+  reasoning: string;
+  finishReason: string | null;
+  usage?: DeepSeekUsage;
+  citations?: AgentCitation[];
+  agentTrace?: AgentTraceStep[];
+};
+
+type AgentCallbacks = {
+  onDelta: (delta: string) => void;
+  onReasoningDelta: (delta: string) => void;
+  onUsage: (usage: DeepSeekUsage) => void;
+  onAgentStatus?: (text: string) => void;
+  onAgentStep?: (step: AgentTraceStep) => void;
+  onAgentTool?: (tool: AgentToolEvent) => void;
+  onAgentCitation?: (citation: AgentCitation) => void;
 };
 
 type DeepSeekUsage = {
@@ -169,6 +243,8 @@ export async function handler(request: Request): Promise<Response> {
     let reasoning = "";
     let firstTokenSeen = false;
     let usage: DeepSeekUsage = {};
+    let citations: AgentCitation[] = [];
+    let agentTrace: AgentTraceStep[] = [];
     let completed = false;
 
     try {
@@ -176,7 +252,7 @@ export async function handler(request: Request): Promise<Response> {
         enqueueSSE(controller, { type: "quota", quota: reservation.quota });
       }
 
-      const result = await streamDeepSeek(body, message, signal, {
+      const streamCallbacks: AgentCallbacks = {
         onDelta(delta) {
           if (delta.length > 0) {
             firstTokenSeen = true;
@@ -193,7 +269,35 @@ export async function handler(request: Request): Promise<Response> {
         onUsage(nextUsage) {
           usage = nextUsage;
         },
-      });
+        onAgentStatus(text: string) {
+          enqueueSSE(controller, { type: "agent_status", text });
+        },
+        onAgentStep(step: AgentTraceStep) {
+          agentTrace.push(step);
+          enqueueSSE(controller, { type: "agent_step", step });
+        },
+        onAgentTool(tool: AgentToolEvent) {
+          enqueueSSE(controller, { type: "agent_tool", tool });
+        },
+        onAgentCitation(citation: AgentCitation) {
+          citations.push(citation);
+          enqueueSSE(controller, { type: "agent_citation", citation });
+        },
+      };
+
+      const result = shouldRunManagedAgent(body, message)
+        ? await runAgentDeepSeek(body, message, signal, streamCallbacks)
+        : await streamDeepSeek(body, message, signal, streamCallbacks);
+      usage = mergeUsage(usage, result.usage ?? {});
+      citations = deduplicateCitations([
+        ...citations,
+        ...(result.citations ?? []),
+      ]);
+      agentTrace = deduplicateTrace([
+        ...agentTrace,
+        ...(result.agentTrace ?? []),
+      ]);
+
       const actionPlan = await planActions(
         body,
         message,
@@ -211,6 +315,9 @@ export async function handler(request: Request): Promise<Response> {
         suggested_title: shortTitle(message),
         summary: "",
         actions: actionPlan.actions,
+        citations,
+        agentTrace,
+        agent_trace: agentTrace,
       });
 
       await completeUsage(adminClient, {
@@ -219,7 +326,9 @@ export async function handler(request: Request): Promise<Response> {
         counted: result.answer.length > 0,
         requestCharCount,
         responseCharCount: result.answer.length +
-          safeJSONStringify(actionPlan.actions).length,
+          safeJSONStringify(actionPlan.actions).length +
+          safeJSONStringify(citations).length +
+          safeJSONStringify(agentTrace).length,
         usage,
         errorCode: null,
       });
@@ -240,7 +349,9 @@ export async function handler(request: Request): Promise<Response> {
         status: "error",
         counted: firstTokenSeen,
         requestCharCount,
-        responseCharCount: answer.length + reasoning.length,
+        responseCharCount: answer.length + reasoning.length +
+          safeJSONStringify(citations).length +
+          safeJSONStringify(agentTrace).length,
         usage,
         errorCode: signal.aborted
           ? "client_aborted"
@@ -262,16 +373,954 @@ if (import.meta.main) {
   Deno.serve(handler);
 }
 
+export function shouldRunManagedAgent(body: CampusAIRequest, message: string) {
+  const mode = normalizeText(body.agent_mode) ??
+    normalizeText(body.agentMode) ?? "auto";
+  if (mode === "off") return false;
+  if (!webSearchEnabled(body)) return false;
+  return shouldSearchWeb(message) || shouldDelegate(message);
+}
+
+function webSearchEnabled(body: CampusAIRequest) {
+  if (typeof body.web_search_enabled === "boolean") {
+    return body.web_search_enabled;
+  }
+  if (typeof body.webSearchEnabled === "boolean") return body.webSearchEnabled;
+  return true;
+}
+
+export function shouldSearchWeb(message: string) {
+  const text = message.toLowerCase();
+  return [
+    "搜索",
+    "联网",
+    "网上",
+    "查一下",
+    "查找",
+    "最近",
+    "最新",
+    "新闻",
+    "通知",
+    "政策",
+    "官网",
+    "网页",
+    "今天",
+    "现在",
+    "实时",
+    "资料",
+    "出处",
+    "来源",
+  ].some((keyword) => text.includes(keyword));
+}
+
+function shouldDelegate(message: string) {
+  const text = message.toLowerCase();
+  return [
+    "拆解",
+    "规划",
+    "计划",
+    "比较",
+    "分析",
+    "结合",
+    "安排",
+    "方案",
+    "多步",
+  ].some((keyword) => text.includes(keyword));
+}
+
+async function runAgentDeepSeek(
+  body: CampusAIRequest,
+  message: string,
+  signal: AbortSignal,
+  callbacks: AgentCallbacks,
+): Promise<DeepSeekStreamResult> {
+  const agentSignal = agentTimeoutSignal(signal);
+  const trace: AgentTraceStep[] = [];
+  const citations: AgentCitation[] = [];
+  const searchResults: AgentSearchResult[] = [];
+  const subtaskResults: AgentSubtaskResult[] = [];
+  let usage: DeepSeekUsage = {};
+
+  const emitStep = (step: AgentTraceStep) => {
+    trace.push(step);
+    callbacks.onAgentStep?.(step);
+  };
+  const emitTool = (tool: AgentToolEvent) => callbacks.onAgentTool?.(tool);
+  const emitCitation = (citation: AgentCitation) => {
+    citations.push(citation);
+    callbacks.onAgentCitation?.(citation);
+  };
+
+  callbacks.onAgentStatus?.("正在拆解任务");
+  emitStep(
+    agentStep(
+      "planner",
+      "任务拆解",
+      "判断是否需要搜索、委派或动作规划。",
+      "running",
+    ),
+  );
+  let toolCalls: AgentToolCall[] = [];
+  try {
+    const plan = await planAgentToolCalls(body, message, agentSignal);
+    usage = mergeUsage(usage, plan.usage);
+    toolCalls = plan.toolCalls;
+    emitStep(agentStep(
+      "planner",
+      "任务拆解完成",
+      toolCalls.length > 0
+        ? `计划调用 ${toolCalls.length} 个工具。`
+        : "未发现必须调用的外部工具。",
+      "completed",
+    ));
+  } catch (error) {
+    console.warn(
+      "campus-ai-assistant: agent planner failed",
+      redactProviderError(errorMessage(error)),
+    );
+    toolCalls = heuristicAgentToolCalls(message);
+    emitStep(agentStep(
+      "fallback",
+      "任务拆解降级",
+      toolCalls.length > 0 ? "已使用本地规则选择工具。" : "已回退为普通回答。",
+      toolCalls.length > 0 ? "completed" : "skipped",
+    ));
+  }
+
+  toolCalls = normalizeAgentToolCalls(toolCalls, {
+    allowWebSearch: webSearchEnabled(body),
+    message,
+  });
+
+  for (const toolCall of toolCalls) {
+    if (agentSignal.aborted) {
+      throw new DOMException("Agent timeout", "AbortError");
+    }
+    switch (toolCall.name) {
+      case "web_search": {
+        const query = normalizeText(toolCall.arguments.query) ?? message;
+        const freshness = normalizeFreshness(toolCall.arguments.freshness);
+        const count = boundedInteger(
+          toolCall.arguments.count,
+          1,
+          maxAgentSearchResults,
+          5,
+        );
+        callbacks.onAgentStatus?.("正在联网搜索");
+        emitTool({ name: "web.search", status: "running", detail: query });
+        try {
+          const results = await webSearch(query, freshness, count, agentSignal);
+          searchResults.push({ query, citations: results });
+          for (const citation of results) emitCitation(citation);
+          emitTool({
+            name: "web.search",
+            status: "completed",
+            detail: query,
+            resultCount: results.length,
+          });
+          emitStep(agentStep(
+            "tool",
+            "联网搜索",
+            results.length > 0
+              ? `“${query}”返回 ${results.length} 条结果。`
+              : `“${query}”没有返回可用结果。`,
+            results.length > 0 ? "completed" : "skipped",
+            { tool: "web.search" },
+          ));
+        } catch (error) {
+          emitTool({
+            name: "web.search",
+            status: "failed",
+            detail: redactProviderError(errorMessage(error)),
+          });
+          emitStep(agentStep(
+            "tool",
+            "联网搜索失败",
+            "本次回答将不使用联网结果。",
+            "failed",
+            { tool: "web.search" },
+          ));
+        }
+        break;
+      }
+      case "delegate_subtask": {
+        const role = normalizeDelegateRole(toolCall.arguments.role);
+        const task = normalizeText(toolCall.arguments.task);
+        if (!role || !task) {
+          emitStep(
+            agentStep(
+              "delegate",
+              "委派任务跳过",
+              "子任务参数不完整。",
+              "skipped",
+            ),
+          );
+          break;
+        }
+        callbacks.onAgentStatus?.("正在处理子任务");
+        emitTool({ name: "delegate.subtask", status: "running", detail: task });
+        try {
+          const delegated = await runDelegatedSubtask(
+            body,
+            message,
+            role,
+            task,
+            searchResults,
+            agentSignal,
+          );
+          usage = mergeUsage(usage, delegated.usage);
+          subtaskResults.push({ role, task, result: delegated.result });
+          emitTool({
+            name: "delegate.subtask",
+            status: "completed",
+            detail: task,
+          });
+          emitStep(agentStep(
+            "delegate",
+            delegateRoleTitle(role),
+            task,
+            "completed",
+            { role },
+          ));
+        } catch (error) {
+          emitTool({
+            name: "delegate.subtask",
+            status: "failed",
+            detail: redactProviderError(errorMessage(error)),
+          });
+          emitStep(agentStep(
+            "delegate",
+            delegateRoleTitle(role),
+            "子任务失败，已继续主回答。",
+            "failed",
+            { role },
+          ));
+        }
+        break;
+      }
+      case "action_plan":
+        emitStep(agentStep(
+          "tool",
+          "动作规划",
+          "回答完成后会生成待确认动作卡片。",
+          "completed",
+          { tool: "action.plan" },
+        ));
+        break;
+    }
+  }
+
+  callbacks.onAgentStatus?.("正在整合回答");
+  emitStep(
+    agentStep(
+      "synthesis",
+      "整合回答",
+      "结合本机上下文、搜索结果和子任务结论生成最终回答。",
+      "running",
+    ),
+  );
+  const result = await streamDeepSeekAgentSynthesis(
+    body,
+    message,
+    searchResults,
+    subtaskResults,
+    citations,
+    agentSignal,
+    callbacks,
+  );
+  usage = mergeUsage(usage, result.usage ?? {});
+  emitStep(agentStep("synthesis", "整合完成", "已生成最终回答。", "completed"));
+
+  return {
+    ...result,
+    usage,
+    citations: deduplicateCitations(citations),
+    agentTrace: trace,
+  };
+}
+
+function agentTimeoutSignal(parent: AbortSignal) {
+  const timeout = AbortSignal.timeout(30_000);
+  return "any" in AbortSignal ? AbortSignal.any([parent, timeout]) : parent;
+}
+
+async function planAgentToolCalls(
+  body: CampusAIRequest,
+  message: string,
+  signal: AbortSignal,
+): Promise<{ toolCalls: AgentToolCall[]; usage: DeepSeekUsage }> {
+  const payload = JSON.stringify(agentToolPlannerPayload(body, message));
+  const response = await deepSeekJSONRequest(payload, signal, "agent planner");
+  return {
+    toolCalls: normalizeAgentToolCalls(
+      parseAgentToolCallsFromProviderResponse(response.text),
+      { allowWebSearch: webSearchEnabled(body), message },
+    ),
+    usage: response.usage,
+  };
+}
+
+export function agentToolPlannerPayload(
+  body: CampusAIRequest,
+  message: string,
+) {
+  return {
+    model: defaultModel,
+    messages: [
+      {
+        role: "system",
+        content: agentPlannerSystemPrompt(),
+      },
+      {
+        role: "user",
+        content: safeJSONStringify({
+          message,
+          context: body.context ?? {},
+          context_settings: body.context_settings ?? body.contextSettings ?? {},
+          recent_messages: recentMessagesFromBody(body).slice(
+            -maxRecentMessages,
+          ),
+          available_tools: ["web.search", "delegate.subtask", "action.plan"],
+          limits: {
+            max_tool_calls: maxAgentToolCalls,
+            max_search_calls: maxAgentSearchCalls,
+            max_subtasks: maxAgentSubtasks,
+          },
+        }),
+      },
+    ],
+    tools: agentToolDefinitions(),
+    tool_choice: "auto",
+    stream: false,
+    temperature: 0,
+    max_tokens: 700,
+    user: userCacheKey(body.app_transaction_id),
+  };
+}
+
+function agentPlannerSystemPrompt() {
+  return [
+    "你是 MyLeafy 的 agent planner。你只负责决定是否调用工具，不直接回答用户。",
+    "可用工具只有 web.search、delegate.subtask、action.plan；没有必要时不要调用工具。",
+    "需要最新、最近、通知、政策、官网、出处或联网信息时调用 web.search。",
+    "需要拆解、比较、结合本机上下文安排方案时，可委派最多 3 个子任务。",
+    "如果用户明确要求打开页面、设置倒计时或课表提醒，可调用 action.plan；最终动作仍由独立规划器生成。",
+    "不要请求删除、修改成绩或课表原始数据、社区发帖评论、后台登录、医疗决策或自动远程抓取。",
+  ].join("\n");
+}
+
+function agentToolDefinitions() {
+  return [
+    {
+      type: "function",
+      function: {
+        name: "web_search",
+        description: "Search the public web and return cited results.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "The search query." },
+            freshness: {
+              type: "string",
+              enum: ["noLimit", "oneDay", "oneWeek", "oneMonth", "oneYear"],
+              description: "Optional freshness window.",
+            },
+            count: {
+              type: "integer",
+              minimum: 1,
+              maximum: maxAgentSearchResults,
+              description: "Number of results to fetch.",
+            },
+          },
+          required: ["query"],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "delegate_subtask",
+        description:
+          "Delegate a focused reasoning subtask to a specialist role.",
+        parameters: {
+          type: "object",
+          properties: {
+            role: {
+              type: "string",
+              enum: ["researcher", "campusAnalyst", "operatorPlanner"],
+            },
+            task: { type: "string", description: "A focused subtask." },
+          },
+          required: ["role", "task"],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "action_plan",
+        description:
+          "Mark that a confirmable in-app action may be useful after the answer.",
+        parameters: {
+          type: "object",
+          properties: {
+            reason: { type: "string" },
+          },
+          required: ["reason"],
+          additionalProperties: false,
+        },
+      },
+    },
+  ];
+}
+
+export function parseAgentToolCallsFromProviderResponse(responseText: string) {
+  const payload = JSON.parse(responseText) as Record<string, unknown>;
+  const choices = Array.isArray(payload.choices) ? payload.choices : [];
+  const toolCalls: AgentToolCall[] = [];
+  for (const choice of choices) {
+    const message = objectValue(objectValue(choice)?.message);
+    const rawToolCalls = Array.isArray(message?.tool_calls)
+      ? message?.tool_calls as unknown[]
+      : [];
+    for (const rawToolCall of rawToolCalls) {
+      const callRecord = objectValue(rawToolCall);
+      const functionRecord = objectValue(callRecord?.function);
+      const name = normalizeToolName(stringValue(functionRecord?.name));
+      if (!name) continue;
+      toolCalls.push({
+        name,
+        arguments: parseToolArguments(functionRecord?.arguments),
+      });
+    }
+
+    const content = stringValue(message?.content);
+    if (content) toolCalls.push(...parseAgentToolCallsFromContent(content));
+  }
+  return toolCalls;
+}
+
+function parseAgentToolCallsFromContent(content: string): AgentToolCall[] {
+  for (const candidate of actionPlannerJSONCandidates(content)) {
+    try {
+      const parsed = JSON.parse(candidate);
+      const rawCalls = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.tool_calls)
+        ? parsed.tool_calls
+        : Array.isArray(parsed?.tools)
+        ? parsed.tools
+        : [];
+      const parsedCalls: Array<AgentToolCall | null> = rawCalls.map(
+        (item: unknown) => {
+          const record = objectValue(item);
+          const name = normalizeToolName(
+            stringValue(record?.name) ?? stringValue(record?.tool),
+          );
+          if (!name) return null;
+          return {
+            name,
+            arguments: objectValue(record?.arguments) ?? record ?? {},
+          } satisfies AgentToolCall;
+        },
+      );
+      return parsedCalls.filter((item): item is AgentToolCall => item !== null);
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return [];
+}
+
+function parseToolArguments(value: unknown): Record<string, unknown> {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return objectValue(parsed) ?? {};
+    } catch {
+      return {};
+    }
+  }
+  return objectValue(value) ?? {};
+}
+
+function normalizeToolName(value: string | null): AgentToolName | null {
+  switch (value) {
+    case "web_search":
+    case "web.search":
+      return "web_search";
+    case "delegate_subtask":
+    case "delegate.subtask":
+      return "delegate_subtask";
+    case "action_plan":
+    case "action.plan":
+      return "action_plan";
+    default:
+      return null;
+  }
+}
+
+export function normalizeAgentToolCalls(
+  toolCalls: AgentToolCall[],
+  options: { allowWebSearch: boolean; message: string },
+) {
+  const normalized: AgentToolCall[] = [];
+  let searchCount = 0;
+  let subtaskCount = 0;
+  for (const toolCall of toolCalls) {
+    if (normalized.length >= maxAgentToolCalls) break;
+    switch (toolCall.name) {
+      case "web_search": {
+        if (!options.allowWebSearch || searchCount >= maxAgentSearchCalls) {
+          break;
+        }
+        const query = normalizeText(toolCall.arguments.query) ??
+          normalizeSearchQuery(options.message);
+        if (!query) break;
+        searchCount += 1;
+        normalized.push({
+          name: "web_search",
+          arguments: {
+            query,
+            freshness: normalizeFreshness(toolCall.arguments.freshness),
+            count: boundedInteger(
+              toolCall.arguments.count,
+              1,
+              maxAgentSearchResults,
+              5,
+            ),
+          },
+        });
+        break;
+      }
+      case "delegate_subtask": {
+        if (subtaskCount >= maxAgentSubtasks) break;
+        const role = normalizeDelegateRole(toolCall.arguments.role);
+        const task = normalizeText(toolCall.arguments.task);
+        if (!role || !task) break;
+        subtaskCount += 1;
+        normalized.push({
+          name: "delegate_subtask",
+          arguments: { role, task },
+        });
+        break;
+      }
+      case "action_plan":
+        normalized.push({
+          name: "action_plan",
+          arguments: {
+            reason: normalizeText(toolCall.arguments.reason) ??
+              "用户可能需要确认动作。",
+          },
+        });
+        break;
+    }
+  }
+
+  if (
+    options.allowWebSearch &&
+    searchCount === 0 &&
+    shouldSearchWeb(options.message) &&
+    normalized.length < maxAgentToolCalls
+  ) {
+    normalized.unshift({
+      name: "web_search",
+      arguments: {
+        query: normalizeSearchQuery(options.message) ?? options.message,
+        freshness: "oneMonth",
+        count: 5,
+      },
+    });
+  }
+  return normalized.slice(0, maxAgentToolCalls);
+}
+
+function heuristicAgentToolCalls(message: string): AgentToolCall[] {
+  const calls: AgentToolCall[] = [];
+  if (shouldSearchWeb(message)) {
+    calls.push({
+      name: "web_search",
+      arguments: {
+        query: normalizeSearchQuery(message) ?? message,
+        freshness: "oneMonth",
+        count: 5,
+      },
+    });
+  }
+  if (shouldDelegate(message)) {
+    calls.push({
+      name: "delegate_subtask",
+      arguments: {
+        role: "campusAnalyst",
+        task: "结合本机上下文和可用搜索结果，整理对用户最有用的校园安排建议。",
+      },
+    });
+  }
+  return calls;
+}
+
+function normalizeSearchQuery(message: string) {
+  return normalizeText(message)
+    ?.replace(/^(帮我|请|麻烦你)?(联网)?(搜索|查一下|查找)/, "")
+    .slice(0, 160)
+    .trim();
+}
+
+function normalizeFreshness(value: unknown) {
+  const text = normalizeText(value);
+  switch (text) {
+    case "oneDay":
+    case "oneWeek":
+    case "oneMonth":
+    case "oneYear":
+    case "noLimit":
+      return text;
+    default:
+      return "oneMonth";
+  }
+}
+
+function normalizeDelegateRole(
+  value: unknown,
+): "researcher" | "campusAnalyst" | "operatorPlanner" | null {
+  switch (normalizeText(value)) {
+    case "researcher":
+      return "researcher";
+    case "campusAnalyst":
+      return "campusAnalyst";
+    case "operatorPlanner":
+      return "operatorPlanner";
+    default:
+      return null;
+  }
+}
+
+function delegateRoleTitle(role: string) {
+  switch (role) {
+    case "researcher":
+      return "资料研究";
+    case "campusAnalyst":
+      return "校园分析";
+    case "operatorPlanner":
+      return "操作规划";
+    default:
+      return "子任务";
+  }
+}
+
+export async function webSearch(
+  query: string,
+  freshness: string,
+  count: number,
+  signal: AbortSignal,
+) {
+  const apiKey = Deno.env.get("BOCHA_API_KEY")?.trim();
+  if (!apiKey) {
+    throw new Error("BOCHA_API_KEY is not configured.");
+  }
+
+  const response = await fetch(bochaWebSearchURL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      query,
+      freshness,
+      summary: true,
+      count,
+    }),
+    signal,
+  });
+
+  const responseText = await response.text();
+  if (!response.ok) {
+    throw new Error(
+      `Bocha search returned ${response.status}: ${responseText.slice(0, 300)}`,
+    );
+  }
+  return parseBochaSearchResponse(responseText, query).slice(0, count);
+}
+
+export function parseBochaSearchResponse(responseText: string, query = "") {
+  const payload = JSON.parse(responseText) as Record<string, unknown>;
+  const pages = objectValue(payload.webPages);
+  const values = Array.isArray(pages?.value) ? pages.value : [];
+  const citations: AgentCitation[] = [];
+  for (const [index, item] of values.entries()) {
+    const record = objectValue(item);
+    if (!record) continue;
+    const url = stringValue(record.url);
+    const title = normalizeText(record.name) ?? normalizeText(record.title);
+    if (!url || !title || !isHTTPURL(url)) continue;
+    citations.push({
+      id: `web-${hashString(`${query}|${url}|${index}`)}`,
+      title,
+      url,
+      siteName: normalizeText(record.siteName) ?? undefined,
+      snippet: normalizeText(record.snippet) ?? undefined,
+      summary: normalizeText(record.summary) ?? undefined,
+      publishedAt: normalizeText(record.datePublished) ?? undefined,
+    });
+  }
+  return deduplicateCitations(citations);
+}
+
+async function runDelegatedSubtask(
+  body: CampusAIRequest,
+  message: string,
+  role: "researcher" | "campusAnalyst" | "operatorPlanner",
+  task: string,
+  searchResults: AgentSearchResult[],
+  signal: AbortSignal,
+) {
+  const payload = JSON.stringify({
+    model: defaultModel,
+    messages: [
+      {
+        role: "system",
+        content: [
+          `你是 MyLeafy 的 ${delegateRoleTitle(role)} 子代理。`,
+          "只根据输入的本机上下文、搜索结果和任务要求输出中文要点。",
+          "不要生成 JSON，不要声称执行了任何写入动作。",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: safeJSONStringify({
+          user_message: message,
+          task,
+          context: body.context ?? {},
+          search_results: searchResults,
+        }),
+      },
+    ],
+    stream: false,
+    temperature: 0.2,
+    max_tokens: 700,
+    user: userCacheKey(body.app_transaction_id),
+  });
+  const response = await deepSeekJSONRequest(
+    payload,
+    signal,
+    "delegated subtask",
+  );
+  return {
+    result: parseDeepSeekMessageContent(response.text).slice(0, 2400),
+    usage: response.usage,
+  };
+}
+
+async function streamDeepSeekAgentSynthesis(
+  body: CampusAIRequest,
+  message: string,
+  searchResults: AgentSearchResult[],
+  subtaskResults: AgentSubtaskResult[],
+  citations: AgentCitation[],
+  signal: AbortSignal,
+  callbacks: AgentCallbacks,
+): Promise<DeepSeekStreamResult> {
+  const apiKeys = deepSeekAPIKeys();
+  if (apiKeys.length === 0) {
+    throw new Error("Missing DEEPSEEK_API_KEY or DEEPSEEK_API_KEYS.");
+  }
+
+  const payload = JSON.stringify(agentSynthesisPayload(
+    body,
+    message,
+    searchResults,
+    subtaskResults,
+    citations,
+  ));
+  let lastError: Error | null = null;
+  for (const [index, apiKey] of apiKeys.entries()) {
+    const response = await fetch(deepSeekChatCompletionsURL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: payload,
+      signal,
+    });
+    if (!response.ok) {
+      const responseText = await response.text();
+      const error = new Error(
+        `DeepSeek agent synthesis key ${
+          index + 1
+        }/${apiKeys.length} returned ${response.status}: ${
+          redactProviderError(responseText)
+        }`,
+      );
+      if (
+        index < apiKeys.length - 1 &&
+        shouldRetryDeepSeekStatus(response.status)
+      ) {
+        lastError = error;
+        continue;
+      }
+      throw error;
+    }
+    return await readDeepSeekStream(response, callbacks);
+  }
+  throw lastError ?? new Error("DeepSeek agent synthesis failed.");
+}
+
+export function agentSynthesisPayload(
+  body: CampusAIRequest,
+  message: string,
+  searchResults: AgentSearchResult[],
+  subtaskResults: AgentSubtaskResult[],
+  citations: AgentCitation[],
+) {
+  const recentMessages = recentMessagesFromBody(body)
+    .slice(-maxRecentMessages)
+    .map((item) => ({
+      role: item.role === "assistant" ? "assistant" : "user",
+      text: normalizeText(item.text) ?? "",
+    }))
+    .filter((item) => item.text.length > 0);
+
+  return {
+    model: defaultModel,
+    messages: [
+      {
+        role: "system",
+        content: agentSynthesisSystemPrompt(
+          normalizeText(body.user_system_prompt) ??
+            normalizeText(body.userSystemPrompt),
+          citations.length > 0,
+        ),
+      },
+      {
+        role: "user",
+        content: safeJSONStringify({
+          message,
+          context: body.context ?? {},
+          context_settings: body.context_settings ?? body.contextSettings ?? {},
+          recent_messages: recentMessages,
+          web_search_results: searchResults,
+          subtask_results: subtaskResults,
+          citations,
+        }),
+      },
+    ],
+    stream: true,
+    stream_options: { include_usage: true },
+    thinking: { type: "enabled" },
+    temperature: 0.2,
+    max_tokens: 2000,
+    user: userCacheKey(body.app_transaction_id),
+  };
+}
+
+function agentSynthesisSystemPrompt(
+  userSystemPrompt: string | null,
+  hasCitations: boolean,
+) {
+  return [
+    systemPrompt(userSystemPrompt),
+    "你现在处于 agent 模式。请整合本机上下文、联网搜索结果和子任务结论。",
+    hasCitations
+      ? "使用联网结果时，必须在相关句子后用 Markdown 链接标注来源，优先引用输入 citations 中的 URL。"
+      : "本次没有可用联网搜索结果；如果问题需要最新信息，请明确说明未使用联网结果。",
+    "不要输出工具调用 JSON、内部 trace 或动作草稿。",
+  ].join("\n");
+}
+
+async function deepSeekJSONRequest(
+  payload: string,
+  signal: AbortSignal,
+  label: string,
+): Promise<{ text: string; usage: DeepSeekUsage }> {
+  const apiKeys = deepSeekAPIKeys();
+  let lastError: Error | null = null;
+  for (const [index, apiKey] of apiKeys.entries()) {
+    let response: Response;
+    try {
+      response = await fetch(deepSeekChatCompletionsURL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: payload,
+        signal,
+      });
+    } catch (error) {
+      if (signal.aborted || index === apiKeys.length - 1) throw error;
+      lastError = new Error(redactProviderError(errorMessage(error)));
+      continue;
+    }
+    const text = await response.text();
+    if (!response.ok) {
+      const error = new Error(
+        `DeepSeek ${label} key ${
+          index + 1
+        }/${apiKeys.length} returned ${response.status}: ${
+          redactProviderError(text)
+        }`,
+      );
+      if (
+        index < apiKeys.length - 1 &&
+        shouldRetryDeepSeekStatus(response.status)
+      ) {
+        lastError = error;
+        continue;
+      }
+      throw error;
+    }
+    const payloadObject = JSON.parse(text) as Record<string, unknown>;
+    const usagePayload = objectValue(payloadObject.usage);
+    return {
+      text,
+      usage: usagePayload ? deepSeekUsage(usagePayload) : {},
+    };
+  }
+  throw lastError ?? new Error(`DeepSeek ${label} request failed.`);
+}
+
+function parseDeepSeekMessageContent(responseText: string) {
+  const payload = JSON.parse(responseText) as Record<string, unknown>;
+  const choices = Array.isArray(payload.choices) ? payload.choices : [];
+  return choices
+    .map((choice) => objectValue(choice))
+    .map((choice) => objectValue(choice?.message))
+    .map((message) => stringValue(message?.content))
+    .find((value) => !!value) ?? "";
+}
+
+function agentStep(
+  kind: AgentTraceStep["kind"],
+  title: string,
+  detail: string,
+  status: AgentTraceStep["status"],
+  extra: { tool?: string; role?: string } = {},
+): AgentTraceStep {
+  return {
+    id: crypto.randomUUID(),
+    kind,
+    title,
+    detail,
+    status,
+    tool: extra.tool,
+    role: extra.role,
+    timestamp: new Date().toISOString(),
+  };
+}
+
 async function streamDeepSeek(
   body: CampusAIRequest,
   message: string,
   signal: AbortSignal,
-  callbacks: {
-    onDelta: (delta: string) => void;
-    onReasoningDelta: (delta: string) => void;
-    onUsage: (usage: DeepSeekUsage) => void;
-  },
-): Promise<{ answer: string; reasoning: string; finishReason: string | null }> {
+  callbacks: AgentCallbacks,
+): Promise<DeepSeekStreamResult> {
   const apiKeys = deepSeekAPIKeys();
   if (apiKeys.length === 0) {
     throw new Error("Missing DEEPSEEK_API_KEY or DEEPSEEK_API_KEYS.");
@@ -1145,6 +2194,50 @@ function hashString(value: string) {
     hash = ((hash << 5) + hash + char.charCodeAt(0)) >>> 0;
   }
   return hash.toString(16);
+}
+
+function deduplicateCitations(citations: AgentCitation[]) {
+  const seen = new Set<string>();
+  const result: AgentCitation[] = [];
+  for (const citation of citations) {
+    const key = citation.url.trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(citation);
+  }
+  return result;
+}
+
+function deduplicateTrace(steps: AgentTraceStep[]) {
+  const seen = new Set<string>();
+  const result: AgentTraceStep[] = [];
+  for (const step of steps) {
+    const key = step.id;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(step);
+  }
+  return result;
+}
+
+function boundedInteger(
+  value: unknown,
+  min: number,
+  max: number,
+  fallback: number,
+) {
+  const integer = integerValue(value);
+  if (integer === null) return fallback;
+  return Math.min(max, Math.max(min, integer));
+}
+
+function isHTTPURL(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function estimatedCostUSD(usage: DeepSeekUsage) {
