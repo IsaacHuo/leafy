@@ -112,17 +112,17 @@
 			path = LeafyExternalImportShared;
 			sourceTree = "<group>";
 		};
+		EED100000000000000000002 /* leafyTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = leafyTests;
+			sourceTree = "<group>";
+		};
 		F00D00000000000000000003 /* LeafyShareExtension */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				F00D00000000000000000005 /* Exceptions for "LeafyShareExtension" folder in "LeafyShareExtension" target */,
 			);
 			path = LeafyShareExtension;
-			sourceTree = "<group>";
-		};
-		EED100000000000000000002 /* leafyTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = leafyTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -250,29 +250,6 @@
 			productReference = A1B2C3D4E5F6000000000002 /* LeafyWidgetExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
-		F00D00000000000000000009 /* LeafyShareExtension */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = F00D0000000000000000000A /* Build configuration list for PBXNativeTarget "LeafyShareExtension" */;
-			buildPhases = (
-				F00D00000000000000000008 /* Sources */,
-				F00D00000000000000000006 /* Frameworks */,
-				F00D00000000000000000007 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				F00D00000000000000000003 /* LeafyShareExtension */,
-				DAD100000000000000000001 /* LeafyExternalImportShared */,
-			);
-			name = LeafyShareExtension;
-			packageProductDependencies = (
-			);
-			productName = LeafyShareExtension;
-			productReference = F00D00000000000000000002 /* LeafyShareExtension.appex */;
-			productType = "com.apple.product-type.app-extension";
-		};
 		EED100000000000000000006 /* leafyTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = EED100000000000000000009 /* Build configuration list for PBXNativeTarget "leafyTests" */;
@@ -296,6 +273,29 @@
 			productReference = EED100000000000000000001 /* leafyTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		F00D00000000000000000009 /* LeafyShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F00D0000000000000000000A /* Build configuration list for PBXNativeTarget "LeafyShareExtension" */;
+			buildPhases = (
+				F00D00000000000000000008 /* Sources */,
+				F00D00000000000000000006 /* Frameworks */,
+				F00D00000000000000000007 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				DAD100000000000000000001 /* LeafyExternalImportShared */,
+				F00D00000000000000000003 /* LeafyShareExtension */,
+			);
+			name = LeafyShareExtension;
+			packageProductDependencies = (
+			);
+			productName = LeafyShareExtension;
+			productReference = F00D00000000000000000002 /* LeafyShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -312,12 +312,12 @@
 					A1B2C3D4E5F6000000000009 = {
 						CreatedOnToolsVersion = 26.4;
 					};
-					F00D00000000000000000009 = {
-						CreatedOnToolsVersion = 26.4;
-					};
 					EED100000000000000000006 = {
 						CreatedOnToolsVersion = 26.4;
 						TestTargetID = 1119CC0B2F976BA0002A7E20;
+					};
+					F00D00000000000000000009 = {
+						CreatedOnToolsVersion = 26.4;
 					};
 				};
 			};
@@ -747,6 +747,68 @@
 			};
 			name = Release;
 		};
+		F00D0000000000000000000D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C0DEC0DE0000000000000002 /* Leafy.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = LeafyShareExtension/LeafyShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 19;
+				DEVELOPMENT_TEAM = G229WP43HH;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = LeafyShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.5;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.isaachuo.leafy.share-extension";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		F00D0000000000000000000E /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C0DEC0DE0000000000000002 /* Leafy.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = LeafyShareExtension/LeafyShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 19;
+				DEVELOPMENT_TEAM = G229WP43HH;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = LeafyShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.5;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.isaachuo.leafy.share-extension";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -782,6 +844,15 @@
 			buildConfigurations = (
 				EED100000000000000000007 /* Debug */,
 				EED100000000000000000008 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F00D0000000000000000000A /* Build configuration list for PBXNativeTarget "LeafyShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F00D0000000000000000000D /* Debug */,
+				F00D0000000000000000000E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

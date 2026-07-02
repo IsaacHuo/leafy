@@ -123,7 +123,8 @@ final class ShareViewController: UIViewController {
         store: ExternalLearningMaterialImportStore,
         batchID: UUID
     ) async throws -> ExternalLearningMaterialImportItem {
-        try await withCheckedThrowingContinuation { continuation in
+        let suggestedName = provider.suggestedName
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ExternalLearningMaterialImportItem, Error>) in
             provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { url, error in
                 if let error {
                     continuation.resume(throwing: error)
@@ -139,7 +140,7 @@ final class ShareViewController: UIViewController {
                         from: url,
                         batchID: batchID,
                         sourceContentTypeIdentifier: typeIdentifier,
-                        originalFilename: self.filename(for: provider, typeIdentifier: typeIdentifier, fileURL: url)
+                        originalFilename: Self.filename(suggestedName: suggestedName, typeIdentifier: typeIdentifier, fileURL: url)
                     )
                     continuation.resume(returning: item)
                 } catch {
@@ -155,7 +156,8 @@ final class ShareViewController: UIViewController {
         store: ExternalLearningMaterialImportStore,
         batchID: UUID
     ) async throws -> ExternalLearningMaterialImportItem? {
-        try await withCheckedThrowingContinuation { continuation in
+        let suggestedName = provider.suggestedName
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ExternalLearningMaterialImportItem?, Error>) in
             provider.loadDataRepresentation(forTypeIdentifier: typeIdentifier) { data, error in
                 if let error {
                     continuation.resume(throwing: error)
@@ -170,7 +172,7 @@ final class ShareViewController: UIViewController {
                     let item = try store.stageData(
                         data,
                         batchID: batchID,
-                        originalFilename: self.filename(for: provider, typeIdentifier: typeIdentifier),
+                        originalFilename: Self.filename(suggestedName: suggestedName, typeIdentifier: typeIdentifier),
                         contentTypeIdentifier: typeIdentifier
                     )
                     continuation.resume(returning: item)
@@ -186,7 +188,7 @@ final class ShareViewController: UIViewController {
         store: ExternalLearningMaterialImportStore,
         batchID: UUID
     ) async throws -> ExternalLearningMaterialImportItem? {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ExternalLearningMaterialImportItem?, Error>) in
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
                 if let error {
                     continuation.resume(throwing: error)
@@ -235,12 +237,12 @@ final class ShareViewController: UIViewController {
         }
     }
 
-    private func filename(
-        for provider: NSItemProvider,
+    private static func filename(
+        suggestedName: String?,
         typeIdentifier: String,
         fileURL: URL? = nil
     ) -> String {
-        let candidate = fileURL?.lastPathComponent ?? provider.suggestedName ?? "学习资料"
+        let candidate = fileURL?.lastPathComponent ?? suggestedName ?? "学习资料"
         let normalized = ExternalLearningMaterialImport.normalizedFilename(candidate)
         guard (normalized as NSString).pathExtension.isEmpty,
               let fileExtension = UTType(typeIdentifier)?.preferredFilenameExtension
@@ -254,15 +256,11 @@ final class ShareViewController: UIViewController {
     private func openContainingApp(batchID: UUID) async {
         statusLabel.text = "已暂存，正在打开 MyLeafy..."
         let callbackURL = ExternalLearningMaterialImport.callbackURL(for: batchID)
-        extensionContext?.open(callbackURL) { [weak self] success in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                if success {
-                    self.extensionContext?.completeRequest(returningItems: nil)
-                } else {
-                    self.showManualOpenMessage("文件已暂存，请手动打开 MyLeafy 完成保存。")
-                }
-            }
+        let success = await extensionContext?.open(callbackURL) ?? false
+        if success {
+            extensionContext?.completeRequest(returningItems: nil)
+        } else {
+            showManualOpenMessage("文件已暂存，请手动打开 MyLeafy 完成保存。")
         }
     }
 

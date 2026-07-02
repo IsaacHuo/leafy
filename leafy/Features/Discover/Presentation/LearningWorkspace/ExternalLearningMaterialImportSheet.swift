@@ -51,26 +51,13 @@ struct ExternalLearningMaterialImportSheet: View {
 
                 Section("待保存文件") {
                     ForEach(batch.items) { item in
-                        HStack(spacing: AppSpacing.compact) {
-                            LeafyIconBadge(systemName: icon(for: item))
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(item.originalFilename)
-                                    .leafySubheadline(weight: .semibold)
-                                    .foregroundStyle(AppTheme.primaryText)
-                                    .lineLimit(2)
-                                Text(fileSubtitle(for: item))
-                                    .leafyCaption()
-                                    .foregroundStyle(AppTheme.secondaryText)
-                            }
-                        }
-                        .padding(.vertical, 4)
+                        ExternalLearningMaterialImportItemRow(item: item)
                     }
                 }
 
                 Section {
                     Text("文件会保存到本机学习空间，不会上传到云端。")
-                        .leafyFootnote()
+                        .font(.footnote)
                         .foregroundStyle(AppTheme.secondaryText)
                 }
             }
@@ -120,20 +107,50 @@ struct ExternalLearningMaterialImportSheet: View {
         }
     }
 
-    private func fileSubtitle(for item: ExternalLearningMaterialImportItem) -> String {
-        let displayType = LearningMaterialDocument.displayType(
-            contentTypeIdentifier: item.contentTypeIdentifier,
-            originalFilename: item.originalFilename
-        )
-        guard item.byteCount > 0 else { return displayType }
-        return "\(displayType) · \(ByteCountFormatter.string(fromByteCount: item.byteCount, countStyle: .file))"
+    private func icon(for category: LearningMaterialCategory) -> String {
+        switch category {
+        case .cet:
+            return "character.book.closed"
+        case .exam:
+            return "doc.text.magnifyingglass"
+        case .courseware:
+            return "rectangle.on.rectangle.angled"
+        case .other:
+            return "tray.full"
+        }
+    }
+}
+
+private struct ExternalLearningMaterialImportItemRow: View {
+    let item: ExternalLearningMaterialImportItem
+
+    var body: some View {
+        HStack(spacing: AppSpacing.compact) {
+            LeafyIconBadge(systemName: icon)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.originalFilename)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.primaryText)
+                    .lineLimit(2)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+            }
+        }
+        .padding(.vertical, 4)
     }
 
-    private func icon(for item: ExternalLearningMaterialImportItem) -> String {
-        let displayType = LearningMaterialDocument.displayType(
-            contentTypeIdentifier: item.contentTypeIdentifier,
-            originalFilename: item.originalFilename
+    private var subtitle: String {
+        guard item.byteCount > 0 else { return displayType }
+        let size = ByteCountFormatter.string(
+            fromByteCount: item.byteCount,
+            countStyle: .file
         )
+        return "\(displayType) · \(size)"
+    }
+
+    private var icon: String {
         switch displayType {
         case "PDF":
             return "doc.richtext"
@@ -148,16 +165,10 @@ struct ExternalLearningMaterialImportSheet: View {
         }
     }
 
-    private func icon(for category: LearningMaterialCategory) -> String {
-        switch category {
-        case .cet:
-            return "character.book.closed"
-        case .exam:
-            return "doc.text.magnifyingglass"
-        case .courseware:
-            return "rectangle.on.rectangle.angled"
-        case .other:
-            return "tray.full"
-        }
+    private var displayType: String {
+        LearningMaterialDocument.displayType(
+            contentTypeIdentifier: item.contentTypeIdentifier,
+            originalFilename: item.originalFilename
+        )
     }
 }

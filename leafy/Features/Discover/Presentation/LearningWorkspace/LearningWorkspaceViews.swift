@@ -1747,7 +1747,7 @@ private struct LearningProjectTaskEditorSheet: View {
     }
 }
 
-private extension LearningProjectKind {
+extension LearningProjectKind {
     var icon: String {
         switch self {
         case .course:
