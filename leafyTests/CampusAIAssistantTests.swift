@@ -17,15 +17,18 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertTrue(initial.contextSettings.includesTimetable)
         XCTAssertTrue(initial.contextSettings.includesMedicalLedger)
         XCTAssertTrue(initial.contextSettings.includesCommunityCache)
+        XCTAssertTrue(initial.webSearchEnabled)
 
         var changed = initial
         changed.systemPrompt = "请优先用列表回答"
         changed.contextSettings.includesMedicalLedger = false
+        changed.webSearchEnabled = false
         CampusAISettingsStore.save(changed, userDefaults: defaults)
 
         let reloaded = CampusAISettingsStore.load(userDefaults: defaults)
         XCTAssertEqual(reloaded.systemPrompt, "请优先用列表回答")
         XCTAssertFalse(reloaded.contextSettings.includesMedicalLedger)
+        XCTAssertFalse(reloaded.webSearchEnabled)
 
         let reset = CampusAISettingsStore.reset(userDefaults: defaults)
         XCTAssertEqual(reset, .defaultValue)
@@ -70,6 +73,7 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertTrue(CampusAIServiceMode.allCases.contains(settings.serviceMode))
         XCTAssertEqual(settings.systemPrompt, "旧版 Prompt")
         XCTAssertFalse(settings.contextSettings.includesMedicalLedger)
+        XCTAssertTrue(settings.webSearchEnabled)
         XCTAssertNil(defaults.data(forKey: "campusAI.userSettings.v1"))
         XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v2"))
     }
@@ -641,6 +645,45 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertEqual(events, [.delta("多行 JSON")])
     }
 
+    func testSSEParserHandlesManagedAgentEvents() throws {
+        var parser = CampusAISSEParser()
+        let raw = """
+        data: {"type":"agent_status","text":"正在联网搜索"}
+
+        data: {"type":"agent_step","step":{"id":"step-1","kind":"tool","title":"联网搜索","detail":"找到结果","status":"completed","tool":"web.search","timestamp":"2026-07-02T00:00:00Z"}}
+
+        data: {"type":"agent_tool","tool":{"name":"web.search","status":"completed","detail":"北林通知","resultCount":2}}
+
+        data: {"type":"agent_citation","citation":{"id":"web-1","title":"北京林业大学通知","url":"https://www.bjfu.edu.cn/notice","siteName":"北京林业大学","summary":"通知摘要","publishedAt":"2026-07-02T00:00:00+08:00"}}
+
+        """
+
+        let events = try parser.append(Data(raw.utf8))
+
+        XCTAssertEqual(events.count, 4)
+        XCTAssertEqual(events[0], .agentStatus("正在联网搜索"))
+        if case .agentStep(let step) = events[1] {
+            XCTAssertEqual(step.id, "step-1")
+            XCTAssertEqual(step.tool, "web.search")
+            XCTAssertEqual(step.status, "completed")
+        } else {
+            XCTFail("expected agent step")
+        }
+        if case .agentTool(let tool) = events[2] {
+            XCTAssertEqual(tool.name, "web.search")
+            XCTAssertEqual(tool.resultCount, 2)
+        } else {
+            XCTFail("expected agent tool")
+        }
+        if case .agentCitation(let citation) = events[3] {
+            XCTAssertEqual(citation.title, "北京林业大学通知")
+            XCTAssertEqual(citation.siteName, "北京林业大学")
+            XCTAssertEqual(citation.publishedAt, "2026-07-02T00:00:00+08:00")
+        } else {
+            XCTFail("expected agent citation")
+        }
+    }
+
     func testSSEParserPreservesSplitUnicodeBytes() throws {
         var parser = CampusAISSEParser()
         let data = Data("data: {\"choices\":[{\"delta\":{\"content\":\"明天\"}}]}\n\n".utf8)
@@ -722,6 +765,8 @@ final class CampusAIAssistantTests: XCTestCase {
         )
 
         XCTAssertEqual(message.reasoningText, "")
+        XCTAssertEqual(message.agentMetadataJSON, "")
+        XCTAssertEqual(message.agentMetadata.citations, [])
     }
 
     func testMarkdownRendererUsesLocalResourcesAndSecurityPolicy() {
@@ -931,7 +976,7 @@ final class CampusAIAssistantTests: XCTestCase {
     func testManagedDonePayloadDecodesActions() throws {
         var parser = CampusAISSEParser()
         let raw = """
-        data: {"type":"done","answer":"已整理。","actions":[{"kind":"open_academic_route","title":"","payload":{"route":"trainingProgram"}},{"kind":"create_countdown","title":"创建倒计时","payload":{"countdown_title":"期末考试","target_date":"2026-07-01"}}]}
+        data: {"type":"done","answer":"已整理。","actions":[{"kind":"open_academic_route","title":"","payload":{"route":"trainingProgram"}},{"kind":"create_countdown","title":"创建倒计时","payload":{"countdown_title":"期末考试","target_date":"2026-07-01"}}],"citations":[{"id":"web-1","title":"通知","url":"https://www.bjfu.edu.cn/notice"}],"agentTrace":[{"id":"trace-1","kind":"tool","title":"联网搜索","status":"completed"}]}
 
         """
 
@@ -947,6 +992,8 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertEqual(response.actions.first?.kind, .openAcademicRoute)
         XCTAssertEqual(response.actions.first?.payload.route, "trainingProgram")
         XCTAssertEqual(response.actions.last?.payload.countdownTitle, "期末考试")
+        XCTAssertEqual(response.citations.first?.url, "https://www.bjfu.edu.cn/notice")
+        XCTAssertEqual(response.agentTrace.first?.title, "联网搜索")
     }
 
     func testCampusAIServiceSendPreservesActions() async throws {
@@ -955,10 +1002,30 @@ final class CampusAIAssistantTests: XCTestCase {
             title: "打开培养方案",
             payload: CampusAIActionPayload(route: "trainingProgram")
         )
+        let citation = CampusAICitation(
+            id: "web-1",
+            title: "培养方案通知",
+            url: "https://www.bjfu.edu.cn/notice"
+        )
+        let trace = CampusAIAgentTraceStep(
+            id: "trace-1",
+            kind: "tool",
+            title: "联网搜索",
+            detail: nil,
+            status: "completed",
+            tool: "web.search",
+            role: nil,
+            timestamp: nil
+        )
         let service = CampusAIService { _, _ in
             AsyncThrowingStream { continuation in
                 continuation.yield(.delta("已整理。"))
-                continuation.yield(.done(CampusAIResponse(answer: "已整理。", actions: [action])))
+                continuation.yield(.done(CampusAIResponse(
+                    answer: "已整理。",
+                    actions: [action],
+                    citations: [citation],
+                    agentTrace: [trace]
+                )))
                 continuation.finish()
             }
         }
@@ -971,6 +1038,8 @@ final class CampusAIAssistantTests: XCTestCase {
 
         XCTAssertEqual(response.answer, "已整理。")
         XCTAssertEqual(response.actions, [action])
+        XCTAssertEqual(response.citations, [citation])
+        XCTAssertEqual(response.agentTrace, [trace])
     }
 
     func testActionPlannerExtractsAndValidatesJSONActions() {

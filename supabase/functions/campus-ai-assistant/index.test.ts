@@ -1,17 +1,24 @@
 import {
   actionPlannerPayload,
   actionPlannerSystemPrompt,
+  agentSynthesisPayload,
+  agentToolPlannerPayload,
   campusAIResponseFormat,
   deepSeekAPIKeys,
   deepSeekPayload,
   drainDeepSeekSSEBuffer,
   handler,
+  normalizeAgentToolCalls,
   parseActionPlannerActions,
   parseActionPlannerProviderResponse,
+  parseAgentToolCallsFromProviderResponse,
+  parseBochaSearchResponse,
   parseDeepSeekAPIKeys,
   processDeepSeekSSEBlock,
   redactProviderError,
+  shouldRunManagedAgent,
   systemPrompt,
+  webSearch,
 } from "./index.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -112,6 +119,196 @@ Deno.test("campus-ai-assistant builds non-stream JSON-only action planner payloa
   assert(
     String(messages[1].content).includes("supported_actions"),
     "expected supported action schema",
+  );
+});
+
+Deno.test("campus-ai-assistant enables managed agent only for search or multi-step requests", () => {
+  assert(
+    shouldRunManagedAgent(
+      { web_search_enabled: true },
+      "帮我搜索一下北林最近通知",
+    ),
+    "expected search request to use agent mode",
+  );
+  assert(
+    !shouldRunManagedAgent(
+      { web_search_enabled: false },
+      "帮我搜索一下北林最近通知",
+    ),
+    "disabled web search should force fast path",
+  );
+  assert(
+    !shouldRunManagedAgent({ agent_mode: "off" }, "最近有什么通知？"),
+    "agent_mode off should force fast path",
+  );
+});
+
+Deno.test("campus-ai-assistant builds DeepSeek tool planner payload", () => {
+  const payload = agentToolPlannerPayload(
+    {
+      app_transaction_id: "app-tx-1",
+      context: { campusID: "bjfu", currentWeek: 2 },
+      context_settings: { includesTimetable: true },
+      recent_messages: [{ role: "user", text: "你好" }],
+    },
+    "帮我查一下北林最近通知并结合课表安排",
+  ) as Record<string, unknown>;
+  const tools = payload.tools as Array<Record<string, unknown>>;
+
+  assert(payload.model === "deepseek-v4-flash", "expected DeepSeek V4 Flash");
+  assert(payload.stream === false, "expected non-stream planner");
+  assert(payload.tool_choice === "auto", "expected automatic tool choice");
+  assert(tools.length === 3, "expected three agent tools");
+  assert(
+    JSON.stringify(tools).includes("web_search") &&
+      JSON.stringify(tools).includes("delegate_subtask") &&
+      JSON.stringify(tools).includes("action_plan"),
+    "expected tool definitions",
+  );
+});
+
+Deno.test("campus-ai-assistant parses and limits agent tool calls", () => {
+  const parsed = parseAgentToolCallsFromProviderResponse(JSON.stringify({
+    choices: [
+      {
+        message: {
+          tool_calls: [
+            {
+              function: {
+                name: "web_search",
+                arguments: JSON.stringify({ query: "北林通知", count: 20 }),
+              },
+            },
+            {
+              function: {
+                name: "delegate_subtask",
+                arguments: JSON.stringify({
+                  role: "campusAnalyst",
+                  task: "结合课表给出安排",
+                }),
+              },
+            },
+            {
+              function: {
+                name: "delegate_subtask",
+                arguments: JSON.stringify({ role: "invalid", task: "bad" }),
+              },
+            },
+          ],
+        },
+      },
+    ],
+  }));
+  const normalized = normalizeAgentToolCalls(parsed, {
+    allowWebSearch: true,
+    message: "帮我查一下北林通知",
+  });
+
+  assert(normalized.length === 2, "expected invalid delegate to be filtered");
+  assert(normalized[0].name === "web_search", "expected web search first");
+  assert(normalized[0].arguments.count === 8, "expected count to clamp");
+  assert(
+    normalized[1].arguments.role === "campusAnalyst",
+    "expected delegate role",
+  );
+
+  const disabled = normalizeAgentToolCalls(parsed, {
+    allowWebSearch: false,
+    message: "帮我查一下北林通知",
+  });
+  assert(
+    disabled.every((call) => call.name !== "web_search"),
+    "disabled web search should filter search calls",
+  );
+});
+
+Deno.test("campus-ai-assistant parses Bocha search citations", () => {
+  const citations = parseBochaSearchResponse(
+    JSON.stringify({
+      webPages: {
+        value: [
+          {
+            name: "北京林业大学通知",
+            url: "https://www.bjfu.edu.cn/notice/1",
+            siteName: "北京林业大学",
+            snippet: "通知摘要",
+            summary: "通知总结",
+            datePublished: "2026-07-02T00:00:00+08:00",
+          },
+          {
+            name: "重复",
+            url: "https://www.bjfu.edu.cn/notice/1",
+          },
+          {
+            name: "坏链接",
+            url: "javascript:alert(1)",
+          },
+        ],
+      },
+    }),
+    "北林通知",
+  );
+
+  assert(citations.length === 1, "expected duplicate and unsafe URLs filtered");
+  assert(citations[0].title === "北京林业大学通知", "expected title");
+  assert(citations[0].siteName === "北京林业大学", "expected site name");
+  assert(citations[0].publishedAt?.includes("2026"), "expected publish date");
+});
+
+Deno.test("campus-ai-assistant handles missing Bocha API key before network", async () => {
+  const previous = Deno.env.get("BOCHA_API_KEY");
+  try {
+    Deno.env.delete("BOCHA_API_KEY");
+    let threw = false;
+    try {
+      await webSearch("北林通知", "oneMonth", 3, new AbortController().signal);
+    } catch (error) {
+      threw = true;
+      assert(
+        error instanceof Error && error.message.includes("BOCHA_API_KEY"),
+        "expected missing Bocha key error",
+      );
+    }
+    assert(threw, "expected webSearch to reject without key");
+  } finally {
+    if (previous === undefined) {
+      Deno.env.delete("BOCHA_API_KEY");
+    } else {
+      Deno.env.set("BOCHA_API_KEY", previous);
+    }
+  }
+});
+
+Deno.test("campus-ai-assistant synthesis payload carries citations and search results", () => {
+  const payload = agentSynthesisPayload(
+    { app_transaction_id: "app-tx-1", context: { campusID: "bjfu" } },
+    "总结通知",
+    [{
+      query: "北林通知",
+      citations: [{
+        id: "web-1",
+        title: "通知",
+        url: "https://www.bjfu.edu.cn/notice",
+      }],
+    }],
+    [{ role: "campusAnalyst", task: "安排建议", result: "周三处理。" }],
+    [{
+      id: "web-1",
+      title: "通知",
+      url: "https://www.bjfu.edu.cn/notice",
+    }],
+  ) as Record<string, unknown>;
+  const messages = payload.messages as Array<Record<string, unknown>>;
+
+  assert(payload.stream === true, "expected streamed synthesis");
+  assert(
+    String(messages[0].content).includes("Markdown 链接标注来源"),
+    "expected citation instruction",
+  );
+  assert(
+    String(messages[1].content).includes("web_search_results") &&
+      String(messages[1].content).includes("subtask_results"),
+    "expected agent inputs",
   );
 });
 
