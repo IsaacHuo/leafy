@@ -27,30 +27,36 @@
 
 ## 🏗 技术架构
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    iOS App (SwiftUI)                     │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────┐ │
-│  │   Auth   │ │ Timetable│ │ Community│ │  Discover   │ │
-│  │ (强智登录) │ │ (课表抓取) │ │ (Supabase)│ │ (学业/AI)   │ │
-│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └─────┬──────┘ │
-│       │            │            │              │         │
-│  ┌────┴────────────┴────────────┴──────────────┴──────┐ │
-│  │                  Services Layer                     │ │
-│  │  SchoolNetworkManager │ SwiftSoup │ WKWebView 兜底  │ │
-│  │  Supabase Client      │ SwiftData │ Keychain       │ │
-│  └────────────────────────────────────────────────────┘ │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-        ┌───────────────┴───────────────┐
-        │                               │
-┌───────┴────────┐           ┌──────────┴──────────┐
-│  强智教务系统    │           │  Supabase (BaaS)     │
-│  newjwxt.bjfu  │           │  Auth / DB / Storage │
-│  .edu.cn       │           │  Edge Functions      │
-│  · 课表 · 成绩  │           │  · 社区 · 通知 · 评教  │
-│  · 考试 · 培养  │           │  · 公告 · 后台 · AI   │
-└────────────────┘           └─────────────────────┘
+```mermaid
+flowchart TB
+    subgraph iOS["iOS App (SwiftUI)"]
+        direction TB
+        subgraph Features["Feature Modules"]
+            Auth["🔐 Auth<br/>强智登录"]
+            Timetable["📅 Timetable<br/>课表抓取"]
+            Community["👥 Community<br/>Supabase"]
+            Discover["📚 Discover<br/>学业 / AI"]
+        end
+        subgraph Services["Services Layer"]
+            SNM["SchoolNetworkManager"]
+            SP["SwiftSoup"]
+            WV["WKWebView 兜底"]
+            SC["Supabase Client"]
+            SD["SwiftData"]
+            KC["Keychain"]
+        end
+        Features --> Services
+    end
+
+    subgraph External["External Systems"]
+        QZ["🏫 强智教务系统<br/>newjwxt.bjfu.edu.cn<br/>课表 · 成绩 · 考试 · 培养"]
+        SB["⚡ Supabase (BaaS)<br/>Auth · DB · Storage · Edge Functions<br/>社区 · 通知 · 评教 · 公告 · 后台 · AI"]
+    end
+
+    SNM --> QZ
+    WV --> QZ
+    SP --> QZ
+    SC --> SB
 ```
 
 ### 核心技术选型
