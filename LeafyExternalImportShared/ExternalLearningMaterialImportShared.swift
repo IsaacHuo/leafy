@@ -268,7 +268,7 @@ struct ExternalLearningMaterialImportStore {
     func writeManifest(_ manifest: ExternalLearningMaterialImportManifest) throws {
         try prepareBatchDirectory(manifest.id)
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        encoder.dateEncodingStrategy = Self.preciseISO8601DateEncodingStrategy
         let data = try encoder.encode(manifest)
         try data.write(to: manifestURL(for: manifest.id), options: [.atomic])
     }
@@ -279,7 +279,7 @@ struct ExternalLearningMaterialImportStore {
             throw ExternalLearningMaterialImportError.missingBatch(id)
         }
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = Self.preciseISO8601DateDecodingStrategy
         return try decoder.decode(
             ExternalLearningMaterialImportManifest.self,
             from: Data(contentsOf: url)
@@ -332,6 +332,40 @@ struct ExternalLearningMaterialImportStore {
     private func byteCount(for url: URL) -> Int64 {
         let values = try? url.resourceValues(forKeys: [.fileSizeKey])
         return Int64(values?.fileSize ?? 0)
+    }
+
+    private static var preciseISO8601DateEncodingStrategy: JSONEncoder.DateEncodingStrategy {
+        .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(date.timeIntervalSinceReferenceDate)
+        }
+    }
+
+    private static var preciseISO8601DateDecodingStrategy: JSONDecoder.DateDecodingStrategy {
+        .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            if let timestamp = try? container.decode(Double.self) {
+                return Date(timeIntervalSinceReferenceDate: timestamp)
+            }
+
+            let value = try container.decode(String.self)
+
+            let preciseFormatter = ISO8601DateFormatter()
+            preciseFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = preciseFormatter.date(from: value) {
+                return date
+            }
+
+            let legacyFormatter = ISO8601DateFormatter()
+            if let date = legacyFormatter.date(from: value) {
+                return date
+            }
+
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Invalid ISO8601 date: \(value)"
+            )
+        }
     }
 }
 

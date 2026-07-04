@@ -40,7 +40,6 @@ struct ExternalLearningMaterialImportSheet: View {
                         }
 
                         if !activeProjects.isEmpty {
-                            Divider()
                             ForEach(activeProjects) { project in
                                 Label(project.title, systemImage: project.kind.icon)
                                     .tag(LearningWorkspaceDestination.project(project.id))

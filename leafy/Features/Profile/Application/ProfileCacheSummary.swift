@@ -112,8 +112,8 @@ struct ProfileCacheSummary: Equatable {
                 detail: L10n.text("%d 个提醒", language: language, reminderCount + cellReminderCount)
             ),
             ProfileCacheSummaryRow(
-                title: "学习相关",
-                value: L10n.text("%d 个项目 / %d 份资料", language: language, learningProjectCount, learningMaterialCount),
+                title: "学习空间",
+                value: L10n.text("%d 个空间 / %d 份资料", language: language, learningProjectCount, learningMaterialCount),
                 detail: L10n.text("%d 个任务 / %d 条记录", language: language, learningTaskCount, studyTimeRecordCount)
             ),
             ProfileCacheSummaryRow(

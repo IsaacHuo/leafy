@@ -11,15 +11,102 @@ import AppKit
 #endif
 
 private enum LearningProjectDeletionText {
-    static let dialogTitle = "删除学习项目？"
-    static let dialogMessage = "可以只删除项目并把内容移到“其他”，也可以连同资料、任务和学习记录一起删除。"
+    static let dialogTitle = "删除学习空间？"
+    static let dialogMessage = "可以只删除学习空间并把内容移到“其他”，也可以连同资料、任务和学习记录一起删除。"
     static let keepContentsAction = "保留内容"
     static let deleteAllAction = "全部删除"
-    static let fullDeleteTitle = "同时删除项目和内容？"
-    static let fullDeleteMessage = "继续前请先导出需要保留的学习资料。确认后会删除项目内资料文件、任务和学习记录，无法恢复。"
+    static let fullDeleteTitle = "同时删除学习空间和内容？"
+    static let fullDeleteMessage = "继续前请先导出需要保留的学习资料。确认后会删除空间内资料文件、任务和学习记录，无法恢复。"
     static let cancelAction = "取消"
-    static let keepContentsSuccess = "项目已删除，内容已移到其他。"
-    static let deleteAllSuccess = "项目和内容已删除！"
+    static let keepContentsSuccess = "学习空间已删除，内容已移到其他。"
+    static let deleteAllSuccess = "学习空间和内容已删除！"
+}
+
+private enum LearningWorkspaceListItem: Identifiable {
+    case fixed(LearningMaterialCategory)
+    case project(LearningProject)
+
+    var id: String {
+        destination.id
+    }
+
+    var destination: LearningWorkspaceDestination {
+        switch self {
+        case .fixed(let category):
+            return .fixed(category)
+        case .project(let project):
+            return .project(project.id)
+        }
+    }
+
+    var project: LearningProject? {
+        guard case .project(let project) = self else { return nil }
+        return project
+    }
+
+    var isArchived: Bool {
+        project?.isArchived == true
+    }
+
+    func title(language: AppLanguagePreference) -> String {
+        switch self {
+        case .fixed(let category):
+            return L10n.text(category.rawValue, language: language)
+        case .project(let project):
+            return project.title
+        }
+    }
+
+    func subtitle(language: AppLanguagePreference) -> String {
+        switch self {
+        case .fixed(let category):
+            return L10n.text(category.workspaceSubtitle, language: language)
+        case .project(let project):
+            return L10n.text(project.kind.title, language: language)
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .fixed(let category):
+            return category.workspaceIcon
+        case .project(let project):
+            return project.kind.icon
+        }
+    }
+
+    var usesTextBadge: Bool {
+        guard case .fixed(.cet) = self else { return false }
+        return true
+    }
+}
+
+private extension LearningMaterialCategory {
+    var workspaceSubtitle: String {
+        switch self {
+        case .cet:
+            return "四六级资料、任务和学习记录"
+        case .exam:
+            return "考试复习资料和安排"
+        case .courseware:
+            return "课程课件、讲义和课堂资料"
+        case .other:
+            return "未归档资料、任务和记录"
+        }
+    }
+
+    var workspaceIcon: String {
+        switch self {
+        case .cet:
+            return "character.book.closed"
+        case .exam:
+            return "doc.text.magnifyingglass"
+        case .courseware:
+            return "rectangle.on.rectangle.angled"
+        case .other:
+            return "tray.full"
+        }
+    }
 }
 
 struct LearningWorkspaceView: View {
@@ -50,16 +137,24 @@ struct LearningWorkspaceView: View {
         projects.filter(\.isArchived)
     }
 
+    private var existingWorkspaceItems: [LearningWorkspaceListItem] {
+        LearningMaterialCategory.fixedSpaceOrder.map(LearningWorkspaceListItem.fixed)
+            + activeProjects.map(LearningWorkspaceListItem.project)
+    }
+
+    private var archivedWorkspaceItems: [LearningWorkspaceListItem] {
+        archivedProjects.map(LearningWorkspaceListItem.project)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: AppSpacing.card) {
             LeafySectionTitle(
-                "学习相关",
-                subtitle: "固定空间收纳四六级、考试资料和课件，自定义项目用于长期学习目标；资料可导入也可导出。"
+                "学习空间",
+                subtitle: "在微信或QQ内点击文件后，选择“用其他应用打开”，点选 MyLeafy 即可轻松导入，存放的资料也可导出。"
             )
 
-            fixedSpacesSection(index: workspaceIndex)
-            customProjectsSection(index: workspaceIndex)
-            archivedProjectsSection(index: workspaceIndex)
+            existingWorkspacesSection(index: workspaceIndex)
+            archivedWorkspacesSection(index: workspaceIndex)
         }
         .onAppear(perform: refreshWorkspaceIndexIfNeeded)
         .onChange(of: LearningWorkspaceIndexSignature(materials: materials, tasks: tasks, records: records)) { _, _ in
@@ -118,62 +213,31 @@ struct LearningWorkspaceView: View {
         .leafyOperationAlert($operationAlert)
     }
 
-    private func fixedSpacesSection(index workspaceIndex: LearningWorkspaceIndex) -> some View {
-        VStack(alignment: .leading, spacing: AppSpacing.compact) {
-            AcademicDetailSectionHeader(title: "固定学习空间")
-            AcademicDetailCard {
-                VStack(spacing: 0) {
-                    LearningWorkspaceTableHeader(title: "空间", durationTitle: "本周", trailingWidth: 8)
-                    AcademicDetailDivider()
-                    ForEach(Array(LearningMaterialCategory.fixedSpaceOrder.enumerated()), id: \.element.id) { index, category in
-                        if index > 0 {
-                            AcademicDetailDivider()
-                        }
-                        LearningWorkspaceFixedSpaceRow(
-                            category: category,
-                            summary: workspaceIndex.summary(for: .fixed(category))
-                        ) {
-                            openRoute(.learningWorkspace(.fixed(category)))
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func customProjectsSection(index workspaceIndex: LearningWorkspaceIndex) -> some View {
+    private func existingWorkspacesSection(index workspaceIndex: LearningWorkspaceIndex) -> some View {
         VStack(alignment: .leading, spacing: AppSpacing.compact) {
             HStack {
-                AcademicDetailSectionHeader(title: "自定义学习项目")
+                AcademicDetailSectionHeader(title: "已有学习空间")
                 Spacer()
-                CareerSectionAddButton(title: "新建项目", systemName: "plus") {
+                CareerSectionAddButton(title: "新建学习空间", systemName: "plus") {
                     isProjectEditorPresented = true
                 }
             }
 
-            if activeProjects.isEmpty {
-                AcademicDetailCard {
-                    ContentUnavailableView("暂无自定义项目", systemImage: "folder.badge.plus", description: Text("可以为高数期末、蓝桥杯备赛或专业课复习创建独立项目。"))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, AppSpacing.compact)
-                }
-            } else {
-                AcademicDetailCard {
-                    VStack(spacing: 0) {
-                        LearningWorkspaceTableHeader(title: "项目", durationTitle: "累计", trailingWidth: 28)
-                        AcademicDetailDivider()
-                        ForEach(Array(activeProjects.enumerated()), id: \.element.id) { index, project in
-                            if index > 0 {
-                                AcademicDetailDivider()
-                            }
-                            LearningProjectRow(
-                                project: project,
-                                summary: workspaceIndex.summary(for: .project(project.id)),
-                                openAction: { openRoute(.learningWorkspace(.project(project.id))) },
-                                editAction: { editingProject = project },
-                                deleteAction: { projectPendingDeletion = project }
-                            )
+            AcademicDetailCard {
+                VStack(spacing: 0) {
+                    LearningWorkspaceTableHeader(title: "空间", trailingWidth: 30)
+                    AcademicDetailDivider()
+                    ForEach(Array(existingWorkspaceItems.enumerated()), id: \.element.id) { index, item in
+                        if index > 0 {
+                            AcademicDetailDivider()
                         }
+                        LearningWorkspaceRow(
+                            item: item,
+                            summary: workspaceIndex.summary(for: item.destination),
+                            openAction: { openRoute(.learningWorkspace(item.destination)) },
+                            editAction: item.project.map { project in { editingProject = project } },
+                            deleteAction: item.project.map { project in { projectPendingDeletion = project } }
+                        )
                     }
                 }
             }
@@ -181,24 +245,24 @@ struct LearningWorkspaceView: View {
     }
 
     @ViewBuilder
-    private func archivedProjectsSection(index workspaceIndex: LearningWorkspaceIndex) -> some View {
-        if !archivedProjects.isEmpty {
+    private func archivedWorkspacesSection(index workspaceIndex: LearningWorkspaceIndex) -> some View {
+        if !archivedWorkspaceItems.isEmpty {
             VStack(alignment: .leading, spacing: AppSpacing.compact) {
-                AcademicDetailSectionHeader(title: "已归档项目")
+                AcademicDetailSectionHeader(title: "已归档学习空间")
                 AcademicDetailCard {
                     VStack(spacing: 0) {
-                        LearningWorkspaceTableHeader(title: "项目", durationTitle: "累计", trailingWidth: 28)
+                        LearningWorkspaceTableHeader(title: "空间", trailingWidth: 30)
                         AcademicDetailDivider()
-                        ForEach(Array(archivedProjects.enumerated()), id: \.element.id) { index, project in
+                        ForEach(Array(archivedWorkspaceItems.enumerated()), id: \.element.id) { index, item in
                             if index > 0 {
                                 AcademicDetailDivider()
                             }
-                            LearningProjectRow(
-                                project: project,
-                                summary: workspaceIndex.summary(for: .project(project.id)),
-                                openAction: { openRoute(.learningWorkspace(.project(project.id))) },
-                                editAction: { editingProject = project },
-                                deleteAction: { projectPendingDeletion = project }
+                            LearningWorkspaceRow(
+                                item: item,
+                                summary: workspaceIndex.summary(for: item.destination),
+                                openAction: { openRoute(.learningWorkspace(item.destination)) },
+                                editAction: item.project.map { project in { editingProject = project } },
+                                deleteAction: item.project.map { project in { projectPendingDeletion = project } }
                             )
                         }
                     }
@@ -221,7 +285,7 @@ struct LearningWorkspaceView: View {
             goal: draft.goal,
             isArchived: draft.isArchived
         ))
-        save(successMessage: "项目已创建！")
+        save(successMessage: "学习空间已创建！")
     }
 
     private func update(_ project: LearningProject, with draft: LearningProjectDraft) {
@@ -230,7 +294,7 @@ struct LearningWorkspaceView: View {
         project.goal = draft.goal
         project.isArchived = draft.isArchived
         project.updatedAt = Date()
-        save(successMessage: "项目已保存！")
+        save(successMessage: "学习空间已保存！")
     }
 
     private func deleteProjectKeepingContents(_ project: LearningProject) {
@@ -604,7 +668,6 @@ private struct LearningSummaryTableRow: View {
 
 private struct LearningWorkspaceTableHeader: View {
     let title: String
-    let durationTitle: String
     let trailingWidth: CGFloat
 
     var body: some View {
@@ -615,8 +678,6 @@ private struct LearningWorkspaceTableHeader: View {
                 .frame(width: 24, alignment: .trailing)
             Text("待办")
                 .frame(width: 24, alignment: .trailing)
-            Text(durationTitle)
-                .frame(width: 36, alignment: .trailing)
             Color.clear
                 .frame(width: trailingWidth)
         }
@@ -665,64 +726,6 @@ private struct LearningCompactIconBadge: View {
     }
 }
 
-private struct LearningWorkspaceFixedSpaceRow: View {
-    @Environment(\.leafyLanguage) private var leafyLanguage
-
-    let category: LearningMaterialCategory
-    let summary: LearningWorkspaceSummary
-    let openAction: () -> Void
-
-    var body: some View {
-        Button(action: openAction) {
-            HStack(alignment: .center, spacing: AppSpacing.micro) {
-                iconBadge
-
-                Text(L10n.text(category.rawValue, language: leafyLanguage))
-                    .leafyHeadline()
-                    .foregroundStyle(AppTheme.primaryText)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .layoutPriority(1)
-
-                LearningWorkspaceCountText("\(summary.materialCount)", width: 24)
-                LearningWorkspaceCountText("\(summary.pendingTaskCount)", width: 24)
-                LearningWorkspaceCountText(StudyTimeDurationFormatter.compactText(for: summary.weekDuration, language: leafyLanguage), width: 36)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(AppTheme.tertiaryText)
-                    .frame(width: 8)
-            }
-            .padding(.vertical, 7)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(L10n.text(category.rawValue, language: leafyLanguage))
-    }
-
-    @ViewBuilder
-    private var iconBadge: some View {
-        if category == .cet {
-            LearningCompactIconBadge(text: "EN")
-        } else {
-            LearningCompactIconBadge(systemName: icon)
-        }
-    }
-
-    private var icon: String {
-        switch category {
-        case .cet:
-            return "character.book.closed"
-        case .exam:
-            return "doc.text.magnifyingglass"
-        case .courseware:
-            return "rectangle.on.rectangle.angled"
-        case .other:
-            return "tray.full"
-        }
-    }
-}
-
 private struct LearningWorkspaceCountText: View {
     let text: String
     let width: CGFloat
@@ -742,34 +745,34 @@ private struct LearningWorkspaceCountText: View {
     }
 }
 
-private struct LearningProjectRow: View {
+private struct LearningWorkspaceRow: View {
     @Environment(\.leafyLanguage) private var leafyLanguage
 
-    let project: LearningProject
+    let item: LearningWorkspaceListItem
     let summary: LearningWorkspaceSummary
     let openAction: () -> Void
-    let editAction: () -> Void
-    let deleteAction: () -> Void
+    let editAction: (() -> Void)?
+    let deleteAction: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .center, spacing: AppSpacing.compact) {
             Button(action: openAction) {
                 HStack(alignment: .center, spacing: AppSpacing.micro) {
-                    LearningCompactIconBadge(systemName: project.kind.icon)
+                    iconBadge
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(project.title)
+                        Text(item.title(language: leafyLanguage))
                             .leafyHeadline()
                             .foregroundStyle(AppTheme.primaryText)
                             .lineLimit(1)
 
                         HStack(spacing: 6) {
-                            Text(project.kind.title)
+                            Text(item.subtitle(language: leafyLanguage))
                                 .microCaption()
                                 .foregroundStyle(AppTheme.secondaryText)
                                 .lineLimit(1)
 
-                            if project.isArchived {
+                            if item.isArchived {
                                 PlanBadge(text: "已归档")
                             }
                         }
@@ -779,38 +782,53 @@ private struct LearningProjectRow: View {
 
                     LearningWorkspaceCountText("\(summary.materialCount)", width: 24)
                     LearningWorkspaceCountText("\(summary.pendingTaskCount)", width: 24)
-                    LearningWorkspaceCountText(StudyTimeDurationFormatter.compactText(for: summary.totalDuration, language: leafyLanguage), width: 36)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(item.title(language: leafyLanguage))
 
-            Menu {
-                Button(action: editAction) {
-                    Label("编辑", systemImage: "pencil")
+            if let editAction, let deleteAction {
+                Menu {
+                    Button(action: editAction) {
+                        Label("编辑学习空间", systemImage: "pencil")
+                    }
+                    Button(role: .destructive, action: deleteAction) {
+                        Label("删除学习空间", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .frame(width: 30, height: 30)
+                        .background(AppTheme.softFill, in: RoundedRectangle(cornerRadius: AppRadius.small, style: .continuous))
                 }
-                Button(role: .destructive, action: deleteAction) {
-                    Label("删除", systemImage: "trash")
-                }
-            } label: {
-                Image(systemName: "ellipsis")
+                .buttonStyle(.plain)
+                .accessibilityLabel("更多学习空间操作")
+            } else {
+                Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(AppTheme.secondaryText)
+                    .foregroundStyle(AppTheme.tertiaryText)
                     .frame(width: 30, height: 30)
-                    .background(AppTheme.softFill, in: RoundedRectangle(cornerRadius: AppRadius.small, style: .continuous))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("更多项目操作")
         }
         .padding(.vertical, 7)
+    }
+
+    @ViewBuilder
+    private var iconBadge: some View {
+        if item.usesTextBadge {
+            LearningCompactIconBadge(text: "EN")
+        } else {
+            LearningCompactIconBadge(systemName: item.icon)
+        }
     }
 }
 
 private enum LearningWorkspaceDetailTab: String, CaseIterable, Identifiable {
-    case overview = "概览"
-    case materials = "资料"
     case tasks = "任务"
+    case materials = "资料"
     case records = "记录"
 
     var id: String { rawValue }
@@ -818,11 +836,11 @@ private enum LearningWorkspaceDetailTab: String, CaseIterable, Identifiable {
     init(initialTab: LearningWorkspaceInitialTab) {
         switch initialTab {
         case .overview:
-            self = .overview
-        case .materials:
-            self = .materials
+            self = .tasks
         case .tasks:
             self = .tasks
+        case .materials:
+            self = .materials
         case .records:
             self = .records
         }
@@ -841,7 +859,7 @@ struct LearningWorkspaceDetailView: View {
     @Query(sort: \LearningProjectTask.updatedAt, order: .reverse) private var tasks: [LearningProjectTask]
     @Query(sort: \StudyTimeRecord.startedAt, order: .reverse) private var records: [StudyTimeRecord]
 
-    @State private var selectedTab: LearningWorkspaceDetailTab = .overview
+    @State private var selectedTab: LearningWorkspaceDetailTab = .tasks
     @State private var isImporterPresented = false
     @State private var editingMaterial: LearningMaterialDocument?
     @State private var previewItem: LearningMaterialPreviewItem?
@@ -863,7 +881,7 @@ struct LearningWorkspaceDetailView: View {
     @State private var workspaceIndex = LearningWorkspaceIndex.empty
     @State private var workspaceIndexSignature = LearningWorkspaceIndexSignature()
 
-    init(destination: LearningWorkspaceDestination, initialTab: LearningWorkspaceInitialTab = .overview) {
+    init(destination: LearningWorkspaceDestination, initialTab: LearningWorkspaceInitialTab = .tasks) {
         self.destination = destination
         self._selectedTab = State(initialValue: LearningWorkspaceDetailTab(initialTab: initialTab))
     }
@@ -901,7 +919,7 @@ struct LearningWorkspaceDetailView: View {
         if let category = destination.fixedCategory {
             return L10n.text(category.rawValue, language: leafyLanguage)
         }
-        return project?.title ?? "学习项目"
+        return project?.title ?? "学习空间"
     }
 
     var body: some View {
@@ -910,12 +928,10 @@ struct LearningWorkspaceDetailView: View {
             detailTabs
 
             switch selectedTab {
-            case .overview:
-                overviewContent
-            case .materials:
-                materialsContent
             case .tasks:
                 tasksContent
+            case .materials:
+                materialsContent
             case .records:
                 recordsContent
             }
@@ -931,17 +947,17 @@ struct LearningWorkspaceDetailView: View {
                         Button {
                             editingProject = project
                         } label: {
-                            Label("编辑", systemImage: "pencil")
+                            Label("编辑学习空间", systemImage: "pencil")
                         }
                         Button(role: .destructive) {
                             projectPendingDeletion = project
                         } label: {
-                            Label("删除", systemImage: "trash")
+                            Label("删除学习空间", systemImage: "trash")
                         }
                     } label: {
                         Image(systemName: "ellipsis")
                     }
-                    .accessibilityLabel("更多项目操作")
+                    .accessibilityLabel("更多学习空间操作")
                 }
             }
         }
@@ -1043,7 +1059,7 @@ struct LearningWorkspaceDetailView: View {
         } message: {
             Text("删除后会同时移除本地文件，无法恢复。")
         }
-        .alert("学习相关操作失败", isPresented: Binding(
+        .alert("学习空间操作失败", isPresented: Binding(
             get: { alertMessage != nil },
             set: { if !$0 { alertMessage = nil } }
         )) {
@@ -1110,38 +1126,6 @@ struct LearningWorkspaceDetailView: View {
             }
         }
         .pickerStyle(.segmented)
-    }
-
-    private var overviewContent: some View {
-        AcademicDetailCard {
-            VStack(alignment: .leading, spacing: 10) {
-                Label("下一步", systemImage: "checklist")
-                    .leafyHeadline()
-                    .foregroundStyle(AppTheme.primaryText)
-
-                if let nextTask = scopedTasks.first(where: { !$0.isCompleted }) {
-                    LearningTaskRow(
-                        task: nextTask,
-                        toggleAction: { toggle(nextTask) },
-                        editAction: { editingTask = nextTask },
-                        deleteAction: { deleteTask(nextTask) }
-                    )
-                } else {
-                    Text("暂无待办，可以添加一个下一步任务。")
-                        .leafySubheadline()
-                        .foregroundStyle(AppTheme.secondaryText)
-                }
-
-                HStack(spacing: AppSpacing.micro) {
-                    LearningQuickActionButton(title: "添加任务", systemName: "plus") {
-                        isTaskEditorPresented = true
-                    }
-                    LearningQuickActionButton(title: "导入资料", systemName: "tray.and.arrow.down") {
-                        isImporterPresented = true
-                    }
-                }
-            }
-        }
     }
 
     private var materialsContent: some View {
@@ -1289,16 +1273,16 @@ struct LearningWorkspaceDetailView: View {
         if let category = destination.fixedCategory {
             switch category {
             case .cet:
-                return "固定空间不可删除，用于集中管理四六级资料、任务和学习记录。"
+                return "用于集中管理四六级资料、任务和学习记录。"
             case .exam:
-                return "固定空间不可删除，用于收纳各类考试复习资料和安排。"
+                return "用于收纳各类考试复习资料和安排。"
             case .courseware:
-                return "固定空间不可删除，用于保存课程课件、讲义和课堂资料。"
+                return "用于保存课程课件、讲义和课堂资料。"
             case .other:
-                return "未归档内容会先放在这里，之后可以编辑资料分类或移动到项目。"
+                return "未归档内容会先放在这里，之后可以编辑资料分类或移动到学习空间。"
             }
         }
-        return project?.goal.isEmpty == false ? project?.goal ?? "" : "自定义学习项目，适合长期目标或专项复习。"
+        return project?.goal.isEmpty == false ? project?.goal ?? "" : "适合长期目标或专项复习。"
     }
 
     private func handleImport(_ result: Result<[URL], Error>) {
@@ -1472,7 +1456,7 @@ struct LearningWorkspaceDetailView: View {
         project.goal = draft.goal
         project.isArchived = draft.isArchived
         project.updatedAt = Date()
-        save(successMessage: "项目已保存！")
+        save(successMessage: "学习空间已保存！")
     }
 
     private func deleteProjectKeepingContents(_ project: LearningProject) {
@@ -1587,26 +1571,6 @@ private struct LearningTaskRow: View {
     }
 }
 
-private struct LearningQuickActionButton: View {
-    let title: String
-    let systemName: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: systemName)
-                .font(.system(size: 13, weight: .semibold))
-                .lineLimit(1)
-                .foregroundStyle(AppTheme.accentEmphasis)
-                .padding(.horizontal, 10)
-                .frame(height: 30)
-                .background(AppTheme.softFill, in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(title)
-    }
-}
-
 private struct LearningProjectDraft {
     var title: String
     var kind: LearningProjectKind
@@ -1642,7 +1606,7 @@ private struct LearningProjectEditorSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("项目名称", text: $title)
+                    TextField("空间名称", text: $title)
                     Picker("类型", selection: $kind) {
                         ForEach(LearningProjectKind.allCases) { kind in
                             Text(kind.title).tag(kind)
@@ -1651,11 +1615,11 @@ private struct LearningProjectEditorSheet: View {
                     TextField("目标/备注", text: $goal, axis: .vertical)
                         .lineLimit(3...6)
                     if project != nil {
-                        Toggle("归档项目", isOn: $isArchived)
+                        Toggle("归档学习空间", isOn: $isArchived)
                     }
                 }
             }
-            .navigationTitle(project == nil ? "新建项目" : "编辑项目")
+            .navigationTitle(project == nil ? "新建学习空间" : "编辑学习空间")
             .leafyInlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1785,7 +1749,7 @@ struct StudyFocusTopicOption: Identifiable, Hashable {
 
     static let none = StudyFocusTopicOption(
         id: "none",
-        title: "不选主题",
+        title: "不关联空间",
         projectID: "",
         categoryRawValue: LearningMaterialCategory.other.rawValue,
         icon: "circle"
@@ -1844,7 +1808,7 @@ struct StudyFocusTopicOption: Identifiable, Hashable {
             }
             return StudyFocusTopicOption(
                 id: "project-\(id.uuidString)",
-                title: "学习项目",
+                title: "学习空间",
                 projectID: id.uuidString,
                 categoryRawValue: LearningMaterialCategory.other.rawValue,
                 icon: "folder"
@@ -1859,7 +1823,7 @@ struct StudyFocusTopicOption: Identifiable, Hashable {
             }
             return StudyFocusTopicOption(
                 id: "project-\(projectUUID.uuidString)",
-                title: "学习项目",
+                title: "学习空间",
                 projectID: projectUUID.uuidString,
                 categoryRawValue: LearningMaterialCategory.other.rawValue,
                 icon: "folder"
@@ -1897,8 +1861,6 @@ private struct StudyTimeShareItem: Identifiable {
 }
 
 private struct StudyFocusTimerPanel: View {
-    @Environment(\.leafyLanguage) private var leafyLanguage
-
     let topicOptions: [StudyFocusTopicOption]
     let lockedTopic: StudyFocusTopicOption?
     @Binding var selectedTopic: StudyFocusTopicOption
@@ -1918,7 +1880,7 @@ private struct StudyFocusTimerPanel: View {
                         Text(activeSession == nil ? "开始专注" : "专注进行中")
                             .leafyHeadline()
                             .foregroundStyle(AppTheme.primaryText)
-                        Text(activeSession == nil ? "点击后立即开始计时，停止时保存为专注记录。" : "停止后会写入当前 Topic 的专注记录。")
+                        Text(activeSession == nil ? "点击后立即开始计时，停止时保存为专注记录。" : "停止后会写入当前学习空间的专注记录。")
                             .leafySubheadline()
                             .foregroundStyle(AppTheme.secondaryText)
                     }
@@ -1930,7 +1892,7 @@ private struct StudyFocusTimerPanel: View {
                         .microCaption()
                         .foregroundStyle(AppTheme.secondaryText)
                 } else {
-                    Picker("Topic", selection: $selectedTopic) {
+                    Picker("学习空间", selection: $selectedTopic) {
                         ForEach(topicOptions) { option in
                             Label(option.title, systemImage: option.icon).tag(option)
                         }
@@ -1940,7 +1902,7 @@ private struct StudyFocusTimerPanel: View {
 
                 if let activeSession {
                     TimelineView(.periodic(from: activeSession.startedAt, by: 1)) { context in
-                        Text(StudyTimeDurationFormatter.text(for: context.date.timeIntervalSince(activeSession.startedAt), language: leafyLanguage))
+                        Text(StudyTimeDurationFormatter.timerText(for: context.date.timeIntervalSince(activeSession.startedAt)))
                             .font(.title2.weight(.bold))
                             .foregroundStyle(AppTheme.primaryText)
                             .monospacedDigit()
@@ -2258,7 +2220,7 @@ struct StudyTimeRecordsView: View {
     private func exportImage() {
         let content = StudyTimeShareCard(
             title: "专注记录",
-            topicTitle: selectedTopic.destination == nil ? "全部 Topic" : selectedTopic.title,
+            topicTitle: selectedTopic.destination == nil ? "全部学习空间" : selectedTopic.title,
             todayDuration: todayDuration,
             weekDuration: weekDuration,
             totalDuration: totalDuration,
@@ -2502,7 +2464,7 @@ private struct StudyTimeRecordEditorView: View {
                     if let lockedTopic {
                         Label(lockedTopic.title, systemImage: lockedTopic.icon)
                     } else {
-                        Picker("Topic", selection: $selectedTopic) {
+                        Picker("学习空间", selection: $selectedTopic) {
                             ForEach(topicOptions) { option in
                                 Label(option.title, systemImage: option.icon).tag(option)
                             }
@@ -2548,6 +2510,14 @@ private struct StudyTimeRecordEditorView: View {
 }
 
 private enum StudyTimeDurationFormatter {
+    static func timerText(for duration: TimeInterval) -> String {
+        let totalSeconds = max(Int(duration), 0)
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+        return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+    }
+
     static func text(for duration: TimeInterval, language: AppLanguagePreference) -> String {
         let totalMinutes = max(Int(duration / 60), 0)
         let hours = totalMinutes / 60
@@ -2560,19 +2530,5 @@ private enum StudyTimeDurationFormatter {
             return "\(hours)小时"
         }
         return "\(hours)小时\(minutes)分钟"
-    }
-
-    static func compactText(for duration: TimeInterval, language: AppLanguagePreference) -> String {
-        let totalMinutes = max(Int(duration / 60), 0)
-        let hours = totalMinutes / 60
-        let minutes = totalMinutes % 60
-
-        if hours == 0 {
-            return "\(minutes)分"
-        }
-        if minutes == 0 {
-            return "\(hours)时"
-        }
-        return "\(hours)时\(minutes)分"
     }
 }

@@ -4,7 +4,7 @@ nonisolated enum AcademicPrimaryTab: String, CaseIterable, Identifiable, Equatab
     case cultivation = "教学培养"
     case schedule = "时间日程"
     case classrooms = "空闲教室"
-    case learning = "学习相关"
+    case learning = "学习空间"
     case sports = "体育相关"
     case career = "职业规划"
     case postgraduate = "考研信息"
@@ -153,7 +153,7 @@ nonisolated enum AcademicDetailRoute: Hashable, Sendable {
     case classroomLookup(building: String, room: String)
     case campusHeatmap
     case studyTimeRecords
-    case learningWorkspace(LearningWorkspaceDestination, initialTab: LearningWorkspaceInitialTab = .overview)
+    case learningWorkspace(LearningWorkspaceDestination, initialTab: LearningWorkspaceInitialTab = .tasks)
     case sunshineRun
     case fitnessTestRecords
     case sportsVenues
