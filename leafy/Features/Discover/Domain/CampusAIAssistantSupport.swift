@@ -42,8 +42,22 @@ nonisolated enum CampusAIAcademicRouteID: String, Codable, CaseIterable, Hashabl
     case examSchedule
     case scheduleReports
     case customCountdowns
+    case timetableProcessing
+    case honorRecords
+    case comprehensiveQuality
     case teachingPlan
     case trainingProgram
+    case emptyClassroom
+    case campusHeatmap
+    case studyTimeRecords
+    case sunshineRun
+    case fitnessTestRecords
+    case sportsVenues
+    case schoolCalendar
+    case countdowns
+    case medicalPolicy
+    case medicalScenarioAssistant
+    case medicalLedger
 
     var detailRoute: AcademicDetailRoute {
         switch self {
@@ -52,8 +66,22 @@ nonisolated enum CampusAIAcademicRouteID: String, Codable, CaseIterable, Hashabl
         case .examSchedule: return .examSchedule
         case .scheduleReports: return .scheduleReports
         case .customCountdowns: return .customCountdowns
+        case .timetableProcessing: return .timetableProcessing
+        case .honorRecords: return .honorRecords
+        case .comprehensiveQuality: return .comprehensiveQuality
         case .teachingPlan: return .teachingPlan
         case .trainingProgram: return .trainingProgram
+        case .emptyClassroom: return .emptyClassroom
+        case .campusHeatmap: return .campusHeatmap
+        case .studyTimeRecords: return .studyTimeRecords
+        case .sunshineRun: return .sunshineRun
+        case .fitnessTestRecords: return .fitnessTestRecords
+        case .sportsVenues: return .sportsVenues
+        case .schoolCalendar: return .schoolCalendar
+        case .countdowns: return .countdowns
+        case .medicalPolicy: return .medicalPolicy
+        case .medicalScenarioAssistant: return .medicalScenarioAssistant
+        case .medicalLedger: return .medicalLedger
         }
     }
 
@@ -61,11 +89,25 @@ nonisolated enum CampusAIAcademicRouteID: String, Codable, CaseIterable, Hashabl
         switch self {
         case .grades: return "成绩查询"
         case .gradeAnalytics: return "成绩分析"
-        case .examSchedule: return "考试与日程"
+        case .examSchedule: return "考试安排"
         case .scheduleReports: return "日程推送"
-        case .customCountdowns: return "自定义倒计时"
+        case .customCountdowns: return "自定日程"
+        case .timetableProcessing: return "课表导入"
+        case .honorRecords: return "荣誉记录"
+        case .comprehensiveQuality: return "综测记录"
         case .teachingPlan: return "教学计划"
         case .trainingProgram: return "培养方案"
+        case .emptyClassroom: return "空教室"
+        case .campusHeatmap: return "校园热力"
+        case .studyTimeRecords: return "学习记录"
+        case .sunshineRun: return "阳光长跑"
+        case .fitnessTestRecords: return "体测记录"
+        case .sportsVenues: return "体育场馆"
+        case .schoolCalendar: return "校历"
+        case .countdowns: return "倒计时"
+        case .medicalPolicy: return "医保政策"
+        case .medicalScenarioAssistant: return "医疗流程助手"
+        case .medicalLedger: return "医疗台账"
         }
     }
 }
@@ -244,7 +286,7 @@ nonisolated enum CampusAIActionValidation {
             return nil
         }
         var normalized = draft
-        normalized.title = normalized.title.nonEmptyTrimmed ?? "创建倒计时"
+        normalized.title = normalized.title.nonEmptyTrimmed ?? "创建重要日期"
         normalized.payload.countdownTitle = title
         normalized.payload.title = nil
         return normalized
@@ -443,9 +485,106 @@ nonisolated struct CampusAIUserSettings: Codable, Hashable {
     }
 }
 
+nonisolated struct CampusAICapabilitySet: Codable, Hashable {
+    var nonWebAgentEnabled: Bool
+    var localSearchEnabled: Bool
+    var actionPlanningEnabled: Bool
+    var artifactGenerationEnabled: Bool
+    var webSearchEnabled: Bool
+    var officialDocumentSearchEnabled: Bool
+
+    static let disabled = CampusAICapabilitySet(
+        nonWebAgentEnabled: false,
+        localSearchEnabled: false,
+        actionPlanningEnabled: false,
+        artifactGenerationEnabled: false,
+        webSearchEnabled: false,
+        officialDocumentSearchEnabled: false
+    )
+
+    init(
+        nonWebAgentEnabled: Bool,
+        localSearchEnabled: Bool,
+        actionPlanningEnabled: Bool,
+        artifactGenerationEnabled: Bool,
+        webSearchEnabled: Bool,
+        officialDocumentSearchEnabled: Bool
+    ) {
+        self.nonWebAgentEnabled = nonWebAgentEnabled
+        self.localSearchEnabled = localSearchEnabled
+        self.actionPlanningEnabled = actionPlanningEnabled
+        self.artifactGenerationEnabled = artifactGenerationEnabled
+        self.webSearchEnabled = webSearchEnabled
+        self.officialDocumentSearchEnabled = officialDocumentSearchEnabled
+    }
+
+    init(serviceMode: CampusAIServiceMode, webSearchEnabled requestedWebSearch: Bool) {
+        let canUseWeb = serviceMode == .leafyManaged && requestedWebSearch
+        self.init(
+            nonWebAgentEnabled: true,
+            localSearchEnabled: true,
+            actionPlanningEnabled: true,
+            artifactGenerationEnabled: true,
+            webSearchEnabled: canUseWeb,
+            officialDocumentSearchEnabled: canUseWeb
+        )
+    }
+
+    init(settings: CampusAIUserSettings) {
+        self.init(serviceMode: settings.serviceMode, webSearchEnabled: settings.webSearchEnabled)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case nonWebAgentEnabled
+        case nonWebAgentEnabledSnake = "non_web_agent_enabled"
+        case localSearchEnabled
+        case localSearchEnabledSnake = "local_search_enabled"
+        case actionPlanningEnabled
+        case actionPlanningEnabledSnake = "action_planning_enabled"
+        case artifactGenerationEnabled
+        case artifactGenerationEnabledSnake = "artifact_generation_enabled"
+        case webSearchEnabled
+        case webSearchEnabledSnake = "web_search_enabled"
+        case officialDocumentSearchEnabled
+        case officialDocumentSearchEnabledSnake = "official_document_search_enabled"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        nonWebAgentEnabled = try container.decodeIfPresent(Bool.self, forKey: .nonWebAgentEnabled)
+            ?? container.decodeIfPresent(Bool.self, forKey: .nonWebAgentEnabledSnake)
+            ?? false
+        localSearchEnabled = try container.decodeIfPresent(Bool.self, forKey: .localSearchEnabled)
+            ?? container.decodeIfPresent(Bool.self, forKey: .localSearchEnabledSnake)
+            ?? false
+        actionPlanningEnabled = try container.decodeIfPresent(Bool.self, forKey: .actionPlanningEnabled)
+            ?? container.decodeIfPresent(Bool.self, forKey: .actionPlanningEnabledSnake)
+            ?? false
+        artifactGenerationEnabled = try container.decodeIfPresent(Bool.self, forKey: .artifactGenerationEnabled)
+            ?? container.decodeIfPresent(Bool.self, forKey: .artifactGenerationEnabledSnake)
+            ?? false
+        webSearchEnabled = try container.decodeIfPresent(Bool.self, forKey: .webSearchEnabled)
+            ?? container.decodeIfPresent(Bool.self, forKey: .webSearchEnabledSnake)
+            ?? false
+        officialDocumentSearchEnabled = try container.decodeIfPresent(Bool.self, forKey: .officialDocumentSearchEnabled)
+            ?? container.decodeIfPresent(Bool.self, forKey: .officialDocumentSearchEnabledSnake)
+            ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(nonWebAgentEnabled, forKey: .nonWebAgentEnabled)
+        try container.encode(localSearchEnabled, forKey: .localSearchEnabled)
+        try container.encode(actionPlanningEnabled, forKey: .actionPlanningEnabled)
+        try container.encode(artifactGenerationEnabled, forKey: .artifactGenerationEnabled)
+        try container.encode(webSearchEnabled, forKey: .webSearchEnabled)
+        try container.encode(officialDocumentSearchEnabled, forKey: .officialDocumentSearchEnabled)
+    }
+}
+
 nonisolated enum CampusAISettingsStore {
     static let defaultSystemPrompt = """
-    请用中文回答，优先使用清晰的 Markdown 结构。可以围绕校园学习、生活安排和个人事项整理给出建议，但要明确区分本机上下文、一般常识和不确定内容。回答要具体、可执行，必要时用标题、列表和加粗来组织重点。若上下文不足，请直接说明缺少哪些本机数据，不要编造。
+    请用中文回答，默认简短直接，先给结论和下一步。可以围绕校园学习、生活安排和个人事项整理建议；信息不足时直接说缺什么，不要编造。
     """
 
     private static let storageKey = "campusAI.userSettings.v2"
@@ -499,6 +638,8 @@ nonisolated struct CampusAIRequest: Codable, Hashable {
     let contextSettings: CampusAIContextSettings
     let agentMode: CampusAIAgentMode
     let webSearchEnabled: Bool
+    let capabilities: CampusAICapabilitySet
+    let localRetrieval: CampusAILocalRetrievalPayload
 
     init(
         requestID: UUID = UUID(),
@@ -509,7 +650,9 @@ nonisolated struct CampusAIRequest: Codable, Hashable {
         userSystemPrompt: String = CampusAISettingsStore.defaultSystemPrompt,
         contextSettings: CampusAIContextSettings = .defaultValue,
         agentMode: CampusAIAgentMode = .auto,
-        webSearchEnabled: Bool = false
+        webSearchEnabled: Bool = false,
+        capabilities: CampusAICapabilitySet = .disabled,
+        localRetrieval: CampusAILocalRetrievalPayload = .empty(query: "")
     ) {
         self.requestID = requestID
         self.message = message
@@ -520,6 +663,704 @@ nonisolated struct CampusAIRequest: Codable, Hashable {
         self.contextSettings = contextSettings
         self.agentMode = agentMode
         self.webSearchEnabled = webSearchEnabled
+        self.capabilities = capabilities
+        self.localRetrieval = localRetrieval
+    }
+}
+
+nonisolated enum CampusAILocalKnowledgeDomain: String, Codable, CaseIterable, Hashable, Identifiable {
+    case schedule
+    case learning
+    case academics
+    case postgraduateCareer
+    case fitnessSports
+    case honorsQuality
+    case medical
+    case community
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .schedule: return "时间日程"
+        case .learning: return "学习资料"
+        case .academics: return "学业成绩"
+        case .postgraduateCareer: return "考研职业"
+        case .fitnessSports: return "体育体测"
+        case .honorsQuality: return "荣誉综测"
+        case .medical: return "医疗台账"
+        case .community: return "社区公开摘要"
+        }
+    }
+
+    var intentKeywords: [String] {
+        switch self {
+        case .schedule:
+            return ["日程", "安排", "课表", "考试", "提醒", "待办", "倒计时", "重要日期", "自定日程", "今天", "明天", "本周"]
+        case .learning:
+            return ["学习", "资料", "任务", "项目", "复习", "笔记", "材料", "自习"]
+        case .academics:
+            return ["成绩", "绩点", "gpa", "排名", "学分", "培养方案", "教学计划", "毕业"]
+        case .postgraduateCareer:
+            return ["考研", "保研", "推免", "职业", "实习", "简历", "投递", "目标院校"]
+        case .fitnessSports:
+            return ["体育", "体测", "长跑", "阳光", "运动", "场馆", "跑步"]
+        case .honorsQuality:
+            return ["荣誉", "综测", "综合素质", "证明", "奖项", "材料"]
+        case .medical:
+            return ["医疗", "医保", "报销", "就诊", "医院", "台账", "材料", "发票"]
+        case .community:
+            return ["社区", "帖子", "动态", "同学", "公开", "讨论"]
+        }
+    }
+}
+
+nonisolated struct CampusAILocalKnowledgeResult: Identifiable, Codable, Hashable {
+    var id: String
+    var domain: CampusAILocalKnowledgeDomain
+    var title: String
+    var summary: String
+    var sourceID: String
+    var routeHint: String?
+    var updatedAt: String?
+    var score: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case domain
+        case title
+        case summary
+        case sourceID
+        case sourceIDSnake = "source_id"
+        case routeHint
+        case routeHintSnake = "route_hint"
+        case updatedAt
+        case updatedAtSnake = "updated_at"
+        case score
+    }
+
+    init(
+        id: String,
+        domain: CampusAILocalKnowledgeDomain,
+        title: String,
+        summary: String,
+        sourceID: String,
+        routeHint: String? = nil,
+        updatedAt: String? = nil,
+        score: Int = 0
+    ) {
+        self.id = id
+        self.domain = domain
+        self.title = title
+        self.summary = summary
+        self.sourceID = sourceID
+        self.routeHint = routeHint
+        self.updatedAt = updatedAt
+        self.score = score
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        domain = try container.decodeIfPresent(CampusAILocalKnowledgeDomain.self, forKey: .domain) ?? .academics
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        sourceID = try container.decodeIfPresent(String.self, forKey: .sourceID)
+            ?? container.decodeIfPresent(String.self, forKey: .sourceIDSnake)
+            ?? id
+        routeHint = try container.decodeIfPresent(String.self, forKey: .routeHint)
+            ?? container.decodeIfPresent(String.self, forKey: .routeHintSnake)
+        updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+            ?? container.decodeIfPresent(String.self, forKey: .updatedAtSnake)
+        score = try container.decodeIfPresent(Int.self, forKey: .score) ?? 0
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(domain, forKey: .domain)
+        try container.encode(title, forKey: .title)
+        try container.encode(summary, forKey: .summary)
+        try container.encode(sourceID, forKey: .sourceID)
+        try container.encodeIfPresent(routeHint, forKey: .routeHint)
+        try container.encodeIfPresent(updatedAt, forKey: .updatedAt)
+        try container.encode(score, forKey: .score)
+    }
+}
+
+nonisolated struct CampusAILocalRetrievalPayload: Codable, Hashable {
+    var query: String
+    var generatedAt: String
+    var results: [CampusAILocalKnowledgeResult]
+
+    var isEmpty: Bool { results.isEmpty }
+
+    enum CodingKeys: String, CodingKey {
+        case query
+        case generatedAt
+        case generatedAtSnake = "generated_at"
+        case results
+    }
+
+    init(query: String, generatedAt: String = ISO8601DateFormatter().string(from: Date()), results: [CampusAILocalKnowledgeResult]) {
+        self.query = query
+        self.generatedAt = generatedAt
+        self.results = results
+    }
+
+    static func empty(query: String) -> CampusAILocalRetrievalPayload {
+        CampusAILocalRetrievalPayload(query: query, results: [])
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        query = try container.decodeIfPresent(String.self, forKey: .query) ?? ""
+        generatedAt = try container.decodeIfPresent(String.self, forKey: .generatedAt)
+            ?? container.decodeIfPresent(String.self, forKey: .generatedAtSnake)
+            ?? ""
+        results = try container.decodeIfPresent([CampusAILocalKnowledgeResult].self, forKey: .results) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(query, forKey: .query)
+        try container.encode(generatedAt, forKey: .generatedAt)
+        try container.encode(results, forKey: .results)
+    }
+}
+
+nonisolated enum CampusAILocalKnowledgeIndex {
+    private struct Candidate {
+        var domain: CampusAILocalKnowledgeDomain
+        var title: String
+        var summary: String
+        var sourceID: String
+        var routeHint: String?
+        var updatedAt: String?
+        var baseScore: Int
+    }
+
+    static let defaultMaxResults = 12
+    static let defaultCharacterBudget = 6_000
+
+    static func search(
+        query: String,
+        context: CampusAIContextPayload,
+        maxResults: Int = defaultMaxResults,
+        characterBudget: Int = defaultCharacterBudget
+    ) -> CampusAILocalRetrievalPayload {
+        let trimmedQuery = query.nonEmptyTrimmed ?? query
+        let candidates = buildCandidates(from: context)
+        guard !candidates.isEmpty, maxResults > 0, characterBudget > 0 else {
+            return .empty(query: trimmedQuery)
+        }
+
+        let scored = candidates.compactMap { candidate -> CampusAILocalKnowledgeResult? in
+            let score = relevanceScore(candidate: candidate, query: trimmedQuery)
+            guard score > 0 else { return nil }
+            return CampusAILocalKnowledgeResult(
+                id: stableID(domain: candidate.domain, sourceID: candidate.sourceID),
+                domain: candidate.domain,
+                title: candidate.title.clampedForAIContext(100),
+                summary: candidate.summary.clampedForAIContext(520),
+                sourceID: candidate.sourceID,
+                routeHint: candidate.routeHint,
+                updatedAt: candidate.updatedAt,
+                score: score
+            )
+        }
+        .sorted {
+            if $0.score != $1.score {
+                return $0.score > $1.score
+            }
+            return $0.title < $1.title
+        }
+
+        return CampusAILocalRetrievalPayload(
+            query: trimmedQuery,
+            results: fit(scored, maxResults: maxResults, characterBudget: characterBudget)
+        )
+    }
+
+    private static func buildCandidates(from context: CampusAIContextPayload) -> [Candidate] {
+        var candidates: [Candidate] = []
+
+        for (index, course) in context.timetable.today.enumerated() {
+            candidates.append(candidate(
+                domain: .schedule,
+                title: "今日课程：\(course.name)",
+                summary: join([
+                    "第\(periodText(course.periods))节",
+                    weekdayText(course.dayOfWeek),
+                    course.room.nonEmptyTrimmed,
+                    course.teacher.nonEmptyTrimmed.map { "教师：\($0)" }
+                ]),
+                sourceID: "timetable.today.\(index)",
+                routeHint: CampusAIAcademicRouteID.examSchedule.rawValue,
+                baseScore: 18
+            ))
+        }
+
+        for (index, course) in context.timetable.currentWeek.prefix(40).enumerated() {
+            candidates.append(candidate(
+                domain: .schedule,
+                title: "本周课程：\(course.name)",
+                summary: join([
+                    weekdayText(course.dayOfWeek),
+                    "第\(periodText(course.periods))节",
+                    course.room.nonEmptyTrimmed,
+                    course.teacher.nonEmptyTrimmed.map { "教师：\($0)" },
+                    course.weeks.isEmpty ? nil : "周次：\(course.weeks.map(String.init).joined(separator: ","))"
+                ]),
+                sourceID: "timetable.week.\(index)",
+                routeHint: CampusAIAcademicRouteID.examSchedule.rawValue,
+                baseScore: 8
+            ))
+        }
+
+        for (index, exam) in context.exams.enumerated() {
+            candidates.append(candidate(
+                domain: .schedule,
+                title: "考试：\(exam.name)",
+                summary: join([exam.date, "\(exam.start)-\(exam.end)", exam.location.nonEmptyTrimmed]),
+                sourceID: "exam.\(index)",
+                routeHint: CampusAIAcademicRouteID.examSchedule.rawValue,
+                baseScore: 24
+            ))
+        }
+
+        for (index, countdown) in context.countdowns.enumerated() {
+            candidates.append(candidate(
+                domain: .schedule,
+                title: "重要日期：\(countdown.title)",
+                summary: "目标日期：\(countdown.targetDate)",
+                sourceID: "countdown.\(index)",
+                routeHint: CampusAIAcademicRouteID.customCountdowns.rawValue,
+                baseScore: 18
+            ))
+        }
+
+        for (index, reminder) in context.timetable.cellReminders.enumerated() {
+            candidates.append(candidate(
+                domain: .schedule,
+                title: "课表提醒：\(reminder.title)",
+                summary: join([
+                    "第\(reminder.week)周",
+                    weekdayText(reminder.dayOfWeek),
+                    "第\(reminder.period)\(reminder.endPeriod.map { "-\($0)" } ?? "")节",
+                    reminder.location?.nonEmptyTrimmed,
+                    reminder.note?.nonEmptyTrimmed
+                ]),
+                sourceID: "timetable.reminder.\(index)",
+                routeHint: CampusAIAcademicRouteID.examSchedule.rawValue,
+                updatedAt: reminder.updatedAt,
+                baseScore: 18
+            ))
+        }
+
+        for (index, note) in context.timetable.courseNotes.enumerated() {
+            candidates.append(candidate(
+                domain: .schedule,
+                title: "课程备注：\(note.courseName)",
+                summary: note.text,
+                sourceID: "course.note.\(index)",
+                routeHint: CampusAIAcademicRouteID.examSchedule.rawValue,
+                updatedAt: note.updatedAt,
+                baseScore: 12
+            ))
+        }
+
+        for (index, project) in context.learningWorkspace.projects.enumerated() {
+            candidates.append(candidate(
+                domain: .learning,
+                title: "学习空间：\(project.title)",
+                summary: join([project.kind.nonEmptyTrimmed, project.goal.nonEmptyTrimmed, project.isArchived ? "已归档" : "进行中"]),
+                sourceID: "learning.project.\(index)",
+                updatedAt: project.updatedAt,
+                baseScore: 16
+            ))
+        }
+
+        for (index, task) in context.learningWorkspace.tasks.enumerated() {
+            candidates.append(candidate(
+                domain: .learning,
+                title: "学习任务：\(task.title)",
+                summary: join([
+                    task.category.nonEmptyTrimmed,
+                    task.dueAt.map { "截止：\($0)" },
+                    task.isCompleted ? "已完成" : "未完成",
+                    task.note.nonEmptyTrimmed
+                ]),
+                sourceID: "learning.task.\(index)",
+                updatedAt: task.updatedAt,
+                baseScore: task.isCompleted ? 12 : 22
+            ))
+        }
+
+        for (index, material) in context.learningWorkspace.materials.enumerated() {
+            candidates.append(fileCandidate(
+                domain: .learning,
+                prefix: "学习资料",
+                file: material,
+                sourceID: "learning.material.\(index)",
+                baseScore: 16
+            ))
+        }
+
+        for (index, record) in context.learningWorkspace.studyRecords.enumerated() {
+            candidates.append(candidate(
+                domain: .learning,
+                title: "学习记录：\(record.content)",
+                summary: join([
+                    record.category.nonEmptyTrimmed,
+                    record.location.nonEmptyTrimmed,
+                    "开始：\(record.startedAt)",
+                    "时长：\(record.minutes) 分钟",
+                    record.note.nonEmptyTrimmed
+                ]),
+                sourceID: "study.record.\(index)",
+                baseScore: 12
+            ))
+        }
+
+        for (index, grade) in context.grades.recentCourses.enumerated() {
+            candidates.append(candidate(
+                domain: .academics,
+                title: "成绩：\(grade.name)",
+                summary: join([grade.term.nonEmptyTrimmed, "成绩：\(grade.score)", "学分：\(grade.credit)", grade.type.nonEmptyTrimmed]),
+                sourceID: "grade.course.\(index)",
+                routeHint: CampusAIAcademicRouteID.grades.rawValue,
+                baseScore: 18
+            ))
+        }
+
+        for (index, ranking) in context.grades.rankings.enumerated() {
+            let rankText = ranking.rank.map { "排名：\($0)" }
+            let totalText = ranking.totalCount.map { "总人数：\($0)" }
+            let percentileText = ranking.percentile.map { "百分位：\(Int(($0 * 100).rounded()))%" }
+            candidates.append(candidate(
+                domain: .academics,
+                title: "成绩排名：\(ranking.term)",
+                summary: join([ranking.range.nonEmptyTrimmed, ranking.metric.nonEmptyTrimmed, rankText, totalText, percentileText]),
+                sourceID: "grade.ranking.\(index)",
+                routeHint: CampusAIAcademicRouteID.gradeAnalytics.rawValue,
+                baseScore: 20
+            ))
+        }
+
+        for (index, plan) in context.teachingPlan.enumerated() {
+            candidates.append(candidate(
+                domain: .academics,
+                title: "教学计划：\(plan.term)",
+                summary: join(["总学分：\(plan.totalCredits)", plan.courses.prefix(12).joined(separator: "、")]),
+                sourceID: "teaching.plan.\(index)",
+                routeHint: CampusAIAcademicRouteID.teachingPlan.rawValue,
+                baseScore: 16
+            ))
+        }
+
+        if let trainingProgram = context.trainingProgram {
+            candidates.append(candidate(
+                domain: .academics,
+                title: trainingProgram.title,
+                summary: join([
+                    trainingProgram.creditRequirements.prefix(8).joined(separator: "；"),
+                    trainingProgram.sections.prefix(4).joined(separator: "；")
+                ]),
+                sourceID: "training.program",
+                routeHint: CampusAIAcademicRouteID.trainingProgram.rawValue,
+                baseScore: 18
+            ))
+        }
+
+        for (index, target) in context.postgraduateAndCareer.postgraduateTargets.enumerated() {
+            candidates.append(candidate(
+                domain: .postgraduateCareer,
+                title: "考研目标：\(join([target.school.nonEmptyTrimmed, target.unit.nonEmptyTrimmed, target.major.nonEmptyTrimmed], separator: " "))",
+                summary: join([
+                    "年份：\(target.examYear)",
+                    target.direction.nonEmptyTrimmed,
+                    target.subjects.nonEmptyTrimmed,
+                    target.scoreAndPlanNote.nonEmptyTrimmed,
+                    target.personalNote.nonEmptyTrimmed,
+                    target.state.nonEmptyTrimmed
+                ]),
+                sourceID: "postgraduate.target.\(index)",
+                updatedAt: target.updatedAt,
+                baseScore: 18
+            ))
+        }
+
+        for (index, task) in context.postgraduateAndCareer.careerTasks.enumerated() {
+            candidates.append(candidate(
+                domain: .postgraduateCareer,
+                title: "职业任务：\(task.title)",
+                summary: join([
+                    task.dueAt.map { "截止：\($0)" },
+                    task.isCompleted ? "已完成" : "未完成",
+                    task.note.nonEmptyTrimmed
+                ]),
+                sourceID: "career.task.\(index)",
+                updatedAt: task.updatedAt,
+                baseScore: task.isCompleted ? 12 : 20
+            ))
+        }
+
+        for (index, opportunity) in context.postgraduateAndCareer.opportunities.enumerated() {
+            candidates.append(candidate(
+                domain: .postgraduateCareer,
+                title: "机会：\(opportunity.title)",
+                summary: join([opportunity.organization.nonEmptyTrimmed, opportunity.status.nonEmptyTrimmed, opportunity.note.nonEmptyTrimmed]),
+                sourceID: "career.opportunity.\(index)",
+                updatedAt: opportunity.updatedAt,
+                baseScore: 14
+            ))
+        }
+
+        for (index, resume) in context.postgraduateAndCareer.resumes.enumerated() {
+            candidates.append(fileCandidate(
+                domain: .postgraduateCareer,
+                prefix: "简历资料",
+                file: resume,
+                sourceID: "career.resume.\(index)",
+                baseScore: 12
+            ))
+        }
+
+        for (index, test) in context.honorsFitnessQuality.fitnessTests.enumerated() {
+            candidates.append(candidate(
+                domain: .fitnessSports,
+                title: "体测：\(test.item)",
+                summary: join([test.value.nonEmptyTrimmed, test.testedAt.nonEmptyTrimmed, test.note.nonEmptyTrimmed]),
+                sourceID: "fitness.test.\(index)",
+                routeHint: CampusAIAcademicRouteID.fitnessTestRecords.rawValue,
+                baseScore: 18
+            ))
+        }
+
+        for (index, honor) in context.honorsFitnessQuality.honors.enumerated() {
+            candidates.append(fileCandidate(
+                domain: .honorsQuality,
+                prefix: "荣誉记录",
+                file: honor,
+                sourceID: "honor.\(index)",
+                routeHint: CampusAIAcademicRouteID.honorRecords.rawValue,
+                baseScore: 16
+            ))
+        }
+
+        for (index, record) in context.honorsFitnessQuality.comprehensiveQualityRecords.enumerated() {
+            candidates.append(candidate(
+                domain: .honorsQuality,
+                title: "综测记录：\(record.collegeName)",
+                summary: join([
+                    record.cohort.nonEmptyTrimmed,
+                    record.academicStandardScore.map { "学业标准分：\($0)" },
+                    record.officialQualityScore.map { "素质分：\($0)" },
+                    record.officialCompositeScore.map { "综合分：\($0)" },
+                    record.note.nonEmptyTrimmed
+                ]),
+                sourceID: "quality.record.\(index)",
+                routeHint: CampusAIAcademicRouteID.comprehensiveQuality.rawValue,
+                updatedAt: record.updatedAt,
+                baseScore: 18
+            ))
+        }
+
+        for (index, component) in context.honorsFitnessQuality.comprehensiveQualityComponents.enumerated() {
+            candidates.append(candidate(
+                domain: .honorsQuality,
+                title: "综测项目：\(component.component)",
+                summary: join([
+                    component.collegeName.nonEmptyTrimmed,
+                    component.cohort.nonEmptyTrimmed,
+                    component.rawScore.map { "原始分：\($0)" },
+                    component.officialStandardScore.map { "标准分：\($0)" },
+                    component.materialReady ? "材料已准备" : "材料未标记完成",
+                    component.note.nonEmptyTrimmed
+                ]),
+                sourceID: "quality.component.\(index)",
+                routeHint: CampusAIAcademicRouteID.comprehensiveQuality.rawValue,
+                updatedAt: component.updatedAt,
+                baseScore: 16
+            ))
+        }
+
+        for (index, evidence) in context.honorsFitnessQuality.comprehensiveQualityEvidence.enumerated() {
+            candidates.append(fileCandidate(
+                domain: .honorsQuality,
+                prefix: "综测证明",
+                file: evidence,
+                sourceID: "quality.evidence.\(index)",
+                routeHint: CampusAIAcademicRouteID.comprehensiveQuality.rawValue,
+                baseScore: 14
+            ))
+        }
+
+        for (index, entry) in context.medicalLedger.entries.enumerated() {
+            candidates.append(candidate(
+                domain: .medical,
+                title: "医疗台账：\(entry.hospitalName.nonEmptyTrimmed ?? "就诊记录")",
+                summary: join([
+                    entry.visitDate.nonEmptyTrimmed,
+                    entry.department.nonEmptyTrimmed,
+                    entry.scenario.nonEmptyTrimmed,
+                    "费用：\(entry.totalExpense)",
+                    entry.estimatedReimbursement.map { "预计报销：\($0)" },
+                    entry.actualReimbursement.map { "实际报销：\($0)" },
+                    entry.status.nonEmptyTrimmed,
+                    entry.reimbursementDeadline.map { "截止：\($0)" },
+                    entry.materials.isEmpty ? nil : "材料：\(entry.materials.joined(separator: "、"))",
+                    entry.note.nonEmptyTrimmed
+                ]),
+                sourceID: "medical.entry.\(index)",
+                routeHint: CampusAIAcademicRouteID.medicalLedger.rawValue,
+                updatedAt: entry.updatedAt,
+                baseScore: 18
+            ))
+        }
+
+        for (index, post) in context.communityCache.posts.enumerated() {
+            candidates.append(candidate(
+                domain: .community,
+                title: "社区：\(post.title)",
+                summary: join([
+                    post.category,
+                    post.body.nonEmptyTrimmed,
+                    "评论 \(post.commentCount)",
+                    "点赞 \(post.likeCount)",
+                    post.imageCount > 0 ? "含 \(post.imageCount) 张图片" : nil
+                ]),
+                sourceID: "community.post.\(index)",
+                updatedAt: post.updatedAt.nonEmptyTrimmed ?? post.createdAt,
+                baseScore: 8
+            ))
+        }
+
+        return candidates.filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    private static func candidate(
+        domain: CampusAILocalKnowledgeDomain,
+        title: String,
+        summary: String,
+        sourceID: String,
+        routeHint: String? = nil,
+        updatedAt: String? = nil,
+        baseScore: Int
+    ) -> Candidate {
+        Candidate(
+            domain: domain,
+            title: title,
+            summary: summary,
+            sourceID: sourceID,
+            routeHint: routeHint,
+            updatedAt: updatedAt,
+            baseScore: baseScore
+        )
+    }
+
+    private static func fileCandidate(
+        domain: CampusAILocalKnowledgeDomain,
+        prefix: String,
+        file: CampusAIFileMetadataContext,
+        sourceID: String,
+        routeHint: String? = nil,
+        baseScore: Int
+    ) -> Candidate {
+        candidate(
+            domain: domain,
+            title: "\(prefix)：\(file.title)",
+            summary: join([
+                file.category.nonEmptyTrimmed,
+                file.fileType.nonEmptyTrimmed,
+                file.note.nonEmptyTrimmed
+            ]),
+            sourceID: sourceID,
+            routeHint: routeHint,
+            updatedAt: file.updatedAt,
+            baseScore: baseScore
+        )
+    }
+
+    private static func relevanceScore(candidate: Candidate, query: String) -> Int {
+        let normalizedQuery = query.lowercased()
+        let haystack = "\(candidate.title)\n\(candidate.summary)".lowercased()
+        var score = candidate.baseScore
+
+        if haystack.contains(normalizedQuery), normalizedQuery.count >= 2 {
+            score += 36
+        }
+
+        for keyword in candidate.domain.intentKeywords where normalizedQuery.contains(keyword.lowercased()) {
+            score += 18
+        }
+
+        for domain in CampusAILocalKnowledgeDomain.allCases where domain != candidate.domain {
+            if domain.intentKeywords.contains(where: { normalizedQuery.contains($0.lowercased()) }) {
+                score -= 4
+            }
+        }
+
+        for token in queryTokens(query) where token.count >= 2 {
+            if haystack.contains(token.lowercased()) {
+                score += min(14, token.count + 4)
+            }
+        }
+
+        return score
+    }
+
+    private static func fit(
+        _ results: [CampusAILocalKnowledgeResult],
+        maxResults: Int,
+        characterBudget: Int
+    ) -> [CampusAILocalKnowledgeResult] {
+        var remaining = characterBudget
+        var fitted: [CampusAILocalKnowledgeResult] = []
+        for result in results.prefix(maxResults) {
+            var next = result
+            let fixedCost = next.title.count + next.domain.title.count + next.sourceID.count + 32
+            let totalCost = fixedCost + next.summary.count
+            if totalCost > remaining {
+                let summaryLimit = remaining - fixedCost
+                guard summaryLimit >= 80 else { break }
+                next.summary = next.summary.clampedForAIContext(summaryLimit)
+            }
+            let cost = fixedCost + next.summary.count
+            guard cost <= remaining else { break }
+            fitted.append(next)
+            remaining -= cost
+        }
+        return fitted
+    }
+
+    private static func queryTokens(_ value: String) -> [String] {
+        let separated = value
+            .lowercased()
+            .replacingOccurrences(of: #"[\p{P}\p{S}\s]+"#, with: " ", options: .regularExpression)
+        var tokens = separated.split(separator: " ").map(String.init)
+        let important = CampusAILocalKnowledgeDomain.allCases.flatMap(\.intentKeywords)
+        tokens.append(contentsOf: important.filter { value.contains($0) })
+        return Array(Set(tokens))
+    }
+
+    private static func join(_ values: [String?], separator: String = "，") -> String {
+        values.compactMap { $0?.nonEmptyTrimmed }.joined(separator: separator)
+    }
+
+    private static func weekdayText(_ day: Int) -> String {
+        guard (1...7).contains(day) else { return "星期\(day)" }
+        return ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][day - 1]
+    }
+
+    private static func periodText(_ periods: [Int]) -> String {
+        periods.isEmpty ? "未知" : periods.map(String.init).joined(separator: ",")
+    }
+
+    private static func stableID(domain: CampusAILocalKnowledgeDomain, sourceID: String) -> String {
+        "\(domain.rawValue)-\(sourceID)"
+            .replacingOccurrences(of: #"[^A-Za-z0-9._-]+"#, with: "-", options: .regularExpression)
     }
 }
 
@@ -614,6 +1455,27 @@ nonisolated enum CampusAIDeliverableFileFormat: String, Codable, CaseIterable, H
         case .txt:
             return "txt"
         }
+    }
+}
+
+nonisolated enum CampusAIArtifactFormatResolver {
+    static func formats(for message: String) -> [CampusAIDeliverableFileFormat] {
+        let text = message.lowercased()
+        var formats: [CampusAIDeliverableFileFormat] = []
+        if containsAny(text, ["html", "网页", "浏览器", "浏览", "网站"]) {
+            formats.append(.html)
+        }
+        if containsAny(text, ["markdown", "md", "markdown 文件"]) {
+            formats.append(.markdown)
+        }
+        if containsAny(text, ["txt", "文本", "纯文本"]) {
+            formats.append(.txt)
+        }
+        return formats.isEmpty ? [.html] : CampusAIDeliverableFileFormat.allCases.filter { formats.contains($0) }
+    }
+
+    private static func containsAny(_ text: String, _ keywords: [String]) -> Bool {
+        keywords.contains { text.contains($0) }
     }
 }
 
@@ -1063,6 +1925,70 @@ nonisolated enum CampusAIDeliverableFileBuilder {
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "[", with: "\\[")
             .replacingOccurrences(of: "]", with: "\\]")
+    }
+}
+
+nonisolated enum CampusAILocalArtifactBuilder {
+    static func deliverables(for request: CampusAIRequest, answer: String) -> [CampusAIDeliverable] {
+        guard request.capabilities.artifactGenerationEnabled,
+              shouldGenerateArtifact(for: request.message),
+              !request.localRetrieval.results.isEmpty
+        else {
+            return []
+        }
+
+        let sources = request.localRetrieval.results.prefix(12).map { result in
+            CampusAIDeliverableSource(
+                id: "local-\(result.id)",
+                title: result.title.nonEmptyTrimmed ?? result.domain.title,
+                url: "leafy://local/\(result.domain.rawValue)/\(result.sourceID)",
+                siteName: "Leafy \(result.domain.title)",
+                summary: result.summary.nonEmptyTrimmed,
+                excerpt: nil,
+                trustScore: 1,
+                attachments: []
+            )
+        }
+        guard !sources.isEmpty else { return [] }
+
+        return [
+            CampusAIDeliverable(
+                id: "local-deliverable-\(request.requestID.uuidString)",
+                title: artifactTitle(for: request.message),
+                query: request.message,
+                summary: artifactSummary(answer: answer),
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                sources: sources,
+                formats: CampusAIArtifactFormatResolver.formats(for: request.message)
+            )
+        ]
+    }
+
+    private static func shouldGenerateArtifact(for message: String) -> Bool {
+        let text = message.lowercased()
+        return [
+            "资料包",
+            "交付",
+            "导出",
+            "生成文件",
+            "整理成文件",
+            "html",
+            "markdown",
+            "txt",
+            "md 文件",
+            "文档"
+        ].contains { text.contains($0) }
+    }
+
+    private static func artifactTitle(for message: String) -> String {
+        let base = message
+            .replacingOccurrences(of: #"[\r\n\t]+"#, with: " ", options: .regularExpression)
+            .clampedForAIContext(32)
+        return "\(base.nonEmptyTrimmed ?? "本地资料")资料包"
+    }
+
+    private static func artifactSummary(answer: String) -> String {
+        answer.nonEmptyTrimmed?.clampedForAIContext(240) ?? "已根据相关资料整理为可打开的本地文件。"
     }
 }
 
@@ -1646,7 +2572,7 @@ nonisolated enum CampusAIContextBuilder {
             teachingPlan: SchoolDataCache.loadTeachingPlan(),
             trainingProgram: SchoolDataCache.loadTrainingProgram(),
             gradeCreditSummary: SchoolDataCache.loadGradeCreditSummary(),
-            countdowns: CustomCountdownStore.load(),
+            countdowns: CustomScheduleStore.load(),
             learningMaterials: fetch(LearningMaterialDocument.self, in: modelContext),
             learningProjects: fetch(LearningProject.self, in: modelContext),
             learningTasks: fetch(LearningProjectTask.self, in: modelContext),
@@ -1687,7 +2613,7 @@ nonisolated enum CampusAIContextBuilder {
         teachingPlan: [TeachingPlanSection],
         trainingProgram: TrainingProgramDocument?,
         gradeCreditSummary: GradeCreditSummary? = nil,
-        countdowns: [CustomCountdownEvent],
+        countdowns: [CustomScheduleEvent],
         learningMaterials: [LearningMaterialDocument] = [],
         learningProjects: [LearningProject] = [],
         learningTasks: [LearningProjectTask] = [],
@@ -1808,8 +2734,8 @@ nonisolated enum CampusAIContextBuilder {
             teachingPlan: settings.includesExamsAndPlans ? teachingPlan.prefix(12).map { CampusAITeachingPlanContext(section: $0) } : [],
             trainingProgram: settings.includesExamsAndPlans ? trainingProgram.map { CampusAITrainingProgramContext(document: $0) } : nil,
             countdowns: settings.includesExamsAndPlans ? countdowns
-                .filter { $0.targetDate >= todayStart }
-                .sorted { $0.targetDate < $1.targetDate }
+                .filter { $0.startsAt >= todayStart }
+                .sorted { $0.startsAt < $1.startsAt }
                 .prefix(30)
                 .map { CampusAICountdownContext(countdown: $0) } : [],
             learningWorkspace: settings.includesLearningWorkspace
@@ -2043,7 +2969,7 @@ nonisolated enum CampusAIContextBuilder {
         courseReminders: [CourseReminderSetting],
         cellReminders: [TimetableCellReminder],
         favoriteClassrooms: [FavoriteClassroom],
-        countdowns: [CustomCountdownEvent],
+        countdowns: [CustomScheduleEvent],
         learningMaterials: [LearningMaterialDocument],
         learningProjects: [LearningProject],
         learningTasks: [LearningProjectTask],
@@ -2261,12 +3187,12 @@ nonisolated extension CampusAITimetableCellReminderContext {
 }
 
 nonisolated extension CampusAICountdownContext {
-    init(countdown: CustomCountdownEvent) {
+    init(countdown: CustomScheduleEvent) {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.timeZone = TimeZone.current
         formatter.dateFormat = "yyyy-MM-dd"
-        self.init(title: countdown.title, targetDate: formatter.string(from: countdown.targetDate))
+        self.init(title: countdown.title, targetDate: formatter.string(from: countdown.startsAt))
     }
 }
 
@@ -2932,7 +3858,7 @@ nonisolated struct CampusAIChatCompletionsPayload: Encodable, Hashable {
     let thinking: Thinking
     let streamOptions: StreamOptions
     let temperature: Double
-    let maxTokens: Int
+    let maxTokens: Int?
     let user: String?
 
     enum CodingKeys: String, CodingKey {
@@ -3068,6 +3994,10 @@ nonisolated struct CampusAIService {
                 continuation.finish(throwing: CampusAIServiceError.emptyMessage)
             }
         }
+        let capabilities = CampusAICapabilitySet(settings: settings)
+        let localRetrieval = capabilities.localSearchEnabled
+            ? CampusAILocalKnowledgeIndex.search(query: trimmed, context: context)
+            : .empty(query: trimmed)
         let request = CampusAIRequest(
             message: trimmed,
             context: context,
@@ -3076,7 +4006,9 @@ nonisolated struct CampusAIService {
             userSystemPrompt: settings.effectiveSystemPrompt,
             contextSettings: settings.contextSettings,
             agentMode: .auto,
-            webSearchEnabled: settings.webSearchEnabled
+            webSearchEnabled: capabilities.webSearchEnabled,
+            capabilities: capabilities,
+            localRetrieval: localRetrieval
         )
         return streamInvoke(request, settings)
     }
@@ -3183,6 +4115,12 @@ nonisolated struct CampusAIService {
                             settings: settings,
                             apiKey: apiKey
                         )
+                        if finalResponse.deliverables.isEmpty {
+                            finalResponse.deliverables = CampusAILocalArtifactBuilder.deliverables(
+                                for: request,
+                                answer: finalResponse.answer
+                            )
+                        }
                         if usesDirectAgent {
                             let actionStep = directAgentStep(
                                 id: "direct-agent-action-plan",
@@ -3306,7 +4244,7 @@ nonisolated struct CampusAIService {
             "方案",
             "多步",
             "提醒",
-            "倒计时",
+            "重要日期",
             "打开"
         ].contains { text.contains($0) }
     }
@@ -3408,6 +4346,8 @@ nonisolated struct CampusAIService {
             message: request.message,
             context: request.context,
             contextSettings: request.contextSettings,
+            capabilities: request.capabilities,
+            localRetrieval: request.localRetrieval,
             recentMessages: request.recentMessages.suffix(10).map { message in
                 CampusAIProviderUserContent.RecentMessage(
                     role: message.role == .assistant ? "assistant" : "user",
@@ -3429,7 +4369,7 @@ nonisolated struct CampusAIService {
             thinking: .enabled,
             streamOptions: .includeUsage,
             temperature: 0.2,
-            maxTokens: 1800,
+            maxTokens: nil,
             user: nil
         )
     }
@@ -3442,7 +4382,9 @@ nonisolated struct CampusAIService {
             message: request.message,
             answer: answer,
             context: request.context,
-            contextSettings: request.contextSettings
+            contextSettings: request.contextSettings,
+            capabilities: request.capabilities,
+            localRetrieval: request.localRetrieval
         )
         guard let userContentString = String(data: try providerJSONEncoder().encode(userContent), encoding: .utf8) else {
             throw CampusAIServiceError.invalidProviderResponse
@@ -3467,6 +4409,7 @@ nonisolated struct CampusAIService {
             "你是 MyLeafy 的校园学习与生活助手，当前是测试功能。",
             "回答要直接、具体、可执行；能给结论就先给结论，不要反复解释内部数据来源。",
             "可以结合已提供的课程、考试、学习、提醒和个人事项上下文，也可以补充合理的一般建议；不要把不确定内容说成事实。",
+            "如果输入包含 local_retrieval，优先使用其中最相关的结果；不要把它作为工程细节反复解释给用户。",
             "缺少关键信息时，用一句话说明缺什么，并给出用户下一步能做的选择。",
             "不要声称读取了未提供的数据，不要声称读取了用户上传文件正文、图片像素、OCR、PDF、Word、PPT、表格或本地文件路径。",
             "不要推断私信、身份资料、未提供的远端内容或后台登录后的内容。",
@@ -3480,11 +4423,13 @@ nonisolated struct CampusAIService {
         [
             "你是 MyLeafy 的动作规划器，只能输出 JSON，不能输出 Markdown、解释、代码块或多余文本。",
             "根据用户问题、AI 已生成回答和本机上下文，最多生成 3 个需要用户确认后执行的动作。",
-            "只有用户明确想打开页面、设置倒计时、设置课表提醒，或回答中明显需要这一步时才生成动作；否则返回 {\"actions\":[]}。",
+            "可以使用 local_retrieval 中的 routeHint 和 sourceID 判断动作目标；缺少明确目标 ID 时不要编造编辑或删除动作。",
+            "只有用户明确想打开页面、设置重要日期、设置课表提醒，或回答中明显需要这一步时才生成动作；否则返回 {\"actions\":[]}。",
             "支持 kind：openAcademicRoute、createCountdown、createTimetableReminder。",
-            "openAcademicRoute.payload.route 只能是 grades、gradeAnalytics、examSchedule、scheduleReports、customCountdowns、teachingPlan、trainingProgram。",
-            "用户想新建、添加或管理日程/提醒，但缺少创建课表提醒所需的周次、星期、节次时，生成 openAcademicRoute：一般日程用 examSchedule，倒计时或重要日期用 customCountdowns，推送或报告用 scheduleReports。",
-            "createCountdown.payload 必须包含 countdownTitle 和 targetDate，targetDate 使用 yyyy-MM-dd。",
+            "openAcademicRoute.payload.route 必须来自 supported_actions 中的 allowed_values.route。",
+            "用户明确想查看、添加或管理考试、考场、考试时间、考试安排时，生成 openAcademicRoute 到 examSchedule。",
+            "用户想新建、添加或管理日程/提醒，但缺少创建课表提醒所需的周次、星期、节次时，生成 openAcademicRoute：普通日程、事项、待办、提醒、重要日期或自定日程管理用 customCountdowns，推送或报告用 scheduleReports。",
+            "createCountdown 兼容旧字段名，语义是创建重要日期；payload 必须包含 countdownTitle 和 targetDate，targetDate 使用 yyyy-MM-dd。",
             "createTimetableReminder.payload 必须包含 week、dayOfWeek、period、title；dayOfWeek 为 1 到 7，minutesBefore 必须大于等于 0。",
             "不要生成删除、修改成绩或课表原始数据、医疗决策、社区发帖评论、远程抓取、后台登录等动作。",
             "输出格式必须是 {\"actions\":[{\"kind\":\"...\",\"title\":\"...\",\"detail\":\"...\",\"payload\":{...}}]}。"
@@ -3525,25 +4470,40 @@ nonisolated struct CampusAIService {
             .joined(separator: "\n")
             .lowercased()
         let hasCreateIntent = ["新建", "添加", "创建", "设置", "安排"].contains { text.contains($0) }
+        let hasOpenIntent = ["查看", "打开", "查询", "管理"].contains { text.contains($0) }
         let hasScheduleIntent = ["日程", "提醒", "事项", "待办", "安排"].contains { text.contains($0) }
-        guard hasCreateIntent, hasScheduleIntent else { return [] }
+        let hasExamIntent = text.contains("考试") || text.contains("考场")
+        guard (hasCreateIntent || hasOpenIntent) && (hasScheduleIntent || hasExamIntent) else { return [] }
 
         let route: CampusAIAcademicRouteID
-        if text.contains("倒计时") || text.contains("重要日期") || text.contains("纪念日") {
-            route = .customCountdowns
-        } else if text.contains("推送") || text.contains("报告") {
+        if text.contains("推送") || text.contains("报告") {
             route = .scheduleReports
-        } else {
+        } else if text.contains("考试") || text.contains("考场") {
             route = .examSchedule
+        } else {
+            route = .customCountdowns
         }
         return [
             CampusAIActionDraft(
                 kind: .openAcademicRoute,
                 title: "打开\(route.title)",
-                detail: "前往\(route.title)继续创建或管理日程。",
+                detail: actionDetail(for: route),
                 payload: CampusAIActionPayload(route: route.rawValue)
             )
         ]
+    }
+
+    private static func actionDetail(for route: CampusAIAcademicRouteID) -> String {
+        switch route {
+        case .examSchedule:
+            return "前往考试安排继续查看或管理考试。"
+        case .scheduleReports:
+            return "前往日程推送继续设置报告。"
+        case .customCountdowns:
+            return "前往自定日程继续创建或管理日程。"
+        default:
+            return "前往\(route.title)继续处理。"
+        }
     }
 
     static func actionPlannerActions(fromProviderResponseData data: Data) throws -> [CampusAIActionDraft] {
@@ -3702,12 +4662,16 @@ nonisolated private struct CampusAIProviderUserContent: Encodable {
     let message: String
     let context: CampusAIContextPayload
     let contextSettings: CampusAIContextSettings
+    let capabilities: CampusAICapabilitySet
+    let localRetrieval: CampusAILocalRetrievalPayload
     let recentMessages: [RecentMessage]
 
     enum CodingKeys: String, CodingKey {
         case message
         case context
         case contextSettings = "context_settings"
+        case capabilities
+        case localRetrieval = "local_retrieval"
         case recentMessages = "recent_messages"
     }
 
@@ -3722,6 +4686,8 @@ nonisolated private struct CampusAIActionPlannerUserContent: Encodable {
     let answer: String
     let context: CampusAIContextPayload
     let contextSettings: CampusAIContextSettings
+    let capabilities: CampusAICapabilitySet
+    let localRetrieval: CampusAILocalRetrievalPayload
     let supportedActions: [SupportedAction]
     let safetyBoundary: [String]
 
@@ -3730,6 +4696,8 @@ nonisolated private struct CampusAIActionPlannerUserContent: Encodable {
         case answer
         case context
         case contextSettings = "context_settings"
+        case capabilities
+        case localRetrieval = "local_retrieval"
         case supportedActions = "supported_actions"
         case safetyBoundary = "safety_boundary"
     }
@@ -3738,12 +4706,16 @@ nonisolated private struct CampusAIActionPlannerUserContent: Encodable {
         message: String,
         answer: String,
         context: CampusAIContextPayload,
-        contextSettings: CampusAIContextSettings
+        contextSettings: CampusAIContextSettings,
+        capabilities: CampusAICapabilitySet,
+        localRetrieval: CampusAILocalRetrievalPayload
     ) {
         self.message = message
         self.answer = answer
         self.context = context
         self.contextSettings = contextSettings
+        self.capabilities = capabilities
+        self.localRetrieval = localRetrieval
         supportedActions = [
             .init(
                 kind: CampusAIActionKind.openAcademicRoute.rawValue,
@@ -3771,7 +4743,9 @@ nonisolated private struct CampusAIActionPlannerUserContent: Encodable {
         ]
         safetyBoundary = [
             "所有动作都只生成待确认草稿，不会自动执行。",
-            "不要生成删除、修改成绩或课表原始数据、医疗决策、社区发帖评论、远程抓取、后台登录等动作。",
+            "不要生成修改成绩或课表原始数据、医疗决策、社区发帖评论、远程抓取、后台登录等动作。",
+            "编辑或删除必须有 local_retrieval.sourceID 等明确目标 ID；缺少目标 ID 时改生成 openAcademicRoute 或返回空 actions。",
+            "删除类动作需要二次确认；当前 schema 未提供删除 kind 时不要输出删除动作。",
             "缺少必要 payload 字段或字段无法从上下文确定时，返回空 actions。"
         ]
     }
@@ -3801,6 +4775,8 @@ nonisolated private struct CampusAIManagedFunctionRequest: Encodable {
     let contextSettings: CampusAIContextSettings
     let agentMode: CampusAIAgentMode
     let webSearchEnabled: Bool
+    let capabilities: CampusAICapabilitySet
+    let localRetrieval: CampusAILocalRetrievalPayload
 
     enum CodingKeys: String, CodingKey {
         case requestID = "request_id"
@@ -3814,6 +4790,8 @@ nonisolated private struct CampusAIManagedFunctionRequest: Encodable {
         case contextSettings = "context_settings"
         case agentMode = "agent_mode"
         case webSearchEnabled = "web_search_enabled"
+        case capabilities
+        case localRetrieval = "local_retrieval"
     }
 
     init(
@@ -3833,6 +4811,8 @@ nonisolated private struct CampusAIManagedFunctionRequest: Encodable {
         self.contextSettings = request.contextSettings
         self.agentMode = request.agentMode
         self.webSearchEnabled = request.webSearchEnabled
+        self.capabilities = request.capabilities
+        self.localRetrieval = request.localRetrieval
     }
 }
 

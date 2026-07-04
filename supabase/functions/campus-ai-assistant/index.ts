@@ -48,6 +48,9 @@ type CampusAIRequest = {
   agentMode?: string;
   web_search_enabled?: boolean;
   webSearchEnabled?: boolean;
+  capabilities?: unknown;
+  local_retrieval?: unknown;
+  localRetrieval?: unknown;
 };
 
 type CampusAIActionKind =
@@ -125,6 +128,20 @@ type CampusAIDeliverable = {
   generatedAt: string;
   sources: CampusAIDeliverableSource[];
   formats: CampusAIDeliverableFormat[];
+};
+
+type CampusAILocalRetrievalResult = {
+  id?: string;
+  domain?: string;
+  title?: string;
+  summary?: string;
+  sourceID?: string;
+  source_id?: string;
+  routeHint?: string;
+  route_hint?: string;
+  updatedAt?: string;
+  updated_at?: string;
+  score?: number;
 };
 
 type AgentTraceStep = {
@@ -343,6 +360,11 @@ export async function handler(request: Request): Promise<Response> {
         ...(result.agentTrace ?? []),
       ]);
       deliverables = deduplicateDeliverables(result.deliverables ?? []);
+      if (deliverables.length === 0) {
+        deliverables = deduplicateDeliverables(
+          localRetrievalDeliverables(body, message, result.answer),
+        );
+      }
 
       const actionPlan = await planActions(
         body,
@@ -437,7 +459,7 @@ function webSearchEnabled(body: CampusAIRequest) {
     return body.web_search_enabled;
   }
   if (typeof body.webSearchEnabled === "boolean") return body.webSearchEnabled;
-  return true;
+  return false;
 }
 
 export function shouldSearchWeb(message: string) {
@@ -821,6 +843,8 @@ export function agentToolPlannerPayload(
           message,
           context: body.context ?? {},
           context_settings: body.context_settings ?? body.contextSettings ?? {},
+          capabilities: body.capabilities ?? {},
+          local_retrieval: localRetrievalFromBody(body),
           recent_messages: recentMessagesFromBody(body).slice(
             -maxRecentMessages,
           ),
@@ -1347,7 +1371,11 @@ async function officialDocumentSearch(
     if (source) sources.push(source);
   }
 
-  const deliverable = officialDocumentDeliverable(query, sources);
+  const deliverable = officialDocumentDeliverable(
+    query,
+    sources,
+    artifactFormatsForMessage(userMessage),
+  );
   return { query, deliverable };
 }
 
@@ -1536,6 +1564,7 @@ function fallbackOfficialSource(
 export function officialDocumentDeliverable(
   query: string,
   sources: CampusAIDeliverableSource[],
+  formats: CampusAIDeliverableFormat[] = artifactFormatsForMessage(query),
 ): CampusAIDeliverable {
   const attachmentCount = sources.reduce(
     (sum, source) => sum + source.attachments.length,
@@ -1553,7 +1582,7 @@ export function officialDocumentDeliverable(
     summary,
     generatedAt: new Date().toISOString(),
     sources,
-    formats: ["html", "markdown", "txt"],
+    formats,
   };
 }
 
@@ -1565,6 +1594,132 @@ function citationsFromDeliverable(deliverable: CampusAIDeliverable) {
     siteName: source.siteName,
     summary: source.summary ?? source.excerpt,
   } satisfies AgentCitation));
+}
+
+export function localRetrievalDeliverables(
+  body: CampusAIRequest,
+  message: string,
+  answer: string,
+): CampusAIDeliverable[] {
+  if (!shouldGenerateLocalArtifact(message)) return [];
+  const results = localRetrievalResults(body);
+  if (results.length === 0) return [];
+
+  const sources = results.slice(0, 12).map((result, index) => {
+    const domain = normalizeText(result.domain) ?? "local";
+    const sourceID = normalizeText(result.sourceID) ??
+      normalizeText(result.source_id) ??
+      result.id ??
+      `item-${index}`;
+    const title = normalizeText(result.title) ?? localDomainTitle(domain);
+    return {
+      id: `local-${hashString(`${domain}|${sourceID}|${title}`)}`,
+      title,
+      url: `leafy://local/${encodeURIComponent(domain)}/${
+        encodeURIComponent(sourceID)
+      }`,
+      siteName: `Leafy ${localDomainTitle(domain)}`,
+      summary: normalizeText(result.summary)?.slice(0, 520),
+      trustScore: 1,
+      attachments: [],
+    } satisfies CampusAIDeliverableSource;
+  });
+
+  return [{
+    id: `local-deliverable-${
+      hashString(`${message}|${sources.map((source) => source.id).join("|")}`)
+    }`,
+    title: `${normalizeText(message)?.slice(0, 32) || "本地资料"}资料包`,
+    query: message,
+    summary: normalizeText(answer)?.slice(0, 240) ??
+      "已根据相关本地资料整理为可打开的本地文件。",
+    generatedAt: new Date().toISOString(),
+    sources,
+    formats: artifactFormatsForMessage(message),
+  }];
+}
+
+function artifactFormatsForMessage(
+  message: string,
+): CampusAIDeliverableFormat[] {
+  const text = message.toLowerCase();
+  const formats: CampusAIDeliverableFormat[] = [];
+  if (
+    ["html", "网页", "浏览器", "浏览", "网站"].some((keyword) =>
+      text.includes(keyword)
+    )
+  ) {
+    formats.push("html");
+  }
+  if (
+    ["markdown", "md", "markdown 文件"].some((keyword) =>
+      text.includes(keyword)
+    )
+  ) {
+    formats.push("markdown");
+  }
+  if (
+    ["txt", "文本", "纯文本"].some((keyword) => text.includes(keyword))
+  ) {
+    formats.push("txt");
+  }
+  return formats.length === 0
+    ? ["html"]
+    : (["html", "markdown", "txt"] as CampusAIDeliverableFormat[]).filter((
+      format,
+    ) => formats.includes(format));
+}
+
+function shouldGenerateLocalArtifact(message: string) {
+  const text = message.toLowerCase();
+  return [
+    "资料包",
+    "交付",
+    "导出",
+    "生成文件",
+    "整理成文件",
+    "html",
+    "markdown",
+    "txt",
+    "md 文件",
+    "文档",
+  ].some((keyword) => text.includes(keyword));
+}
+
+function localRetrievalResults(body: CampusAIRequest) {
+  const payload = objectValue(localRetrievalFromBody(body));
+  const results = Array.isArray(payload?.results) ? payload.results : [];
+  return results
+    .map((item) => objectValue(item) as CampusAILocalRetrievalResult | null)
+    .filter((item): item is CampusAILocalRetrievalResult => {
+      if (!item) return false;
+      const title = normalizeText(item.title);
+      const summary = normalizeText(item.summary);
+      return !!title || !!summary;
+    });
+}
+
+function localDomainTitle(domain: string) {
+  switch (domain) {
+    case "schedule":
+      return "时间日程";
+    case "learning":
+      return "学习资料";
+    case "academics":
+      return "学业成绩";
+    case "postgraduateCareer":
+      return "考研职业";
+    case "fitnessSports":
+      return "体育体测";
+    case "honorsQuality":
+      return "荣誉综测";
+    case "medical":
+      return "医疗台账";
+    case "community":
+      return "社区公开摘要";
+    default:
+      return "本地资料";
+  }
 }
 
 async function runDelegatedSubtask(
@@ -1592,6 +1747,7 @@ async function runDelegatedSubtask(
           user_message: message,
           task,
           context: body.context ?? {},
+          local_retrieval: localRetrievalFromBody(body),
           search_results: searchResults,
         }),
       },
@@ -1703,6 +1859,8 @@ export function agentSynthesisPayload(
           message,
           context: body.context ?? {},
           context_settings: body.context_settings ?? body.contextSettings ?? {},
+          capabilities: body.capabilities ?? {},
+          local_retrieval: localRetrievalFromBody(body),
           recent_messages: recentMessages,
           web_search_results: searchResults,
           subtask_results: subtaskResults,
@@ -1715,7 +1873,6 @@ export function agentSynthesisPayload(
     stream_options: { include_usage: true },
     thinking: { type: "enabled" },
     temperature: 0.2,
-    max_tokens: 2000,
     user: userCacheKey(body.app_transaction_id),
   };
 }
@@ -1727,6 +1884,7 @@ function agentSynthesisSystemPrompt(
   return [
     systemPrompt(userSystemPrompt),
     "你现在处于 agent 模式。请整合本机上下文、联网搜索结果和子任务结论。",
+    "如果输入包含 local_retrieval，优先使用其中最相关的本地结果；不需要说明内部检索流程。",
     hasCitations
       ? "使用联网结果时，必须在相关句子后用 Markdown 链接标注来源，优先引用输入 citations 中的 URL。"
       : "本次没有可用联网搜索结果；如果问题需要最新信息，请明确说明未使用联网结果。",
@@ -2074,6 +2232,8 @@ export function deepSeekPayload(body: CampusAIRequest, message: string) {
           message,
           context: body.context ?? {},
           context_settings: body.context_settings ?? body.contextSettings ?? {},
+          capabilities: body.capabilities ?? {},
+          local_retrieval: localRetrievalFromBody(body),
           recent_messages: recentMessages,
         }),
       },
@@ -2082,7 +2242,6 @@ export function deepSeekPayload(body: CampusAIRequest, message: string) {
     stream_options: { include_usage: true },
     thinking: { type: "enabled" },
     temperature: 0.2,
-    max_tokens: 1800,
     user: userCacheKey(body.app_transaction_id),
   };
 }
@@ -2106,20 +2265,14 @@ export function actionPlannerPayload(
           answer,
           context: body.context ?? {},
           context_settings: body.context_settings ?? body.contextSettings ?? {},
+          capabilities: body.capabilities ?? {},
+          local_retrieval: localRetrievalFromBody(body),
           supported_actions: [
             {
               kind: "openAcademicRoute",
               required_payload_fields: ["route"],
               allowed_values: {
-                route: [
-                  "grades",
-                  "gradeAnalytics",
-                  "examSchedule",
-                  "scheduleReports",
-                  "customCountdowns",
-                  "teachingPlan",
-                  "trainingProgram",
-                ],
+                route: academicRouteIDs(),
               },
             },
             {
@@ -2139,7 +2292,9 @@ export function actionPlannerPayload(
           ],
           safety_boundary: [
             "所有动作都只生成待确认草稿，不会自动执行。",
-            "不要生成删除、修改成绩或课表原始数据、医疗决策、社区发帖评论、远程抓取、后台登录等动作。",
+            "不要生成修改成绩或课表原始数据、医疗决策、社区发帖评论、远程抓取、后台登录等动作。",
+            "编辑或删除必须有 local_retrieval.sourceID 等明确目标 ID；缺少目标 ID 时改用 openAcademicRoute 或返回空 actions。",
+            "删除类动作需要二次确认；当前 schema 未提供删除 kind 时不要输出删除动作。",
             "缺少 createTimetableReminder 必要字段时不要编造；如果用户是在新建或管理日程/提醒，改用 openAcademicRoute 打开对应页面。",
           ],
         }),
@@ -2159,6 +2314,7 @@ export function systemPrompt(userSystemPrompt?: string | null) {
     "你是 MyLeafy 的校园学习与生活助手，当前是测试功能。",
     "回答要直接、具体、可执行；能给结论就先给结论，不要反复解释内部数据来源。",
     "可以结合已提供的课程、考试、学习、提醒和个人事项上下文，也可以补充合理的一般建议；不要把不确定内容说成事实。",
+    "如果输入包含 local_retrieval，优先使用其中最相关的结果；不要把它作为工程细节反复解释给用户。",
     "缺少关键信息时，用一句话说明缺什么，并给出用户下一步能做的选择。",
     "不要声称读取了未提供的数据，不要声称读取了用户上传文件正文、图片像素、OCR、PDF、Word、PPT、表格或本地文件路径。",
     "不要推断私信、身份资料、未提供的远端内容或后台登录后的内容。",
@@ -2172,9 +2328,10 @@ export function actionPlannerSystemPrompt() {
   return [
     "你是 MyLeafy 的动作规划器，只能输出 JSON，不能输出 Markdown、解释、代码块或多余文本。",
     "根据用户问题、AI 已生成回答和本机上下文，最多生成 3 个需要用户确认后执行的动作。",
+    "可以使用 local_retrieval 中的 routeHint 和 sourceID 判断动作目标；缺少明确目标 ID 时不要编造编辑或删除动作。",
     '只有用户明确想打开页面、设置倒计时、设置课表提醒，或回答中明显需要这一步时才生成动作；否则返回 {"actions":[]}。',
     "支持 kind：openAcademicRoute、createCountdown、createTimetableReminder。",
-    "openAcademicRoute.payload.route 只能是 grades、gradeAnalytics、examSchedule、scheduleReports、customCountdowns、teachingPlan、trainingProgram。",
+    "openAcademicRoute.payload.route 必须来自 supported_actions 中的 allowed_values.route。",
     "用户想新建、添加或管理日程/提醒，但缺少创建课表提醒所需的周次、星期、节次时，生成 openAcademicRoute：一般日程用 examSchedule，倒计时或重要日期用 customCountdowns，推送或报告用 scheduleReports。",
     "createCountdown.payload 必须包含 countdownTitle 和 targetDate，targetDate 使用 yyyy-MM-dd。",
     "createTimetableReminder.payload 必须包含 week、dayOfWeek、period、title；dayOfWeek 为 1 到 7，minutesBefore 必须大于等于 0。",
@@ -2402,15 +2559,7 @@ function validateOpenAcademicRoute(
   draft: CampusAIActionDraft,
 ): CampusAIActionDraft | null {
   const route = draft.payload?.route;
-  const allowedRoutes = new Set([
-    "grades",
-    "gradeAnalytics",
-    "examSchedule",
-    "scheduleReports",
-    "customCountdowns",
-    "teachingPlan",
-    "trainingProgram",
-  ]);
+  const allowedRoutes = new Set(academicRouteIDs());
   if (!route || !allowedRoutes.has(route)) return null;
   return {
     ...draft,
@@ -2474,6 +2623,32 @@ function validateCreateTimetableReminder(
   };
 }
 
+function academicRouteIDs() {
+  return [
+    "grades",
+    "gradeAnalytics",
+    "examSchedule",
+    "scheduleReports",
+    "customCountdowns",
+    "timetableProcessing",
+    "honorRecords",
+    "comprehensiveQuality",
+    "teachingPlan",
+    "trainingProgram",
+    "emptyClassroom",
+    "campusHeatmap",
+    "studyTimeRecords",
+    "sunshineRun",
+    "fitnessTestRecords",
+    "sportsVenues",
+    "schoolCalendar",
+    "countdowns",
+    "medicalPolicy",
+    "medicalScenarioAssistant",
+    "medicalLedger",
+  ];
+}
+
 function academicRouteTitle(route: string) {
   switch (route) {
     case "grades":
@@ -2486,10 +2661,38 @@ function academicRouteTitle(route: string) {
       return "日程推送";
     case "customCountdowns":
       return "自定义倒计时";
+    case "timetableProcessing":
+      return "课表导入";
+    case "honorRecords":
+      return "荣誉记录";
+    case "comprehensiveQuality":
+      return "综测记录";
     case "teachingPlan":
       return "教学计划";
     case "trainingProgram":
       return "培养方案";
+    case "emptyClassroom":
+      return "空教室";
+    case "campusHeatmap":
+      return "校园热力";
+    case "studyTimeRecords":
+      return "学习记录";
+    case "sunshineRun":
+      return "阳光长跑";
+    case "fitnessTestRecords":
+      return "体测记录";
+    case "sportsVenues":
+      return "体育场馆";
+    case "schoolCalendar":
+      return "校历";
+    case "countdowns":
+      return "倒计时";
+    case "medicalPolicy":
+      return "医保政策";
+    case "medicalScenarioAssistant":
+      return "医疗流程助手";
+    case "medicalLedger":
+      return "医疗台账";
     default:
       return "学业页面";
   }
@@ -2723,6 +2926,10 @@ function recentMessagesFromBody(body: CampusAIRequest) {
   if (Array.isArray(body.recent_messages)) return body.recent_messages;
   if (Array.isArray(body.recentMessages)) return body.recentMessages;
   return [];
+}
+
+function localRetrievalFromBody(body: CampusAIRequest) {
+  return body.local_retrieval ?? body.localRetrieval ?? null;
 }
 
 function userCacheKey(appTransactionID: unknown): string | null {

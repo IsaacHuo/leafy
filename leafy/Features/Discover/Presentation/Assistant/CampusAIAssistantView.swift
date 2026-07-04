@@ -21,6 +21,10 @@ struct CampusAIAssistantView: View {
     @State private var isSettingsPresented = false
     @State private var isSending = false
     @State private var activeStreamTask: Task<Void, Never>?
+    @State private var activeStreamRunID: UUID?
+    @State private var activeStreamConversationID: UUID?
+    @State private var activeStreamMessageID: UUID?
+    @State private var discardedStreamMessageIDs: Set<UUID> = []
     @State private var userSettings = CampusAISettingsStore.load()
     @State private var isClearHistoryConfirmationPresented = false
     @State private var conversationPendingDeletion: CampusAIConversation?
@@ -29,6 +33,7 @@ struct CampusAIAssistantView: View {
     @State private var visibleSuggestionPrompts = Self.randomSuggestionPrompts()
     @State private var configuredProviderIDs: Set<CampusAIProviderID> = []
     @State private var quotaSnapshot: CampusAIQuotaSnapshot?
+    @State private var actionEditor: CampusAIActionEditorPresentation?
 
     private var selectedConversation: CampusAIConversation? {
         if let selectedConversationID,
@@ -96,6 +101,13 @@ struct CampusAIAssistantView: View {
         }) {
             CampusAISettingsView(settings: $userSettings)
         }
+        .sheet(item: $actionEditor) { presentation in
+            CampusAIActionEditorSheet(presentation: presentation) { draft in
+                Task {
+                    await confirmActionEditor(presentation, draft: draft)
+                }
+            }
+        }
         .alert("Leafy AI 仍在实验阶段", isPresented: $isExperimentalNoticePresented) {
             Button("我知道了") {
                 experimentalNoticeAcknowledged = true
@@ -103,7 +115,6 @@ struct CampusAIAssistantView: View {
         } message: {
             Text("AI 问答功能还在测试中，回复可能会有错误、遗漏或过时内容。涉及课程、考试、成绩、医疗、手续等事项，请以学校官方系统和最新通知为准。")
         }
-        .onDisappear(perform: cancelStreaming)
         .confirmationDialog(
             "删除这个对话？",
             isPresented: conversationDeletionBinding,
@@ -352,7 +363,7 @@ struct CampusAIAssistantView: View {
                     .padding(.leading, 8)
                     .padding(.bottom, 7)
 
-                TextField("询问 Leafy", text: $draftText, axis: .vertical)
+                TextField("功能仍在测试，不作功能保证。", text: $draftText, axis: .vertical)
                     .focused($isComposerFocused)
                     .lineLimit(1...5)
                     .textFieldStyle(.plain)
@@ -642,27 +653,29 @@ struct CampusAIAssistantView: View {
     }
 
     private func submitDraft() {
-        guard activeStreamTask == nil else { return }
+        guard activeStreamTask == nil,
+              !isSending,
+              !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return }
+        let streamRunID = UUID()
+        activeStreamRunID = streamRunID
         activeStreamTask = Task {
-            await sendCurrentDraft()
+            await sendCurrentDraft(streamRunID: streamRunID)
         }
     }
 
     private func cancelStreaming() {
         activeStreamTask?.cancel()
         activeStreamTask = nil
+        activeStreamRunID = nil
         isSending = false
     }
 
     @MainActor
-    private func sendCurrentDraft() async {
+    private func sendCurrentDraft(streamRunID: UUID) async {
         let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isSending else { return }
         let requestSettings = userSettings
-        defer {
-            isSending = false
-            activeStreamTask = nil
-        }
 
         let conversation = selectedConversation ?? {
             let newConversation = CampusAIConversation()
@@ -697,6 +710,21 @@ struct CampusAIAssistantView: View {
         )
         modelContext.insert(assistantMessage)
         try? modelContext.save()
+        activeStreamConversationID = conversation.id
+        activeStreamMessageID = assistantMessage.id
+
+        defer {
+            if activeStreamRunID == streamRunID {
+                isSending = false
+                activeStreamTask = nil
+                activeStreamRunID = nil
+            }
+            if activeStreamMessageID == assistantMessage.id {
+                activeStreamConversationID = nil
+                activeStreamMessageID = nil
+            }
+            discardedStreamMessageIDs.remove(assistantMessage.id)
+        }
 
         do {
             var streamedAnswer = ""
@@ -796,6 +824,7 @@ struct CampusAIAssistantView: View {
             conversation.updatedAt = Date()
             try? modelContext.save()
         } catch is CancellationError {
+            guard !discardedStreamMessageIDs.contains(assistantMessage.id) else { return }
             if assistantMessage.text.nonEmptyTrimmed == nil {
                 assistantMessage.text = "已停止生成。"
             } else {
@@ -820,10 +849,17 @@ struct CampusAIAssistantView: View {
 
     private func deleteConversation(_ conversation: CampusAIConversation) {
         let key = conversation.id.uuidString
+        if activeStreamConversationID == conversation.id {
+            if let activeStreamMessageID {
+                discardedStreamMessageIDs.insert(activeStreamMessageID)
+            }
+            cancelStreaming()
+        }
         for action in actionRecords where action.conversationID == key {
             modelContext.delete(action)
         }
         for message in messages where message.conversationID == key {
+            discardedStreamMessageIDs.insert(message.id)
             try? CampusAIDeliverableFileBuilder.removeArtifacts(for: message.id)
             modelContext.delete(message)
         }
@@ -896,14 +932,46 @@ struct CampusAIAssistantView: View {
             switch validated.kind {
             case .openAcademicRoute:
                 try executeOpenAcademicRoute(validated)
+                markAction(record, status: .completed)
+            case .createCountdown:
+                actionEditor = CampusAIActionEditorPresentation(record: record, draft: validated)
+            case .createTimetableReminder:
+                actionEditor = CampusAIActionEditorPresentation(record: record, draft: validated)
+            }
+        } catch {
+            markAction(record, status: .failed)
+            operationAlert = .failure(error.localizedDescription)
+        }
+    }
+
+    @MainActor
+    private func confirmActionEditor(
+        _ presentation: CampusAIActionEditorPresentation,
+        draft: CampusAIActionDraft
+    ) async {
+        guard presentation.record.status == .pending else {
+            actionEditor = nil
+            return
+        }
+        guard let validated = CampusAIActionValidation.validate(draft) else {
+            operationAlert = .failure("动作内容无效，无法执行。")
+            return
+        }
+
+        do {
+            switch validated.kind {
+            case .openAcademicRoute:
+                try executeOpenAcademicRoute(validated)
             case .createCountdown:
                 try executeCreateCountdown(validated)
             case .createTimetableReminder:
                 try await executeCreateTimetableReminder(validated)
             }
-            markAction(record, status: .completed)
+            markAction(presentation.record, status: .completed)
+            actionEditor = nil
         } catch {
-            markAction(record, status: .failed)
+            markAction(presentation.record, status: .failed)
+            actionEditor = nil
             operationAlert = .failure(error.localizedDescription)
         }
     }
@@ -922,10 +990,10 @@ struct CampusAIAssistantView: View {
         else {
             throw CampusAIActionExecutionError.invalidPayload
         }
-        var events = CustomCountdownStore.load()
-        events.append(CustomCountdownEvent(title: title, targetDate: targetDate))
-        CustomCountdownStore.save(events)
-        operationAlert = .success("已创建倒计时：\(title)。")
+        var events = CustomScheduleStore.load()
+        events.append(CustomScheduleEvent(title: title, startsAt: targetDate))
+        CustomScheduleStore.save(events)
+        operationAlert = .success("已创建重要日期：\(title)。")
     }
 
     @MainActor
@@ -1003,11 +1071,18 @@ struct CampusAIAssistantView: View {
     }
 
     private func clearAllHistory() {
+        if activeStreamTask != nil || activeStreamMessageID != nil {
+            if let activeStreamMessageID {
+                discardedStreamMessageIDs.insert(activeStreamMessageID)
+            }
+            cancelStreaming()
+        }
         try? CampusAIDeliverableFileBuilder.removeAllArtifacts()
         for action in actionRecords {
             modelContext.delete(action)
         }
         for message in messages {
+            discardedStreamMessageIDs.insert(message.id)
             modelContext.delete(message)
         }
         for conversation in conversations {
@@ -1245,14 +1320,23 @@ private struct CampusAIMessageRow: View {
                     CampusAIAgentStatusPill(text: statusText)
                 }
 
-                if !agentMetadata.citations.isEmpty {
-                    CampusAICitationList(citations: agentMetadata.citations)
+                if !agentMetadata.citations.isEmpty || agentMetadata.deliverables.contains(where: { !$0.sources.isEmpty }) {
+                    CampusAISourceAttachmentPillList(
+                        citations: agentMetadata.citations,
+                        deliverables: agentMetadata.deliverables
+                    )
                 }
 
                 if !agentMetadata.deliverables.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(agentMetadata.deliverables) { deliverable in
-                            CampusAIDeliverableCard(deliverable: deliverable, messageID: message.id)
+                            ForEach(displayFormats(for: deliverable)) { format in
+                                CampusAIDeliverableCard(
+                                    deliverable: deliverable,
+                                    messageID: message.id,
+                                    format: format
+                                )
+                            }
                         }
                     }
                 }
@@ -1291,6 +1375,11 @@ private struct CampusAIMessageRow: View {
             .frame(width: 28, height: 28)
             .background(AppTheme.accent.opacity(0.12), in: Circle())
             .padding(.top, 2)
+    }
+
+    private func displayFormats(for deliverable: CampusAIDeliverable) -> [CampusAIDeliverableFileFormat] {
+        let formats = deliverable.formats.isEmpty ? [.html] : deliverable.formats
+        return CampusAIDeliverableFileFormat.allCases.filter { formats.contains($0) }
     }
 }
 
@@ -1331,83 +1420,174 @@ private struct CampusAIAgentStatusPill: View {
     }
 }
 
-private struct CampusAICitationList: View {
-    let citations: [CampusAICitation]
+private struct CampusAISourceAttachmentPillList: View {
+    private struct PillItem: Identifiable, Hashable {
+        enum Kind: Hashable {
+            case source
+            case attachment(String)
+        }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("引用来源", systemImage: "link")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(AppTheme.secondaryText)
+        let id: String
+        let title: String
+        let subtitle: String?
+        let url: String
+        let kind: Kind
 
-            ForEach(citations.prefix(6)) { citation in
-                citationRow(citation)
+        var iconName: String {
+            switch kind {
+            case .source:
+                return "link"
+            case .attachment:
+                return "paperclip"
             }
         }
-        .padding(12)
-        .background(AppTheme.softFill.opacity(0.72), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+        var badge: String {
+            switch kind {
+            case .source:
+                return "来源"
+            case .attachment(let fileType):
+                return fileType.uppercased()
+            }
+        }
+    }
+
+    let citations: [CampusAICitation]
+    let deliverables: [CampusAIDeliverable]
+
+    private var items: [PillItem] {
+        var result: [PillItem] = []
+        var seen = Set<String>()
+
+        for citation in citations {
+            append(
+                PillItem(
+                    id: "citation-\(citation.id)",
+                    title: citation.title.nonEmptyTrimmed ?? citation.url,
+                    subtitle: citation.siteName?.nonEmptyTrimmed,
+                    url: citation.url,
+                    kind: .source
+                ),
+                to: &result,
+                seen: &seen
+            )
+        }
+
+        for deliverable in deliverables {
+            for source in deliverable.sources {
+                append(
+                    PillItem(
+                        id: "source-\(source.id)",
+                        title: source.title.nonEmptyTrimmed ?? source.url,
+                        subtitle: source.siteName?.nonEmptyTrimmed,
+                        url: source.url,
+                        kind: .source
+                    ),
+                    to: &result,
+                    seen: &seen
+                )
+
+                for attachment in source.attachments {
+                    append(
+                        PillItem(
+                            id: "attachment-\(attachment.url)",
+                            title: attachment.title.nonEmptyTrimmed ?? attachment.url,
+                            subtitle: source.title.nonEmptyTrimmed,
+                            url: attachment.url,
+                            kind: .attachment(attachment.fileType.nonEmptyTrimmed ?? "附件")
+                        ),
+                        to: &result,
+                        seen: &seen
+                    )
+                }
+            }
+        }
+
+        return Array(result.prefix(12))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(items) { item in
+                pill(item)
+            }
+        }
     }
 
     @ViewBuilder
-    private func citationRow(_ citation: CampusAICitation) -> some View {
-        if let url = URL(string: citation.url), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+    private func pill(_ item: PillItem) -> some View {
+        if let url = URL(string: item.url), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
             Link(destination: url) {
-                citationContent(citation)
+                pillContent(item)
             }
         } else {
-            citationContent(citation)
+            pillContent(item)
         }
     }
 
-    private func citationContent(_ citation: CampusAICitation) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(citation.title.nonEmptyTrimmed ?? citation.url)
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(AppTheme.primaryText)
-                .fixedSize(horizontal: false, vertical: true)
+    private func pillContent(_ item: PillItem) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: item.iconName)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppTheme.accent)
+                .frame(width: 18, height: 18)
 
-            let sourceText = [citation.siteName?.nonEmptyTrimmed, citation.publishedAt?.nonEmptyTrimmed]
-                .compactMap { $0 }
-                .joined(separator: " · ")
-            if !sourceText.isEmpty {
-                Text(sourceText)
-                    .font(.caption2)
-                    .foregroundStyle(AppTheme.tertiaryText)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.title)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(AppTheme.primaryText)
                     .lineLimit(1)
+
+                if let subtitle = item.subtitle {
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .lineLimit(1)
+                }
             }
 
-            if let summary = (citation.summary?.nonEmptyTrimmed ?? citation.snippet?.nonEmptyTrimmed) {
-                Text(summary)
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.secondaryText)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Spacer(minLength: 8)
+
+            Text(item.badge)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(AppTheme.secondaryText)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(AppTheme.cardElevated.opacity(0.8), in: Capsule())
         }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
+        .background(AppTheme.softFill.opacity(0.72), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func append(_ item: PillItem, to result: inout [PillItem], seen: inout Set<String>) {
+        let key = "\(item.url)|\(item.title)|\(item.badge)"
+        guard !seen.contains(key), !item.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        seen.insert(key)
+        result.append(item)
     }
 }
 
 private struct CampusAIDeliverableCard: View {
     let deliverable: CampusAIDeliverable
     let messageID: UUID
+    let format: CampusAIDeliverableFileFormat
 
     @State private var previewItem: CampusAIDeliverablePreviewItem?
     @State private var fileError: String?
 
-    private var availableFormats: [CampusAIDeliverableFileFormat] {
-        let formats = deliverable.formats.isEmpty ? CampusAIDeliverableFileFormat.allCases : deliverable.formats
-        return CampusAIDeliverableFileFormat.allCases.filter { formats.contains($0) }
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        Button {
+            open(format)
+        } label: {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "folder.badge.gearshape")
+                Image(systemName: iconName)
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(AppTheme.accent)
-                    .frame(width: 24, height: 24)
+                    .frame(width: 30, height: 30)
+                    .background(AppTheme.accent.opacity(0.12), in: Circle())
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(deliverable.title.nonEmptyTrimmed ?? "学校官方资料包")
@@ -1421,40 +1601,25 @@ private struct CampusAIDeliverableCard: View {
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-            }
 
-            HStack(spacing: 8) {
-                ForEach(availableFormats) { format in
-                    Button {
-                        open(format)
-                    } label: {
-                        Text(format.displayTitle)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(AppTheme.primaryText)
-                            .frame(minWidth: 64)
-                            .frame(height: 30)
-                            .background(AppTheme.cardElevated.opacity(0.82), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
+                Spacer(minLength: 8)
+
+                HStack(spacing: 5) {
+                    Text(format.displayTitle)
+                        .font(.caption2.weight(.bold))
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.bold))
                 }
-            }
-
-            if !deliverable.sources.isEmpty {
-                Divider().opacity(0.26)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("官方来源与附件", systemImage: "link")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AppTheme.secondaryText)
-
-                    ForEach(deliverable.sources.prefix(3)) { source in
-                        sourceBlock(source)
-                    }
-                }
+                .foregroundStyle(AppTheme.accent)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(AppTheme.accent.opacity(0.12), in: Capsule())
             }
         }
-        .padding(12)
-        .background(AppTheme.softFill.opacity(0.72), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .buttonStyle(.plain)
+        .padding(13)
+        .background(AppTheme.softFill.opacity(0.72), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .sheet(item: $previewItem) { item in
             CampusAIDeliverablePreviewSheet(item: item)
         }
@@ -1476,72 +1641,6 @@ private struct CampusAIDeliverableCard: View {
         )
     }
 
-    @ViewBuilder
-    private func sourceBlock(_ source: CampusAIDeliverableSource) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            if let url = URL(string: source.url), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
-                Link(destination: url) {
-                    sourceHeader(source)
-                }
-            } else {
-                sourceHeader(source)
-            }
-
-            if let detail = (source.summary?.nonEmptyTrimmed ?? source.excerpt?.nonEmptyTrimmed) {
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.secondaryText)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if !source.attachments.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(source.attachments.prefix(6)) { attachment in
-                        attachmentLink(attachment)
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func sourceHeader(_ source: CampusAIDeliverableSource) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(source.title.nonEmptyTrimmed ?? source.url)
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(AppTheme.primaryText)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text([source.siteName?.nonEmptyTrimmed, Self.scoreText(source.trustScore)].compactMap { $0 }.joined(separator: " · "))
-                .font(.caption2)
-                .foregroundStyle(AppTheme.tertiaryText)
-                .lineLimit(1)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-    }
-
-    @ViewBuilder
-    private func attachmentLink(_ attachment: CampusAIDeliverableAttachment) -> some View {
-        if let url = URL(string: attachment.url), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
-            Link(destination: url) {
-                HStack(spacing: 6) {
-                    Image(systemName: "paperclip")
-                        .font(.caption2.weight(.semibold))
-                    Text(attachment.title.nonEmptyTrimmed ?? attachment.url)
-                        .font(.caption)
-                        .lineLimit(1)
-                    Text(attachment.fileType.uppercased())
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(AppTheme.tertiaryText)
-                }
-                .foregroundStyle(AppTheme.primaryText)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-    }
-
     private func open(_ format: CampusAIDeliverableFileFormat) {
         do {
             let url = try CampusAIDeliverableFileBuilder.writeFile(
@@ -1559,8 +1658,15 @@ private struct CampusAIDeliverableCard: View {
         }
     }
 
-    private static func scoreText(_ score: Double) -> String {
-        "可信度 \(Int((max(0, min(score, 1)) * 100).rounded()))%"
+    private var iconName: String {
+        switch format {
+        case .html:
+            return "safari"
+        case .markdown:
+            return "doc.richtext"
+        case .txt:
+            return "doc.text"
+        }
     }
 }
 
@@ -1569,6 +1675,185 @@ private struct CampusAIDeliverablePreviewItem: Identifiable {
     let title: String
     let format: CampusAIDeliverableFileFormat
     let url: URL
+}
+
+private struct CampusAIActionEditorPresentation: Identifiable {
+    let id: UUID
+    let record: CampusAIActionRecord
+    let draft: CampusAIActionDraft
+
+    init(record: CampusAIActionRecord, draft: CampusAIActionDraft) {
+        self.id = record.id
+        self.record = record
+        self.draft = draft
+    }
+}
+
+private struct CampusAIActionEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let presentation: CampusAIActionEditorPresentation
+    let onSave: (CampusAIActionDraft) -> Void
+
+    @State private var countdownTitle: String
+    @State private var targetDate: Date
+    @State private var week: Int
+    @State private var dayOfWeek: Int
+    @State private var period: Int
+    @State private var endPeriod: Int
+    @State private var reminderTitle: String
+    @State private var location: String
+    @State private var note: String
+    @State private var minutesBefore: Int
+
+    init(
+        presentation: CampusAIActionEditorPresentation,
+        onSave: @escaping (CampusAIActionDraft) -> Void
+    ) {
+        self.presentation = presentation
+        self.onSave = onSave
+        let payload = presentation.draft.payload
+        _countdownTitle = State(initialValue: payload.countdownTitle ?? payload.title ?? "")
+        _targetDate = State(initialValue: CampusAIActionValidation.countdownDate(for: presentation.draft) ?? Date())
+        _week = State(initialValue: max(1, min(payload.week ?? SemesterConfig.currentWeek(), SemesterConfig.supportedWeeks)))
+        _dayOfWeek = State(initialValue: max(1, min(payload.dayOfWeek ?? 1, 7)))
+        let initialPeriod = payload.period ?? TimetablePeriodSchedule.slots.first?.period ?? 1
+        _period = State(initialValue: max(1, min(initialPeriod, TimetablePeriodSchedule.slots.last?.period ?? 12)))
+        _endPeriod = State(initialValue: max(initialPeriod, min(payload.endPeriod ?? initialPeriod, TimetablePeriodSchedule.slots.last?.period ?? 12)))
+        _reminderTitle = State(initialValue: payload.title ?? payload.countdownTitle ?? "")
+        _location = State(initialValue: payload.location ?? "")
+        _note = State(initialValue: payload.note ?? "")
+        _minutesBefore = State(initialValue: max(0, payload.minutesBefore ?? 0))
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                switch presentation.draft.kind {
+                case .createCountdown:
+                    countdownSection
+                case .createTimetableReminder:
+                    timetableReminderSection
+                default:
+                    Text("这个动作不需要编辑。")
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+            }
+            .navigationTitle(navigationTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        onSave(editedDraft)
+                        dismiss()
+                    }
+                    .disabled(!canSave)
+                }
+            }
+            .onChange(of: period) { _, newValue in
+                if endPeriod < newValue {
+                    endPeriod = newValue
+                }
+            }
+        }
+    }
+
+    private var countdownSection: some View {
+        Section("重要日期") {
+            TextField("标题", text: $countdownTitle)
+            DatePicker("目标日期", selection: $targetDate, displayedComponents: .date)
+        }
+    }
+
+    private var timetableReminderSection: some View {
+        Section("课表提醒") {
+            TextField("标题", text: $reminderTitle)
+            Stepper("第 \(week) 周", value: $week, in: 1...SemesterConfig.supportedWeeks)
+            Picker("星期", selection: $dayOfWeek) {
+                ForEach(1...7, id: \.self) { day in
+                    Text(Self.weekdayText(day)).tag(day)
+                }
+            }
+            Stepper("开始节次：\(period)", value: $period, in: periodRange)
+            Stepper("结束节次：\(endPeriod)", value: $endPeriod, in: period...periodRange.upperBound)
+            TextField("地点", text: $location)
+            TextField("备注", text: $note, axis: .vertical)
+                .lineLimit(2...4)
+            Stepper(minutesBefore > 0 ? "提前 \(minutesBefore) 分钟提醒" : "不提前提醒", value: $minutesBefore, in: 0...180, step: 5)
+        }
+    }
+
+    private var navigationTitle: String {
+        switch presentation.draft.kind {
+        case .createCountdown:
+            return "编辑重要日期"
+        case .createTimetableReminder:
+            return "编辑课表提醒"
+        default:
+            return "编辑动作"
+        }
+    }
+
+    private var canSave: Bool {
+        switch presentation.draft.kind {
+        case .createCountdown:
+            return countdownTitle.nonEmptyTrimmed != nil
+        case .createTimetableReminder:
+            return reminderTitle.nonEmptyTrimmed != nil
+        default:
+            return false
+        }
+    }
+
+    private var editedDraft: CampusAIActionDraft {
+        switch presentation.draft.kind {
+        case .createCountdown:
+            let target = DateFormatters.queryDate.string(from: targetDate)
+            return CampusAIActionDraft(
+                id: presentation.draft.id,
+                kind: .createCountdown,
+                title: presentation.draft.title,
+                detail: presentation.draft.detail,
+                payload: CampusAIActionPayload(
+                    countdownTitle: countdownTitle,
+                    targetDate: target
+                )
+            )
+        case .createTimetableReminder:
+            return CampusAIActionDraft(
+                id: presentation.draft.id,
+                kind: .createTimetableReminder,
+                title: presentation.draft.title,
+                detail: presentation.draft.detail,
+                payload: CampusAIActionPayload(
+                    week: week,
+                    dayOfWeek: dayOfWeek,
+                    period: period,
+                    endPeriod: endPeriod,
+                    title: reminderTitle,
+                    location: location,
+                    note: note,
+                    minutesBefore: minutesBefore
+                )
+            )
+        default:
+            return presentation.draft
+        }
+    }
+
+    private var periodRange: ClosedRange<Int> {
+        let periods = TimetablePeriodSchedule.slots.map(\.period)
+        return (periods.min() ?? 1)...(periods.max() ?? 12)
+    }
+
+    private static func weekdayText(_ day: Int) -> String {
+        ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][max(1, min(day, 7)) - 1]
+    }
 }
 
 private struct CampusAIDeliverablePreviewSheet: View {
@@ -1718,7 +2003,7 @@ private struct CampusAIActionCard: View {
         case .openAcademicRoute:
             return "打开页面"
         case .createCountdown:
-            return "创建倒计时"
+            return "创建重要日期"
         case .createTimetableReminder:
             return "创建课表提醒"
         case nil:
@@ -1753,68 +2038,87 @@ private struct CampusAIActionCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: iconName)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(AppTheme.accent)
-                    .frame(width: 28, height: 28)
-                    .background(AppTheme.accent.opacity(0.12), in: Circle())
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                if isPending {
+                    executeAction(action)
+                }
+            } label: {
+                cardContent
+                    .padding(13)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        AppTheme.softFill.opacity(0.72),
+                        in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(!isPending)
+            .accessibilityHint(isPending ? "点按打开或编辑这个动作" : statusText)
 
-                VStack(alignment: .leading, spacing: 4) {
+            if isPending {
+                Button {
+                    cancelAction(action)
+                } label: {
+                    Label("忽略", systemImage: "xmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(AppTheme.cardElevated.opacity(0.7), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, 42)
+            }
+        }
+    }
+
+    private var cardContent: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: iconName)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(AppTheme.accent)
+                .frame(width: 32, height: 32)
+                .background(AppTheme.accent.opacity(0.12), in: Circle())
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
                     Text(kindTitle)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AppTheme.secondaryText)
 
-                    Text(action.title.nonEmptyTrimmed ?? kindTitle)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(AppTheme.primaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if let detail = action.detail.nonEmptyTrimmed {
-                        Text(detail)
-                            .font(.footnote)
-                            .foregroundStyle(AppTheme.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    Text(statusText)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(statusForeground)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(statusForeground.opacity(0.1), in: Capsule())
                 }
 
-                Spacer(minLength: AppSpacing.micro)
+                Text(action.title.nonEmptyTrimmed ?? kindTitle)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                Text(statusText)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(statusForeground)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(statusForeground.opacity(0.12), in: Capsule())
+                if let detail = action.detail.nonEmptyTrimmed {
+                    Text(detail)
+                        .font(.footnote)
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
+
+            Spacer(minLength: AppSpacing.micro)
 
             if isPending {
-                HStack(spacing: 8) {
-                    Button {
-                        executeAction(action)
-                    } label: {
-                        Label("执行", systemImage: "checkmark")
-                            .font(.footnote.weight(.semibold))
-                            .frame(height: 30)
-                            .padding(.horizontal, 10)
-                    }
-                    .buttonStyle(.borderedProminent)
-
-                    Button(role: .cancel) {
-                        cancelAction(action)
-                    } label: {
-                        Label("取消", systemImage: "xmark")
-                            .font(.footnote.weight(.semibold))
-                            .frame(height: 30)
-                            .padding(.horizontal, 10)
-                    }
-                    .buttonStyle(.bordered)
-                }
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(AppTheme.tertiaryText)
+                    .frame(width: 20, height: 32)
             }
         }
-        .padding(12)
-        .background(AppTheme.softFill.opacity(0.72), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var statusForeground: Color {
