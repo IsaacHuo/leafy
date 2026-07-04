@@ -58,6 +58,7 @@ enum CampusAIMarkdownHTML {
         "katex.min.js",
         "katex.min.css",
         "highlight.min.js",
+        "mermaid.min.js",
         "renderer.css",
         "renderer.js"
     ]
@@ -69,7 +70,7 @@ enum CampusAIMarkdownHTML {
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-          <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src https:; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+          <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src https: data:; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
           <link rel="stylesheet" href="katex.min.css">
           <link rel="stylesheet" href="renderer.css">
         </head>
@@ -79,6 +80,7 @@ enum CampusAIMarkdownHTML {
           <script src="purify.min.js"></script>
           <script src="katex.min.js"></script>
           <script src="highlight.min.js"></script>
+          <script src="mermaid.min.js"></script>
           <script src="renderer.js"></script>
         </body>
         </html>

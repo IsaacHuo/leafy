@@ -119,6 +119,18 @@
     };
   }
 
+  function extractMermaid(markdown) {
+    const diagrams = [];
+    const text = markdown.replace(
+      /(^|\n)(`{3,}|~{3,})[ \t]*(mermaid)\s*\n([\s\S]*?)\n\2[^\n]*(?=\n|$)/gi,
+      function (_, prefix, fence, language, source) {
+        const index = diagrams.push(source) - 1;
+        return prefix + '<div class="mermaid-diagram" data-mermaid-id="' + index + '"></div>';
+      }
+    );
+    return { markdown: text, diagrams: diagrams };
+  }
+
   function createMarkdownIt() {
     if (!window.markdownit) {
       return null;
@@ -163,6 +175,7 @@
       ADD_ATTR: [
         "aria-label",
         "class",
+        "data-mermaid-id",
         "data-math-id",
         "href",
         "id",
@@ -174,6 +187,51 @@
       ],
       FORBID_TAGS: ["script", "style", "iframe", "form", "input", "object", "embed", "textarea", "select"],
       ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
+    });
+  }
+
+  function sanitizeMermaidSVG(svg) {
+    if (!window.DOMPurify) {
+      return svg;
+    }
+    return window.DOMPurify.sanitize(svg, {
+      USE_PROFILES: { svg: true, svgFilters: true },
+      ADD_TAGS: ["style"],
+      ADD_ATTR: [
+        "aria-hidden",
+        "aria-label",
+        "class",
+        "clip-path",
+        "d",
+        "dominant-baseline",
+        "fill",
+        "font-family",
+        "font-size",
+        "font-style",
+        "font-weight",
+        "height",
+        "id",
+        "marker-end",
+        "marker-start",
+        "points",
+        "rx",
+        "ry",
+        "stroke",
+        "stroke-dasharray",
+        "stroke-linecap",
+        "stroke-width",
+        "style",
+        "text-anchor",
+        "transform",
+        "viewBox",
+        "width",
+        "x",
+        "x1",
+        "x2",
+        "y",
+        "y1",
+        "y2"
+      ]
     });
   }
 
@@ -215,6 +273,63 @@
         node.textContent = item.expression;
       }
     });
+  }
+
+  function fallbackMermaid(node, source) {
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    code.className = "language-mermaid";
+    code.textContent = source;
+    pre.appendChild(code);
+    node.replaceChildren(pre);
+  }
+
+  async function renderMermaid(root, diagrams) {
+    if (!diagrams.length) {
+      return;
+    }
+    if (!window.mermaid || typeof window.mermaid.render !== "function") {
+      root.querySelectorAll("[data-mermaid-id]").forEach(function (node) {
+        fallbackMermaid(node, diagrams[Number(node.getAttribute("data-mermaid-id"))] || "");
+      });
+      return;
+    }
+
+    try {
+      window.mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: "base",
+        themeVariables: {
+          background: "transparent",
+          mainBkg: "#f7faf7",
+          primaryColor: "#edf5ee",
+          primaryTextColor: "#17201a",
+          primaryBorderColor: "#bfd1c0",
+          lineColor: "#4f6557",
+          textColor: "#17201a",
+          fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif"
+        }
+      });
+    } catch (_) {}
+
+    const nodes = Array.from(root.querySelectorAll("[data-mermaid-id]"));
+    for (let index = 0; index < nodes.length; index += 1) {
+      const node = nodes[index];
+      const source = diagrams[Number(node.getAttribute("data-mermaid-id"))] || "";
+      if (!source.trim()) {
+        fallbackMermaid(node, source);
+        continue;
+      }
+      try {
+        const id = "leafy-mermaid-" + Date.now() + "-" + index;
+        const result = await window.mermaid.render(id, source);
+        node.innerHTML = sanitizeMermaidSVG(result.svg || "");
+        node.classList.add("rendered");
+      } catch (_) {
+        fallbackMermaid(node, source);
+      }
+    }
   }
 
   function decorateCodeBlocks(root) {
@@ -265,12 +380,21 @@
 
       const footnoteResult = extractFootnotes(preprocessTaskLists(markdown || ""));
       const mathResult = extractMath(footnoteResult.markdown);
-      const rawHTML = md.render(mathResult.markdown) + renderFootnotes(footnoteResult.notes, md);
+      const mermaidResult = extractMermaid(mathResult.markdown);
+      const rawHTML = md.render(mermaidResult.markdown) + renderFootnotes(footnoteResult.notes, md);
       content.innerHTML = sanitize(rawHTML);
       hardenLinksAndImages(content);
       renderMath(content, mathResult.math);
-      decorateCodeBlocks(content);
-      reportHeight();
+      renderMermaid(content, mermaidResult.diagrams)
+        .catch(function () {
+          content.querySelectorAll("[data-mermaid-id]").forEach(function (node) {
+            fallbackMermaid(node, mermaidResult.diagrams[Number(node.getAttribute("data-mermaid-id"))] || "");
+          });
+        })
+        .then(function () {
+          decorateCodeBlocks(content);
+          reportHeight();
+        });
     } catch (error) {
       content.innerHTML = "<p>" + escapeHTML(markdown || "").replace(/\n/g, "<br>") + "</p>";
       post("renderFailed", String(error && error.message ? error.message : error));

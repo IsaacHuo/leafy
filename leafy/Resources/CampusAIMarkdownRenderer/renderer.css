@@ -263,6 +263,24 @@ th {
   vertical-align: middle;
 }
 
+.mermaid-diagram {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.75em 0;
+  padding: 0.75em;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  background: rgba(126, 164, 104, 0.06);
+  -webkit-overflow-scrolling: touch;
+}
+
+.mermaid-diagram svg {
+  display: block;
+  max-width: none;
+  min-width: min-content;
+  height: auto;
+}
+
 details {
   border-radius: 8px;
 }
@@ -289,6 +307,11 @@ summary {
 
   .code-block {
     border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .mermaid-diagram {
+    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.05);
   }
 
   .code-header {

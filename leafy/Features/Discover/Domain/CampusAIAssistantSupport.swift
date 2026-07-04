@@ -336,6 +336,142 @@ nonisolated enum CampusAIActionValidation {
     }
 }
 
+nonisolated struct CampusAIToolSupportedAction: Encodable, Hashable {
+    var kind: String
+    var requiredPayloadFields: [String]
+    var allowedValues: [String: [String]]
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case requiredPayloadFields = "required_payload_fields"
+        case allowedValues = "allowed_values"
+    }
+}
+
+nonisolated struct CampusAIToolDescriptor: Identifiable, Hashable {
+    var id: String
+    var title: String
+    var detail: String
+    var systemImageName: String
+    var actionKind: CampusAIActionKind?
+    var toolName: String?
+    var requiresConfirmation: Bool
+}
+
+nonisolated enum CampusAIToolRegistry {
+    static let webSearch = CampusAIToolDescriptor(
+        id: "web.search",
+        title: "联网搜索",
+        detail: "检索学校官方页面和公开来源。",
+        systemImageName: "network",
+        actionKind: nil,
+        toolName: "web.search",
+        requiresConfirmation: false
+    )
+
+    static let localRetrieval = CampusAIToolDescriptor(
+        id: "local.retrieval",
+        title: "本机检索",
+        detail: "检索当前设备中的课程、考试、学习资料和台账元数据。",
+        systemImageName: "internaldrive",
+        actionKind: nil,
+        toolName: "local.retrieval",
+        requiresConfirmation: false
+    )
+
+    static let actionPlan = CampusAIToolDescriptor(
+        id: "action.plan",
+        title: "动作规划",
+        detail: "把回答整理成用户确认后执行的 Leafy 动作。",
+        systemImageName: "wand.and.stars",
+        actionKind: nil,
+        toolName: "action.plan",
+        requiresConfirmation: false
+    )
+
+    static let openAcademicRoute = CampusAIToolDescriptor(
+        id: CampusAIActionKind.openAcademicRoute.rawValue,
+        title: "打开页面",
+        detail: "打开 Leafy 内的指定校园页面。",
+        systemImageName: "arrow.up.right.square",
+        actionKind: .openAcademicRoute,
+        toolName: nil,
+        requiresConfirmation: true
+    )
+
+    static let createCountdown = CampusAIToolDescriptor(
+        id: CampusAIActionKind.createCountdown.rawValue,
+        title: "创建重要日期",
+        detail: "创建本机保存的重要日期或倒计时。",
+        systemImageName: "calendar.badge.clock",
+        actionKind: .createCountdown,
+        toolName: nil,
+        requiresConfirmation: true
+    )
+
+    static let createTimetableReminder = CampusAIToolDescriptor(
+        id: CampusAIActionKind.createTimetableReminder.rawValue,
+        title: "创建课表提醒",
+        detail: "根据周次、星期和节次创建课表提醒。",
+        systemImageName: "bell.badge",
+        actionKind: .createTimetableReminder,
+        toolName: nil,
+        requiresConfirmation: true
+    )
+
+    static var all: [CampusAIToolDescriptor] {
+        [
+            webSearch,
+            localRetrieval,
+            actionPlan,
+            openAcademicRoute,
+            createCountdown,
+            createTimetableReminder
+        ]
+    }
+
+    static var actionTools: [CampusAIToolDescriptor] {
+        all.filter { $0.actionKind != nil }
+    }
+
+    static func descriptor(for actionKind: CampusAIActionKind?) -> CampusAIToolDescriptor? {
+        guard let actionKind else { return nil }
+        return actionTools.first { $0.actionKind == actionKind }
+    }
+
+    static func descriptor(forToolName toolName: String) -> CampusAIToolDescriptor? {
+        all.first { $0.toolName == toolName || $0.id == toolName }
+    }
+
+    static func supportedActions() -> [CampusAIToolSupportedAction] {
+        [
+            CampusAIToolSupportedAction(
+                kind: CampusAIActionKind.openAcademicRoute.rawValue,
+                requiredPayloadFields: ["route"],
+                allowedValues: [
+                    "route": CampusAIAcademicRouteID.allCases.map(\.rawValue)
+                ]
+            ),
+            CampusAIToolSupportedAction(
+                kind: CampusAIActionKind.createCountdown.rawValue,
+                requiredPayloadFields: ["countdownTitle", "targetDate"],
+                allowedValues: [
+                    "targetDate": ["yyyy-MM-dd"]
+                ]
+            ),
+            CampusAIToolSupportedAction(
+                kind: CampusAIActionKind.createTimetableReminder.rawValue,
+                requiredPayloadFields: ["week", "dayOfWeek", "period", "title"],
+                allowedValues: [
+                    "week": ["1...\(SemesterConfig.supportedWeeks)"],
+                    "dayOfWeek": ["1...7"],
+                    "period": TimetablePeriodSchedule.slots.map { String($0.period) }
+                ]
+            )
+        ]
+    }
+}
+
 nonisolated struct CampusAIChatMessage: Codable, Hashable {
     let role: CampusAIMessageRole
     let text: String
@@ -1479,6 +1615,33 @@ nonisolated enum CampusAIArtifactFormatResolver {
     }
 }
 
+nonisolated struct CampusAIArtifactContent: Codable, Hashable {
+    var html: String?
+    var markdown: String?
+    var text: String?
+
+    init(html: String? = nil, markdown: String? = nil, text: String? = nil) {
+        self.html = html
+        self.markdown = markdown
+        self.text = text
+    }
+
+    func content(for format: CampusAIDeliverableFileFormat) -> String? {
+        switch format {
+        case .html:
+            return html?.nonEmptyTrimmed
+        case .markdown:
+            return markdown?.nonEmptyTrimmed
+        case .txt:
+            return text?.nonEmptyTrimmed
+        }
+    }
+
+    var availableFormats: [CampusAIDeliverableFileFormat] {
+        CampusAIDeliverableFileFormat.allCases.filter { content(for: $0) != nil }
+    }
+}
+
 nonisolated struct CampusAIDeliverableAttachment: Identifiable, Codable, Hashable {
     var title: String
     var url: String
@@ -1596,6 +1759,7 @@ nonisolated struct CampusAIDeliverable: Identifiable, Codable, Hashable {
     var generatedAt: String
     var sources: [CampusAIDeliverableSource]
     var formats: [CampusAIDeliverableFileFormat]
+    var content: CampusAIArtifactContent?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -1606,6 +1770,7 @@ nonisolated struct CampusAIDeliverable: Identifiable, Codable, Hashable {
         case generatedAtSnake = "generated_at"
         case sources
         case formats
+        case content
     }
 
     init(
@@ -1615,7 +1780,8 @@ nonisolated struct CampusAIDeliverable: Identifiable, Codable, Hashable {
         summary: String,
         generatedAt: String,
         sources: [CampusAIDeliverableSource],
-        formats: [CampusAIDeliverableFileFormat] = CampusAIDeliverableFileFormat.allCases
+        formats: [CampusAIDeliverableFileFormat] = CampusAIDeliverableFileFormat.allCases,
+        content: CampusAIArtifactContent? = nil
     ) {
         self.id = id
         self.title = title
@@ -1624,6 +1790,7 @@ nonisolated struct CampusAIDeliverable: Identifiable, Codable, Hashable {
         self.generatedAt = generatedAt
         self.sources = sources
         self.formats = formats
+        self.content = content
     }
 
     init(from decoder: Decoder) throws {
@@ -1637,8 +1804,12 @@ nonisolated struct CampusAIDeliverable: Identifiable, Codable, Hashable {
             ?? ""
         sources = (try container.decodeIfPresent([CampusAIDeliverableSource].self, forKey: .sources) ?? [])
             .filter { !$0.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        content = try container.decodeIfPresent(CampusAIArtifactContent.self, forKey: .content)
         let rawFormats = try container.decodeIfPresent([String].self, forKey: .formats) ?? []
         formats = rawFormats.compactMap { CampusAIDeliverableFileFormat(rawValue: $0.lowercased()) }
+        if formats.isEmpty {
+            formats = content?.availableFormats ?? CampusAIDeliverableFileFormat.allCases
+        }
         if formats.isEmpty {
             formats = CampusAIDeliverableFileFormat.allCases
         }
@@ -1653,6 +1824,7 @@ nonisolated struct CampusAIDeliverable: Identifiable, Codable, Hashable {
         try container.encode(generatedAt, forKey: .generatedAt)
         try container.encode(sources, forKey: .sources)
         try container.encode(formats.map(\.rawValue), forKey: .formats)
+        try container.encodeIfPresent(content, forKey: .content)
     }
 }
 
@@ -1747,6 +1919,10 @@ nonisolated enum CampusAIDeliverableFileBuilder {
     }
 
     static func content(for deliverable: CampusAIDeliverable, format: CampusAIDeliverableFileFormat) -> String {
+        if let content = deliverable.content?.content(for: format) {
+            return content
+        }
+
         switch format {
         case .html:
             return htmlDocument(for: deliverable)
@@ -4688,7 +4864,7 @@ nonisolated private struct CampusAIActionPlannerUserContent: Encodable {
     let contextSettings: CampusAIContextSettings
     let capabilities: CampusAICapabilitySet
     let localRetrieval: CampusAILocalRetrievalPayload
-    let supportedActions: [SupportedAction]
+    let supportedActions: [CampusAIToolSupportedAction]
     let safetyBoundary: [String]
 
     enum CodingKeys: String, CodingKey {
@@ -4716,31 +4892,7 @@ nonisolated private struct CampusAIActionPlannerUserContent: Encodable {
         self.contextSettings = contextSettings
         self.capabilities = capabilities
         self.localRetrieval = localRetrieval
-        supportedActions = [
-            .init(
-                kind: CampusAIActionKind.openAcademicRoute.rawValue,
-                requiredPayloadFields: ["route"],
-                allowedValues: [
-                    "route": CampusAIAcademicRouteID.allCases.map(\.rawValue)
-                ]
-            ),
-            .init(
-                kind: CampusAIActionKind.createCountdown.rawValue,
-                requiredPayloadFields: ["countdownTitle", "targetDate"],
-                allowedValues: [
-                    "targetDate": ["yyyy-MM-dd"]
-                ]
-            ),
-            .init(
-                kind: CampusAIActionKind.createTimetableReminder.rawValue,
-                requiredPayloadFields: ["week", "dayOfWeek", "period", "title"],
-                allowedValues: [
-                    "week": ["1...\(SemesterConfig.supportedWeeks)"],
-                    "dayOfWeek": ["1...7"],
-                    "period": TimetablePeriodSchedule.slots.map { String($0.period) }
-                ]
-            )
-        ]
+        supportedActions = CampusAIToolRegistry.supportedActions()
         safetyBoundary = [
             "所有动作都只生成待确认草稿，不会自动执行。",
             "不要生成修改成绩或课表原始数据、医疗决策、社区发帖评论、远程抓取、后台登录等动作。",
@@ -4750,17 +4902,6 @@ nonisolated private struct CampusAIActionPlannerUserContent: Encodable {
         ]
     }
 
-    struct SupportedAction: Encodable, Hashable {
-        let kind: String
-        let requiredPayloadFields: [String]
-        let allowedValues: [String: [String]]
-
-        enum CodingKeys: String, CodingKey {
-            case kind
-            case requiredPayloadFields = "required_payload_fields"
-            case allowedValues = "allowed_values"
-        }
-    }
 }
 
 nonisolated private struct CampusAIManagedFunctionRequest: Encodable {

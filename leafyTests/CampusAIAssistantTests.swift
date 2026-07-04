@@ -599,6 +599,52 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertEqual(CampusAIArtifactFormatResolver.formats(for: "生成 HTML Markdown TXT"), [.html, .markdown, .txt])
     }
 
+    func testDeliverableDecodesArtifactContentAndLegacyPayload() throws {
+        let legacy = try JSONDecoder().decode(
+            CampusAIDeliverable.self,
+            from: Data(
+                """
+                {
+                  "id":"legacy-pack",
+                  "title":"旧资料包",
+                  "query":"论文格式",
+                  "summary":"已整理。",
+                  "generated_at":"2026-07-02T00:00:00Z",
+                  "sources":[],
+                  "formats":["html"]
+                }
+                """.utf8
+            )
+        )
+        XCTAssertNil(legacy.content)
+        XCTAssertEqual(legacy.formats, [.html])
+
+        let artifact = try JSONDecoder().decode(
+            CampusAIDeliverable.self,
+            from: Data(
+                """
+                {
+                  "id":"artifact-pack",
+                  "title":"可预览 Artifact",
+                  "query":"生成网页",
+                  "summary":"已生成。",
+                  "generated_at":"2026-07-02T00:00:00Z",
+                  "sources":[],
+                  "content":{
+                    "html":"<main><h1>Leafy</h1></main>",
+                    "markdown":"# Leafy",
+                    "text":"Leafy"
+                  }
+                }
+                """.utf8
+            )
+        )
+        XCTAssertEqual(artifact.content?.html, "<main><h1>Leafy</h1></main>")
+        XCTAssertEqual(artifact.content?.markdown, "# Leafy")
+        XCTAssertEqual(artifact.content?.text, "Leafy")
+        XCTAssertEqual(artifact.formats, [.html, .markdown, .txt])
+    }
+
     func testCampusAICapabilitySetSeparatesWebFromAgent() {
         let ownKey = CampusAICapabilitySet(serviceMode: .ownAPIKey, webSearchEnabled: true)
         XCTAssertTrue(ownKey.nonWebAgentEnabled)
@@ -617,6 +663,27 @@ final class CampusAIAssistantTests: XCTestCase {
         let managedOn = CampusAICapabilitySet(serviceMode: .leafyManaged, webSearchEnabled: true)
         XCTAssertTrue(managedOn.webSearchEnabled)
         XCTAssertTrue(managedOn.officialDocumentSearchEnabled)
+    }
+
+    func testToolRegistryExposesBuiltInToolsAndSupportedActions() {
+        let ids = Set(CampusAIToolRegistry.all.map(\.id))
+
+        XCTAssertTrue(ids.contains("web.search"))
+        XCTAssertTrue(ids.contains("local.retrieval"))
+        XCTAssertTrue(ids.contains("action.plan"))
+        XCTAssertEqual(CampusAIToolRegistry.descriptor(for: .createCountdown)?.title, "创建重要日期")
+        XCTAssertEqual(CampusAIToolRegistry.descriptor(forToolName: "web.search")?.systemImageName, "network")
+
+        let supportedActions = CampusAIToolRegistry.supportedActions()
+        XCTAssertEqual(supportedActions.count, 3)
+        XCTAssertTrue(supportedActions.contains { action in
+            action.kind == CampusAIActionKind.openAcademicRoute.rawValue &&
+                (action.allowedValues["route"] ?? []).contains("examSchedule")
+        })
+        XCTAssertTrue(supportedActions.contains { action in
+            action.kind == CampusAIActionKind.createTimetableReminder.rawValue &&
+                (action.allowedValues["period"] ?? []).contains("1")
+        })
     }
 
     func testLocalKnowledgeIndexFindsLearningAndExamResultsWithinBudget() throws {
@@ -1011,6 +1078,7 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertTrue(CampusAIMarkdownHTML.requiredResourceNames.contains("renderer.js"))
         XCTAssertTrue(CampusAIMarkdownHTML.requiredResourceNames.contains("purify.min.js"))
         XCTAssertTrue(CampusAIMarkdownHTML.requiredResourceNames.contains("katex.min.js"))
+        XCTAssertTrue(CampusAIMarkdownHTML.requiredResourceNames.contains("mermaid.min.js"))
     }
 
     @MainActor
@@ -1047,6 +1115,11 @@ final class CampusAIAssistantTests: XCTestCase {
         let value = 42
         ```
 
+        ```mermaid
+        flowchart TD
+          A[开始] --> B[结束]
+        ```
+
         公式：$E = mc^2$
 
         脚注引用[^note]
@@ -1062,7 +1135,7 @@ final class CampusAIAssistantTests: XCTestCase {
         """
         let literal = CampusAIMarkdownHTML.javascriptStringLiteral(markdown)
         _ = try await webView.evaluateJavaScript("window.LeafyMarkdown.render(\(literal));")
-        try await Task.sleep(nanoseconds: 150_000_000)
+        try await Task.sleep(nanoseconds: 600_000_000)
 
         let result = try await webView.evaluateJavaScript(
             """
@@ -1073,6 +1146,7 @@ final class CampusAIAssistantTests: XCTestCase {
               tasks: document.querySelectorAll('.task-marker').length,
               table: document.querySelectorAll('table').length,
               code: document.querySelectorAll('.code-block').length,
+              mermaid: document.querySelectorAll('.mermaid-diagram svg').length,
               math: document.querySelectorAll('.katex').length,
               footnotes: document.querySelectorAll('.footnotes').length,
               safeHTML: document.querySelectorAll('b').length,
@@ -1094,6 +1168,7 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertEqual(counts["tasks"], 2)
         XCTAssertEqual(counts["table"], 1)
         XCTAssertEqual(counts["code"], 1)
+        XCTAssertEqual(counts["mermaid"], 1)
         XCTAssertEqual(counts["math"], 1)
         XCTAssertEqual(counts["footnotes"], 1)
         XCTAssertEqual(counts["safeHTML"], 1)
@@ -1211,7 +1286,7 @@ final class CampusAIAssistantTests: XCTestCase {
     func testManagedDonePayloadDecodesActions() throws {
         var parser = CampusAISSEParser()
         let raw = """
-        data: {"type":"done","answer":"已整理。","actions":[{"kind":"open_academic_route","title":"","payload":{"route":"trainingProgram"}},{"kind":"create_countdown","title":"创建重要日期","payload":{"countdown_title":"期末考试","target_date":"2026-07-01"}}],"citations":[{"id":"web-1","title":"通知","url":"https://www.bjfu.edu.cn/notice"}],"agentTrace":[{"id":"trace-1","kind":"tool","title":"联网搜索","status":"completed"}],"deliverables":[{"id":"pack-1","title":"论文格式资料包","query":"北京林业大学 论文格式","summary":"已找到教务处官方页面。","generated_at":"2026-07-02T00:00:00Z","sources":[{"id":"source-1","title":"本科论文格式","url":"https://jwc.bjfu.edu.cn/info/1012/1234.htm","site_name":"北京林业大学教务处","summary":"页面含论文格式附件。","trust_score":0.95,"attachments":[{"title":"论文模板.docx","url":"https://jwc.bjfu.edu.cn/files/template.docx","file_type":"docx"}]}],"formats":["html","markdown","txt"]}]}
+        data: {"type":"done","answer":"已整理。","actions":[{"kind":"open_academic_route","title":"","payload":{"route":"trainingProgram"}},{"kind":"create_countdown","title":"创建重要日期","payload":{"countdown_title":"期末考试","target_date":"2026-07-01"}}],"citations":[{"id":"web-1","title":"通知","url":"https://www.bjfu.edu.cn/notice"}],"agentTrace":[{"id":"trace-1","kind":"tool","title":"联网搜索","status":"completed"}],"deliverables":[{"id":"pack-1","title":"论文格式资料包","query":"北京林业大学 论文格式","summary":"已找到教务处官方页面。","generated_at":"2026-07-02T00:00:00Z","sources":[{"id":"source-1","title":"本科论文格式","url":"https://jwc.bjfu.edu.cn/info/1012/1234.htm","site_name":"北京林业大学教务处","summary":"页面含论文格式附件。","trust_score":0.95,"attachments":[{"title":"论文模板.docx","url":"https://jwc.bjfu.edu.cn/files/template.docx","file_type":"docx"}]}],"formats":["html","markdown","txt"],"content":{"html":"<main><h1>Artifact</h1></main>","markdown":"# Artifact","text":"Artifact"}}]}
 
         """
 
@@ -1234,6 +1309,7 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertEqual(response.deliverables.first?.sources.first?.siteName, "北京林业大学教务处")
         XCTAssertEqual(response.deliverables.first?.sources.first?.attachments.first?.fileType, "docx")
         XCTAssertEqual(response.deliverables.first?.formats, [.html, .markdown, .txt])
+        XCTAssertEqual(response.deliverables.first?.content?.markdown, "# Artifact")
     }
 
     func testCampusAIServiceSendPreservesActions() async throws {
@@ -1343,6 +1419,39 @@ final class CampusAIAssistantTests: XCTestCase {
         let markdown = CampusAIDeliverableFileBuilder.content(for: deliverable, format: .markdown)
         XCTAssertTrue(markdown.contains("[教务处论文格式](https://jwc.bjfu.edu.cn/info/1012/1234.htm)"))
         XCTAssertTrue(markdown.contains("[论文模板.docx](https://jwc.bjfu.edu.cn/files/template.docx)"))
+    }
+
+    func testDeliverableFileBuilderPrefersArtifactContentWhenPresent() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CampusAIArtifactContentTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let deliverable = CampusAIDeliverable(
+            id: "artifact-pack",
+            title: "Artifact",
+            query: "生成网页",
+            summary: "已生成。",
+            generatedAt: "2026-07-02T00:00:00Z",
+            sources: [],
+            formats: [.html, .markdown, .txt],
+            content: CampusAIArtifactContent(
+                html: "<main><h1>Custom HTML</h1></main>",
+                markdown: "# Custom Markdown",
+                text: "Custom Text"
+            )
+        )
+
+        let htmlURL = try CampusAIDeliverableFileBuilder.writeFile(
+            for: deliverable,
+            messageID: UUID(),
+            format: .html,
+            rootDirectory: root
+        )
+        let markdown = CampusAIDeliverableFileBuilder.content(for: deliverable, format: .markdown)
+        let text = CampusAIDeliverableFileBuilder.content(for: deliverable, format: .txt)
+
+        XCTAssertEqual(try String(contentsOf: htmlURL, encoding: .utf8), "<main><h1>Custom HTML</h1></main>")
+        XCTAssertEqual(markdown, "# Custom Markdown")
+        XCTAssertEqual(text, "Custom Text")
     }
 
     func testDeliverableFileBuilderRemovesStaleArtifacts() throws {
