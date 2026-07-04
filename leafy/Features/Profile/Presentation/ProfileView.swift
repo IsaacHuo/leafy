@@ -1345,9 +1345,9 @@ private struct LeafyGuideAndDataSecurityView: View {
             intro: "\(AppBrand.displayName) 会把最近一次成功同步的教务数据保存在本机。网络不稳定、学校系统暂时不可用或登录态失效时，你仍然可以查看旧数据。",
             rows: [
                 ManualInfo(title: "缓存保存什么", body: "课表、成绩、考试安排、教学计划、培养方案、学习资料和体育记录会按功能保存在本机，用于离线查看和失败兜底。"),
-                ManualInfo(title: "本地数据是什么", body: "课程备注、课表提醒、收藏、自定义倒计时、学习资料、学习项目、任务、专注记录、体测记录和通用学校导入数据等，是你在当前设备上创建或导入的数据。"),
+                ManualInfo(title: "本地数据是什么", body: "课程备注、课表提醒、收藏、自定日程、学习资料、学习空间、任务、专注记录、体测记录和通用学校导入数据等，是你在当前设备上创建或导入的数据。"),
                 ManualInfo(title: "旧数据为什么还在", body: "同步或导入失败不会立刻删除旧数据。这样在网络不可用、学校系统维护或文件格式错误时，课表和成绩仍然可以临时查看。成功更新后，新数据会替换对应缓存。"),
-                ManualInfo(title: "清除缓存会怎样", body: "清除缓存会删除本地身份、教务登录态、教务缓存，以及本机保存的备注、提醒、收藏、学习资料、项目、任务、学习记录、体测记录等内容。"),
+                ManualInfo(title: "清除缓存会怎样", body: "清除缓存会删除本地身份、教务登录态、教务缓存，以及本机保存的备注、提醒、收藏、学习资料、学习空间、任务、学习记录、体测记录等内容。"),
                 ManualInfo(title: "什么时候适合清缓存", body: "账号切换、身份异常、旧缓存明显不一致、导入数据需要彻底重来，或需要彻底移除本机数据时再清除。普通同步或导入失败通常先重试，不需要马上清缓存。")
             ],
             steps: [
@@ -1364,7 +1364,7 @@ private struct LeafyGuideAndDataSecurityView: View {
             intro: "社区能力由 \(AppBrand.displayName) 社区服务承接，和学校教务登录不是同一个系统。学校身份用于确认校园归属，社区资料用于展示、互动、通知和安全处理。",
             rows: [
                 ManualInfo(title: "社区会保存什么", body: "昵称、头像、学院、年级、帖子、评论、点赞、收藏、通知、举报、反馈、评教，以及你主动发布的共享课表快照会保存到 \(AppBrand.displayName) 社区服务。"),
-                ManualInfo(title: "不会自动上传什么", body: "成绩、考试安排、课程备注、提醒、收藏、自定义倒计时、学习资料文件、学习项目、任务、专注记录和体测记录不会因为你打开社区而自动上传。"),
+                ManualInfo(title: "不会自动上传什么", body: "成绩、考试安排、课程备注、提醒、收藏、自定日程、学习资料文件、学习空间、任务、专注记录和体测记录不会因为你打开社区而自动上传。"),
                 ManualInfo(title: "共享课表包含什么", body: "共享课表只包含课程快照，用来让被授权的人查看课程安排；它不包含成绩、考试、课程备注、提醒、收藏或学习资料。你可以撤销查看权限。"),
                 ManualInfo(title: "反馈会附带什么", body: "举报与反馈会提交你的文字说明。必要时会附带设备型号、iOS 版本、App 版本、登录状态和最近同步时间，方便定位同步失败、登录异常、学校页面解析变化或社区问题。"),
                 ManualInfo(title: "社区安全怎么处理", body: "遇到不当内容、骚扰、冒充、刷屏、恶意评分、泄露隐私或其它滥用行为，可以在“举报与反馈”选择“社区安全”，也可以通过联系我们里的邮箱或反馈群说明。")
@@ -1383,7 +1383,7 @@ private struct LeafyGuideAndDataSecurityView: View {
             rows: [
                 ManualInfo(title: "教务账号和密码", body: "教务账号和密码只用于向学校强智教务系统发起登录请求，不用于 \(AppBrand.displayName) 社区资料，也不会作为帖子、评论、反馈或共享课表内容保存。"),
                 ManualInfo(title: "学校教务数据", body: "课表、成绩、考试、教学计划和培养方案等个人教务数据优先保存在本机，用来支持离线查看。\(AppBrand.displayName) 社区服务不替代学校教务系统。"),
-                ManualInfo(title: "本机私有数据", body: "学习资料文件、简历文件、课程备注、提醒、学习项目、任务、专注记录、体测记录和常用收藏保存在当前 App 的本机空间。卸载 App、清缓存或更换设备前，请先确认是否需要导出。"),
+                ManualInfo(title: "本机私有数据", body: "学习资料文件、简历文件、课程备注、提醒、学习空间、任务、专注记录、体测记录和常用收藏保存在当前 App 的本机空间。卸载 App、清缓存或更换设备前，请先确认是否需要导出。"),
                 ManualInfo(title: "社区服务数据", body: "你主动参与社区、反馈、评教或共享课表时，相关内容会进入 \(AppBrand.displayName) 社区服务，以便展示、通知、审核、处理反馈和维护社区安全。"),
                 ManualInfo(title: "退出登录和清缓存区别", body: "退出登录会清理当前学校会话和社区会话；清除缓存会进一步删除本机保存的数据。只想重新登录时不一定需要清缓存，想移除本机数据时再清除缓存。"),
                 ManualInfo(title: "设备权限", body: "相册、文件、通知等权限只在对应功能需要时使用。导入资料会把文件放进 App 私有目录；通知用于课程提醒和本机提醒；拒绝权限通常只影响对应功能。")
@@ -1932,7 +1932,7 @@ private struct CacheAndSyncView: View {
 
         SchoolDataCache.clearDiscoverCaches()
         TimetableCacheMetadata.clear()
-        CustomCountdownStore.save([])
+        CustomScheduleStore.clear()
         let sunshineRunSettings = SunshineRunStore.loadReminderSettings()
         SunshineRunNotificationManager.cancelScheduledNotifications(settings: sunshineRunSettings)
         SunshineRunStore.clear()

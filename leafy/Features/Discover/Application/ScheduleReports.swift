@@ -16,7 +16,7 @@ enum ScheduleReportMode: String, CaseIterable, Codable, Identifiable, Hashable {
         case .morningReport: return "今日早报"
         case .eveningReport: return "明日晚报"
         case .examDigest: return "考试提醒"
-        case .countdownDigest: return "倒计时提醒"
+        case .countdownDigest: return "重要日期提醒"
         case .calendarDigest: return "校历节点"
         }
     }
@@ -30,7 +30,7 @@ enum ScheduleReportMode: String, CaseIterable, Codable, Identifiable, Hashable {
         case .examDigest:
             return "未来 7 天有考试时提醒"
         case .countdownDigest:
-            return "未来 7 天有自定义倒计时时提醒"
+            return "未来 7 天有重要日期时提醒"
         case .calendarDigest:
             return "今天或明天有校历、节气、假期节点时提醒"
         }
@@ -171,13 +171,13 @@ enum ScheduleReportSettingsStore {
 struct ScheduleReportInput {
     var courses: [Course]
     var exams: [ExamArrangement]
-    var countdowns: [CustomCountdownEvent]
+    var countdowns: [CustomScheduleEvent]
     var cellReminders: [TimetableCellReminder]
 
     init(
         courses: [Course],
         exams: [ExamArrangement],
-        countdowns: [CustomCountdownEvent],
+        countdowns: [CustomScheduleEvent],
         cellReminders: [TimetableCellReminder]
     ) {
         self.courses = courses
@@ -242,8 +242,8 @@ enum ScheduleReportPlanner {
             return upcomingExamSummary(input.exams, from: referenceDate, days: lookaheadDays, calendar: calendar)
                 ?? "未来 7 天暂无考试安排。"
         case .countdownDigest:
-            return upcomingCountdownSummary(input.countdowns, from: referenceDate, days: lookaheadDays, calendar: calendar)
-                ?? "未来 7 天暂无自定义倒计时。"
+            return upcomingImportantDateSummary(input.countdowns, from: referenceDate, days: lookaheadDays, calendar: calendar)
+                ?? "未来 7 天暂无重要日期。"
         case .calendarDigest:
             return calendarDigestSummary(from: referenceDate, calendar: calendar)
                 ?? "今天和明天暂无校历节点。"
@@ -310,8 +310,8 @@ enum ScheduleReportPlanner {
                 setting: setting,
                 startDay: startDay,
                 now: now,
-                title: "倒计时提醒",
-                body: upcomingCountdownSummary(input.countdowns, from: now, days: lookaheadDays, calendar: calendar),
+                title: "重要日期提醒",
+                body: upcomingImportantDateSummary(input.countdowns, from: now, days: lookaheadDays, calendar: calendar),
                 calendar: calendar
             )
         case .calendarDigest:
@@ -421,19 +421,19 @@ enum ScheduleReportPlanner {
         return "未来 7 天有 \(upcoming.count) 场考试，最近：\(first.name) \(first.date) \(first.start)。"
     }
 
-    private static func upcomingCountdownSummary(
-        _ countdowns: [CustomCountdownEvent],
+    private static func upcomingImportantDateSummary(
+        _ countdowns: [CustomScheduleEvent],
         from date: Date,
         days: Int,
         calendar: Calendar
     ) -> String? {
         let end = calendar.date(byAdding: .day, value: days, to: date) ?? date
         let upcoming = countdowns
-            .filter { $0.targetDate >= date && $0.targetDate <= end }
-            .sorted { $0.targetDate < $1.targetDate }
+            .filter { $0.startsAt >= date && $0.startsAt <= end }
+            .sorted { $0.startsAt < $1.startsAt }
         guard let first = upcoming.first else { return nil }
 
-        return "未来 7 天有 \(upcoming.count) 个倒计时，最近：\(first.title)。"
+        return "未来 7 天有 \(upcoming.count) 个重要日期，最近：\(first.title)。"
     }
 
     private static func calendarDigestSummary(from date: Date, calendar: Calendar) -> String? {
@@ -615,7 +615,7 @@ enum ScheduleReportDataSource {
         ScheduleReportInput(
             courses: fetch(Course.self, in: modelContext),
             exams: SchoolDataCache.loadExamSchedule(),
-            countdowns: CustomCountdownStore.load(),
+            countdowns: CustomScheduleStore.load(),
             cellReminders: fetch(TimetableCellReminder.self, in: modelContext)
         )
     }

@@ -546,7 +546,7 @@ struct CountdownEvent: Identifiable, Hashable {
     enum Kind: String {
         case exam = "考试"
         case semester = "学期"
-        case custom = "自定义"
+        case custom = "重要日期"
     }
 
     let id: String
@@ -559,17 +559,93 @@ struct CountdownEvent: Identifiable, Hashable {
     }
 }
 
-struct CustomCountdownEvent: Identifiable, Codable, Hashable {
+nonisolated struct CustomScheduleEvent: Identifiable, Codable, Hashable {
     let id: String
     var title: String
-    var targetDate: Date
+    var startsAt: Date
+    var endsAt: Date?
+    var location: String?
+    var note: String?
+    var minutesBefore: Int
 
-    init(id: String = UUID().uuidString, title: String, targetDate: Date) {
+    init(
+        id: String = UUID().uuidString,
+        title: String,
+        startsAt: Date,
+        endsAt: Date? = nil,
+        location: String = "",
+        note: String = "",
+        minutesBefore: Int = 0
+    ) {
         self.id = id
         self.title = title
-        self.targetDate = targetDate
+        self.startsAt = startsAt
+        self.endsAt = endsAt.flatMap { $0 > startsAt ? $0 : nil }
+        self.location = Self.normalizedOptionalText(location)
+        self.note = Self.normalizedOptionalText(note)
+        self.minutesBefore = max(0, minutesBefore)
+    }
+
+    init(id: String = UUID().uuidString, title: String, targetDate: Date) {
+        self.init(id: id, title: title, startsAt: targetDate)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case startsAt
+        case targetDate
+        case endsAt
+        case location
+        case note
+        case minutesBefore
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        let decodedStart = try container.decodeIfPresent(Date.self, forKey: .startsAt)
+            ?? container.decode(Date.self, forKey: .targetDate)
+        startsAt = decodedStart
+        let decodedEnd = try container.decodeIfPresent(Date.self, forKey: .endsAt)
+        endsAt = decodedEnd.flatMap { $0 > decodedStart ? $0 : nil }
+        location = Self.normalizedOptionalText(try container.decodeIfPresent(String.self, forKey: .location) ?? "")
+        note = Self.normalizedOptionalText(try container.decodeIfPresent(String.self, forKey: .note) ?? "")
+        minutesBefore = max(0, try container.decodeIfPresent(Int.self, forKey: .minutesBefore) ?? 0)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(startsAt, forKey: .startsAt)
+        try container.encodeIfPresent(endsAt, forKey: .endsAt)
+        try container.encodeIfPresent(location, forKey: .location)
+        try container.encodeIfPresent(note, forKey: .note)
+        try container.encode(minutesBefore, forKey: .minutesBefore)
+    }
+
+    var targetDate: Date {
+        get { startsAt }
+        set { startsAt = newValue }
+    }
+
+    var locationText: String {
+        location?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    var noteText: String {
+        note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private static func normalizedOptionalText(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
+
+typealias CustomCountdownEvent = CustomScheduleEvent
 
 struct TimetableCountdownProjection: Identifiable, Hashable {
     let eventID: String
@@ -629,25 +705,25 @@ extension ExamArrangement {
     }
 }
 
-extension CustomCountdownEvent {
+extension CustomScheduleEvent {
     var timetableProjection: TimetableCountdownProjection? {
         let calendar = Calendar.current
         let semesterStart = calendar.startOfDay(for: SemesterConfig.startOfSemesterDate)
-        let targetDay = calendar.startOfDay(for: targetDate)
+        let targetDay = calendar.startOfDay(for: startsAt)
         let dayOffset = calendar.dateComponents([.day], from: semesterStart, to: targetDay).day ?? 0
         guard dayOffset >= 0, dayOffset < SemesterConfig.supportedWeeks * 7 else {
             return nil
         }
 
-        let schedule = SemesterConfig.weekAndDay(for: targetDate)
-        let period = TimetablePeriodSchedule.period(containing: targetDate)?.period
-            ?? TimetablePeriodSchedule.periodForFocus(containing: targetDate)?.period
+        let schedule = SemesterConfig.weekAndDay(for: startsAt)
+        let period = TimetablePeriodSchedule.period(containing: startsAt)?.period
+            ?? TimetablePeriodSchedule.periodForFocus(containing: startsAt)?.period
             ?? 1
 
         return TimetableCountdownProjection(
             eventID: id,
             title: title,
-            targetDate: targetDate,
+            targetDate: startsAt,
             week: schedule.week,
             dayOfWeek: schedule.day,
             period: period
@@ -656,22 +732,76 @@ extension CustomCountdownEvent {
 }
 
 extension Notification.Name {
+    static let customScheduleEventsDidChange = Notification.Name("customScheduleEventsDidChange")
     static let customCountdownEventsDidChange = Notification.Name("customCountdownEventsDidChange")
     static let schoolExamScheduleDidChange = Notification.Name("schoolExamScheduleDidChange")
 }
 
-enum CustomCountdownStore {
-    private static let storageKey = "customCountdownEvents"
-
-    static func load() -> [CustomCountdownEvent] {
-        guard let data = UserDefaults.standard.data(forKey: storageKey) else { return [] }
-        return (try? JSONDecoder().decode([CustomCountdownEvent].self, from: data)) ?? []
+enum CustomScheduleStore {
+    private struct LegacyCountdownEvent: Codable {
+        let id: String
+        let title: String
+        let targetDate: Date
     }
 
-    static func save(_ events: [CustomCountdownEvent]) {
+    private static let storageKey = "customScheduleEvents.v1"
+    private static let legacyCountdownStorageKey = "customCountdownEvents"
+
+    static func load(defaults: UserDefaults = .standard) -> [CustomScheduleEvent] {
+        if let data = defaults.data(forKey: storageKey),
+           let events = try? JSONDecoder().decode([CustomScheduleEvent].self, from: data) {
+            return events
+        }
+
+        let migrated = migratedLegacyEvents(defaults: defaults)
+        if !migrated.isEmpty {
+            save(migrated, defaults: defaults)
+        }
+        return migrated
+    }
+
+    static func save(_ events: [CustomScheduleEvent], defaults: UserDefaults = .standard) {
         guard let data = try? JSONEncoder().encode(events) else { return }
-        UserDefaults.standard.set(data, forKey: storageKey)
+        defaults.set(data, forKey: storageKey)
+        NotificationCenter.default.post(name: .customScheduleEventsDidChange, object: nil)
         NotificationCenter.default.post(name: .customCountdownEventsDidChange, object: nil)
+    }
+
+    static func clear(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: storageKey)
+        defaults.removeObject(forKey: legacyCountdownStorageKey)
+        NotificationCenter.default.post(name: .customScheduleEventsDidChange, object: nil)
+        NotificationCenter.default.post(name: .customCountdownEventsDidChange, object: nil)
+    }
+
+    static func storageKeysForTesting() -> (current: String, legacy: String) {
+        (storageKey, legacyCountdownStorageKey)
+    }
+
+    private static func migratedLegacyEvents(defaults: UserDefaults) -> [CustomScheduleEvent] {
+        guard let legacyData = defaults.data(forKey: legacyCountdownStorageKey) else { return [] }
+
+        if let legacyEvents = try? JSONDecoder().decode([LegacyCountdownEvent].self, from: legacyData) {
+            return legacyEvents.map {
+                CustomScheduleEvent(id: $0.id, title: $0.title, startsAt: $0.targetDate)
+            }
+        }
+
+        return (try? JSONDecoder().decode([CustomScheduleEvent].self, from: legacyData)) ?? []
+    }
+}
+
+enum CustomCountdownStore {
+    static func load(defaults: UserDefaults = .standard) -> [CustomCountdownEvent] {
+        CustomScheduleStore.load(defaults: defaults)
+    }
+
+    static func save(_ events: [CustomCountdownEvent], defaults: UserDefaults = .standard) {
+        CustomScheduleStore.save(events, defaults: defaults)
+    }
+
+    static func clear(defaults: UserDefaults = .standard) {
+        CustomScheduleStore.clear(defaults: defaults)
     }
 }
 

@@ -62,11 +62,11 @@ struct TimetableView: View {
     @State private var isQuickAccessMenuPresented = false
     @State private var isWeatherAdvicePresented = false
     @State private var cachedTimetableWeather: TimetableWeatherSnapshot?
-    @State private var customCountdownEvents = CustomCountdownStore.load()
+    @State private var customCountdownEvents = CustomScheduleStore.load()
     @State private var cachedExamArrangements = SchoolDataCache.loadExamSchedule()
     @State private var calendarEventSignature = AcademicCalendarEvents.displayEvents()
     @State private var timetableScheduleProjectionSnapshot = TimetableScheduleProjectionSnapshot.make(
-        countdownEvents: CustomCountdownStore.load(),
+        countdownEvents: CustomScheduleStore.load(),
         exams: SchoolDataCache.loadExamSchedule()
     )
     @State private var timetableBackgroundImage: UIImage?
@@ -540,7 +540,7 @@ struct TimetableView: View {
     }
 
     private func reloadCustomCountdownEvents() {
-        customCountdownEvents = CustomCountdownStore.load()
+        customCountdownEvents = CustomScheduleStore.load()
         syncTimetableScheduleProjectionSnapshot()
         refreshScheduleReportNotifications()
     }
@@ -2278,7 +2278,7 @@ struct TimetableProcessingView: View {
             try modelContext.save()
             SchoolDataCache.clearDiscoverCaches()
             TimetableCacheMetadata.clear()
-            CustomCountdownStore.save([])
+            CustomScheduleStore.clear()
             SchoolDataRefreshNotifier.post(.all)
             publishWidgetSnapshot()
             operationAlert = .success("当前通用入口本机课表数据已清空。")

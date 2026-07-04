@@ -1602,7 +1602,7 @@ struct DayScheduleSummary {
                 tint = AppTheme.accent
             } else if courses.isEmpty {
                 primaryText = exam == nil ? L10n.text("今天没有课程安排") : L10n.text("今天没有课程，注意考试安排")
-                secondaryText = L10n.text("可以去发现页找自习室或查看考试与日程。")
+                secondaryText = L10n.text("可以去发现页找自习室或查看考试安排。")
                 icon = "checkmark.seal"
                 tint = AppTheme.accentSecondary
             } else {
@@ -1799,7 +1799,7 @@ struct TodayScheduleSummary {
             tint = AppTheme.accent
         } else if todayCourses.isEmpty {
             primaryText = nextExam == nil ? L10n.text("今天没有课程安排") : L10n.text("今天没有课程，注意考试安排")
-            secondaryText = L10n.text("可以去发现页找自习室或查看考试与日程。")
+            secondaryText = L10n.text("可以去发现页找自习室或查看考试安排。")
             icon = "checkmark.seal"
             tint = AppTheme.accentSecondary
         } else {

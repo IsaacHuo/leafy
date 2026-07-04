@@ -532,6 +532,38 @@ enum TimetableNotificationManager {
         return true
     }
 
+    static func applyReminder(for event: CustomScheduleEvent) async throws -> Bool {
+        cancelReminder(for: event)
+        let minutesBefore = normalizedReminderMinutes(event.minutesBefore)
+        guard minutesBefore > 0 else { return false }
+
+        guard let triggerDate = Calendar.current.date(byAdding: .minute, value: -minutesBefore, to: event.startsAt),
+              triggerDate > Date()
+        else {
+            return false
+        }
+
+        let center = try await authorizedNotificationCenter()
+        let content = UNMutableNotificationContent()
+        content.title = event.title
+        if event.locationText.isEmpty {
+            content.body = L10n.text("%d 分钟后有重要日期。", minutesBefore)
+        } else {
+            content.body = L10n.text("%d 分钟后有重要日期，地点：%@", minutesBefore, event.locationText)
+        }
+        content.sound = .default
+
+        let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: triggerDate)
+        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+        let request = UNNotificationRequest(
+            identifier: notificationID(customScheduleEventID: event.id),
+            content: content,
+            trigger: trigger
+        )
+        try await center.add(request)
+        return true
+    }
+
     static func cancelReminder(for course: Course) {
         let ids = course.weeks.map { notificationID(courseKey: course.stableCourseKey, week: $0) }
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids)
@@ -540,6 +572,12 @@ enum TimetableNotificationManager {
     static func cancelReminder(for reminder: TimetableCellReminder) {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [
             notificationID(cellKey: reminder.cellKey)
+        ])
+    }
+
+    static func cancelReminder(for event: CustomScheduleEvent) {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [
+            notificationID(customScheduleEventID: event.id)
         ])
     }
 
@@ -552,6 +590,11 @@ enum TimetableNotificationManager {
 
     static func cancelAllCellReminders(_ reminders: [TimetableCellReminder]) {
         let ids = reminders.map { notificationID(cellKey: $0.cellKey) }
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids)
+    }
+
+    static func cancelAllCustomScheduleEvents(_ events: [CustomScheduleEvent]) {
+        let ids = events.map { notificationID(customScheduleEventID: $0.id) }
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids)
     }
 
@@ -582,6 +625,14 @@ enum TimetableNotificationManager {
             .joined()
             .prefix(64)
         return "leafy.cellReminder.\(stableID)"
+    }
+
+    private static func notificationID(customScheduleEventID: String) -> String {
+        let stableID = customScheduleEventID.unicodeScalars
+            .map { String(format: "%02X", $0.value) }
+            .joined()
+            .prefix(64)
+        return "leafy.customSchedule.\(stableID)"
     }
 }
 

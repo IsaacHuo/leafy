@@ -20,7 +20,6 @@ struct ExamScheduleView: View {
     @State private var isExamImportPresented = false
     @State private var editingExam: ExamEditorItem?
     @State private var operationAlert: LeafyOperationAlert?
-    @State private var otherEvents: [CountdownEvent] = []
 
     private var isCustomCampus: Bool {
         ActiveCampusContext.identity?.isCustom == true
@@ -55,7 +54,7 @@ struct ExamScheduleView: View {
                     ContentUnavailableView {
                         Label("暂无考试安排", systemImage: "doc.text.magnifyingglass")
                     } description: {
-                        Text(isCustomCampus ? "手动添加考试后，会同步显示在课表日程和倒计时中。" : "连接校园网后可获取考试安排。")
+                        Text(isCustomCampus ? "手动添加或导入考试后，会显示在考试安排和课表考试提示中。" : "连接校园网后可获取考试安排。")
                     } actions: {
                         if isCustomCampus {
                             Button {
@@ -77,20 +76,8 @@ struct ExamScheduleView: View {
                     }
                 }
             }
-
-            AcademicDetailSectionHeader(title: "其他日程")
-
-            ForEach(otherEvents) { item in
-                AcademicDetailCard {
-                    CountdownEventRow(
-                        title: item.title,
-                        badge: item.kind.rawValue,
-                        targetDate: item.targetDate
-                    )
-                }
-            }
         }
-        .navigationTitle("考试与日程")
+        .navigationTitle("考试安排")
         .leafyInlineNavigationTitle()
         .toolbar {
             ToolbarItem(placement: .leafyTrailing) {
@@ -137,13 +124,9 @@ struct ExamScheduleView: View {
         }
         .task {
             exams = SchoolDataCache.loadExamSchedule()
-            otherEvents = cachedOtherEvents()
             if !isCustomCampus {
                 await loadExams(userInitiated: false)
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .semesterRuntimeConfigDidChange)) { _ in
-            otherEvents = cachedOtherEvents()
         }
         .onReceive(NotificationCenter.default.publisher(for: .schoolDataDidRefresh)) { notification in
             let event = notification.object as? SchoolDataRefreshEvent
@@ -166,29 +149,6 @@ struct ExamScheduleView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(AppSpacing.card)
             .leafyCardStyle()
-    }
-
-    private func cachedOtherEvents() -> [CountdownEvent] {
-        let semesterEnd = Calendar.current.date(
-            byAdding: .day,
-            value: SemesterConfig.supportedWeeks * 7 - 1,
-            to: SemesterConfig.startOfSemesterDate
-        ) ?? Date()
-        let semesterEvent = CountdownEvent(
-            id: "semester-end",
-            title: "本学期第 \(SemesterConfig.supportedWeeks) 周结束",
-            targetDate: semesterEnd,
-            kind: .semester
-        )
-        let customEvents = CustomCountdownStore.load().map {
-            CountdownEvent(
-                id: "custom-\($0.id)",
-                title: $0.title,
-                targetDate: $0.targetDate,
-                kind: .custom
-            )
-        }
-        return ([semesterEvent] + customEvents).sorted { $0.targetDate < $1.targetDate }
     }
 
     private func loadExams(userInitiated: Bool) async {

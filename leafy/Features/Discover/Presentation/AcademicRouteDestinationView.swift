@@ -52,7 +52,7 @@ struct AcademicRouteDestinationView: View {
         case .countdowns:
             ExamScheduleView()
         case .customCountdowns:
-            CustomCountdownListView()
+            CustomScheduleListView()
         case .medicalPolicy:
             MedicalPolicyView()
         case .medicalScenarioAssistant:

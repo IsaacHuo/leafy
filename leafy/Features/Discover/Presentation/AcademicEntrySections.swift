@@ -53,7 +53,7 @@ struct ScheduleSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppSpacing.card) {
-            LeafySectionTitle("时间日程", subtitle: isCustomCampus ? "集中管理考试和自定义重要日期。" : "考试、倒计时、校历与作息统一收口。")
+            LeafySectionTitle("时间日程", subtitle: isCustomCampus ? "考试安排、自定日程和推送设置分开管理。" : "考试、自定日程、校历与作息分开管理。")
 
             if isCustomCampus {
                 ToolEntryCard(title: "课表处理", subtitle: "集中处理手动添加、CSV 导入和示例清理", icon: "slider.horizontal.3") {
@@ -61,15 +61,15 @@ struct ScheduleSectionView: View {
                 }
             }
 
-            ToolEntryCard(title: "考试与日程", subtitle: isCustomCampus ? "管理考试、学期节点和自定义重要日期" : "查看考试时间、地点、学期节点和倒计时", icon: "calendar.badge.clock") {
+            ToolEntryCard(title: "考试安排", subtitle: isCustomCampus ? "手动添加或导入考试时间和地点" : "查看教务拉取的考试时间和地点", icon: "calendar.badge.clock") {
                 openRoute(.examSchedule)
             }
 
-            ToolEntryCard(title: "自定义倒计时", subtitle: "添加自己的重要日期提醒", icon: "calendar.badge.plus") {
+            ToolEntryCard(title: "自定日程", subtitle: "管理课表日程和任意日期的重要事项", icon: "calendar.badge.plus") {
                 openRoute(.customCountdowns)
             }
 
-            ToolEntryCard(title: "日程推送", subtitle: "按时发送课程、考试、倒计时和校历报告", icon: "bell.badge") {
+            ToolEntryCard(title: "日程推送", subtitle: "按时发送课程、考试、重要日期和校历报告", icon: "bell.badge") {
                 openRoute(.scheduleReports)
             }
 

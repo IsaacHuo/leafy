@@ -12,7 +12,7 @@ struct TimetableScheduleProjectionSnapshot {
     private let examsByDay: [TimetableScheduleProjectionDayKey: [TimetableExamProjection]]
 
     static func make(
-        countdownEvents: [CustomCountdownEvent],
+        countdownEvents: [CustomScheduleEvent],
         exams: [ExamArrangement]
     ) -> TimetableScheduleProjectionSnapshot {
         let countdowns = countdownEvents

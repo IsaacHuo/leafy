@@ -59,7 +59,7 @@ struct ScheduleReportsView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(isSaving || (settings.isEnabled && enabledModeCount == 0))
 
-                    Text("通知正文会根据保存时的课表、考试、倒计时、校历节点和本地日程生成；打开 App、刷新数据或再次保存会重新排程。")
+                    Text("通知正文会根据保存时的课表、考试、重要日期、校历节点和本地日程生成；打开 App、刷新数据或再次保存会重新排程。")
                         .leafySubheadline()
                         .foregroundStyle(AppTheme.secondaryText)
                 }
