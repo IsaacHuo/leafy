@@ -224,9 +224,8 @@ struct LeafyApp: App {
                 return
             }
             if networkManager.hasCachedIdentity, ActiveCampusContext.identity?.isCustom != true {
-                await CommunitySessionManager.shared.syncVerifiedEmailFromAuth()
                 authCallbackMessage = L10n.text(
-                    "邮箱验证已完成，已同步绑定状态。",
+                    "邮箱绑定请回到 App 输入邮件验证码完成。",
                     language: .zhHans
                 )
                 return

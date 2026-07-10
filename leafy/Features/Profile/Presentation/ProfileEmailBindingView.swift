@@ -124,7 +124,6 @@ struct ProfileEmailBindingView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             sessionManager.startBootstrapIfNeeded()
-            await sessionManager.syncVerifiedEmailFromAuth()
             seedEmailIfNeeded()
         }
         .onChange(of: sessionManager.profile) { _, _ in
