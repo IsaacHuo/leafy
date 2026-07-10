@@ -1,5 +1,6 @@
 # Custom rules for this project
 .codex/
+.worktrees/
 0class-back-main/
 0class-front-main/
 stargazer/
