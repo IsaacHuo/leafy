@@ -5,10 +5,8 @@ export type AdminPermission = AdminRole;
 
 export type ApiMetadata = {
   request_id?: string;
-  total?: number;
-  page?: number;
-  page_size?: number;
-  next_cursor?: string | null;
+  audit_logged?: boolean;
+  duration_ms?: number;
 };
 
 export type ApiResponse<T> = {
@@ -44,12 +42,9 @@ export type GlobalSearchResult = {
   metadata?: Record<string, unknown>;
 };
 
-export type GlobalSearchResponse = {
-  results: readonly GlobalSearchResult[];
-  meta?: ApiMetadata;
-};
+export type GlobalSearchResponse = ApiResponse<readonly GlobalSearchResult[]>;
 
-export type ExportFormat = "csv" | "json";
+export type ExportFormat = "csv";
 
 export type ExportRequest = {
   resource: string;

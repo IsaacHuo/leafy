@@ -1,5 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
+declare const process: { env: { readonly CI?: string } };
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
@@ -11,6 +13,6 @@ export default defineConfig({
   webServer: {
     command: "npm run dev -- --port 4173",
     url: "http://127.0.0.1:4173",
-    reuseExistingServer: true
+    reuseExistingServer: !process.env.CI
   }
 });
