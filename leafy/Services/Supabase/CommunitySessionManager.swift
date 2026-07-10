@@ -239,17 +239,6 @@ final class CommunitySessionManager: ObservableObject {
         try await verifyEmailBinding(input: CommunityEmailVerificationInput(email: email, code: code))
     }
 
-    func syncVerifiedEmailFromAuth() async {
-        do {
-            if let updatedProfile = try await service.syncVerifiedEmailFromAuth() {
-                profile = updatedProfile
-            }
-            bootstrapError = nil
-        } catch {
-            bootstrapError = error.localizedDescription
-        }
-    }
-
     @discardableResult
     func submitCampusMembershipRequest(schoolName: String) async throws -> CommunityProfile {
         let updatedProfile = try await service.submitCampusMembershipRequest(schoolName: schoolName)

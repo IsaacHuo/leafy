@@ -462,33 +462,6 @@ actor CommunityService {
         return profile
     }
 
-    func syncVerifiedEmailFromAuth() async throws -> CommunityProfile? {
-        let client = try LeafySupabase.shared.requireClient()
-        let user = try await client.auth.user()
-        guard let currentProfile = try await fetchCurrentProfile() else {
-            throw CommunityServiceError.missingAuthenticatedUser
-        }
-        guard let verifiedEmail = trimmedText(user.email).map(CommunityEmailBinding.normalizedEmail),
-              user.emailConfirmedAt != nil else {
-            return currentProfile
-        }
-
-        let update = CommunityVerifiedEmailUpdate(
-            boundEmail: verifiedEmail,
-            pendingBoundEmail: nil,
-            emailVerificationSentAt: nil,
-            updatedAt: ISO8601DateFormatter().string(from: Date())
-        )
-
-        _ = try await client
-            .from("profiles")
-            .update(update)
-            .eq("id", value: currentProfile.id.uuidString)
-            .execute()
-
-        return try await fetchProfile(id: currentProfile.id, client: client)
-    }
-
     func hasAcceptedCurrentTerms() async throws -> Bool {
         let client = try LeafySupabase.shared.requireClient()
         guard client.auth.currentUser != nil else {
