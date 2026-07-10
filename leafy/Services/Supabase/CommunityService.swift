@@ -371,7 +371,21 @@ actor CommunityService {
         }
 
         do {
-            _ = try await client.auth.update(user: UserAttributes(email: email), redirectTo: LeafySupabase.authCallbackURL)
+            if CommunityEmailBinding.shouldResendVerification(
+                pendingEmail: currentProfile.pendingBoundEmail,
+                requestedEmail: email
+            ) {
+                try await client.auth.resend(
+                    email: email,
+                    type: .emailChange,
+                    emailRedirectTo: LeafySupabase.authCallbackURL
+                )
+            } else {
+                _ = try await client.auth.update(
+                    user: UserAttributes(email: email),
+                    redirectTo: LeafySupabase.authCallbackURL
+                )
+            }
         } catch {
             throw mapEmailAuthError(error)
         }
@@ -409,8 +423,8 @@ actor CommunityService {
         guard CommunityEmailBinding.isValidEmail(email) else {
             throw CommunityServiceError.invalidEmail
         }
-        guard !input.code.isEmpty else {
-            throw CommunityServiceError.edgeFunctionRejected("请输入邮件验证码。")
+        guard CommunityEmailBinding.isCompleteVerificationCode(input.code) else {
+            throw CommunityServiceError.edgeFunctionRejected("请输入邮件中的 8 位验证码。")
         }
 
         do {
@@ -3100,9 +3114,12 @@ actor CommunityService {
         }
 
         if let authError = error as? AuthError {
+            CommunityDiagnostics.log.error(
+                "Email verification failed authCode=\(String(describing: authError.errorCode), privacy: .public)"
+            )
             switch authError.errorCode {
             case .otpExpired:
-                return .edgeFunctionRejected("验证码已失效，请重新发送。")
+                return .edgeFunctionRejected("验证码已失效，请重新发送并使用最新邮件中的验证码。")
             case .overEmailSendRateLimit, .overRequestRateLimit:
                 return .edgeFunctionRejected("验证码发送太频繁，请稍后再试。")
             case .emailExists, .userAlreadyExists, .conflict:

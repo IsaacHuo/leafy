@@ -33,7 +33,7 @@ enable_signup = true
 enable_anonymous_sign_ins = true
 
 [auth.email]
-otp_length = 6
+otp_length = 8
 otp_expiry = 3600
 
 [auth.email.template.email_change]

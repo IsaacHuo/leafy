@@ -1467,12 +1467,25 @@ nonisolated struct CommunityProfileUpdateInput: Sendable {
 }
 
 nonisolated enum CommunityEmailBinding {
+    static let verificationCodeLength = 8
+
     static func normalizedEmail(_ value: String) -> String {
         value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     static func normalizedCode(_ value: String) -> String {
-        value.filter(\.isNumber)
+        String(value.filter(\.isNumber).prefix(verificationCodeLength))
+    }
+
+    static func isCompleteVerificationCode(_ value: String) -> Bool {
+        value.filter(\.isNumber).count == verificationCodeLength
+    }
+
+    static func shouldResendVerification(pendingEmail: String?, requestedEmail: String) -> Bool {
+        guard let pendingEmail else { return false }
+        let normalizedPendingEmail = normalizedEmail(pendingEmail)
+        let normalizedRequestedEmail = normalizedEmail(requestedEmail)
+        return !normalizedPendingEmail.isEmpty && normalizedPendingEmail == normalizedRequestedEmail
     }
 
     static func isValidEmail(_ email: String) -> Bool {

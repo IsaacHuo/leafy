@@ -19,6 +19,34 @@ final class EmailBindingAndAliasLoginTests: XCTestCase {
         XCTAssertFalse(CommunityEmailBinding.isValidEmail("student@"))
     }
 
+    func testEmailBindingRequiresEightDigitVerificationCode() {
+        XCTAssertEqual(CommunityEmailBinding.normalizedCode("12 34-56 78 90"), "12345678")
+        XCTAssertTrue(CommunityEmailBinding.isCompleteVerificationCode("12345678"))
+        XCTAssertFalse(CommunityEmailBinding.isCompleteVerificationCode("1234567"))
+        XCTAssertFalse(CommunityEmailBinding.isCompleteVerificationCode("123456789"))
+    }
+
+    func testEmailBindingResendsForSamePendingEmail() {
+        XCTAssertTrue(
+            CommunityEmailBinding.shouldResendVerification(
+                pendingEmail: " Student@Example.com ",
+                requestedEmail: "student@example.com"
+            )
+        )
+        XCTAssertFalse(
+            CommunityEmailBinding.shouldResendVerification(
+                pendingEmail: "old@example.com",
+                requestedEmail: "new@example.com"
+            )
+        )
+        XCTAssertFalse(
+            CommunityEmailBinding.shouldResendVerification(
+                pendingEmail: nil,
+                requestedEmail: "new@example.com"
+            )
+        )
+    }
+
     func testLoginIdentifierDetectsEmailAliasCandidates() {
         XCTAssertTrue(CampusEmailAliasLoginService.isEmailIdentifier(" student@example.com "))
         XCTAssertTrue(CampusEmailAliasLoginService.isEmailIdentifier("student@"))

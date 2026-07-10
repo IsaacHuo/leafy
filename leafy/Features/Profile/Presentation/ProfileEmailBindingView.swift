@@ -38,7 +38,7 @@ struct ProfileEmailBindingView: View {
         !isVerifyingCode
             && !isSendingCode
             && !normalizedEmail.isEmpty
-            && !normalizedCode.isEmpty
+            && CommunityEmailBinding.isCompleteVerificationCode(normalizedCode)
     }
 
     var body: some View {
@@ -46,7 +46,7 @@ struct ProfileEmailBindingView: View {
             Section("用途") {
                 purposeRow(icon: "exclamationmark.triangle.fill", title: "服务异常通知", detail: "服务器、数据库或关键服务异常时，可通过邮箱联系你。")
                 purposeRow(icon: "envelope.badge.fill", title: "重要消息补充", detail: "当 App 内通知不可靠或需要补充说明时，邮箱会作为备用通知方式。")
-                purposeRow(icon: "person.text.rectangle.fill", title: "邮箱作为登录别名", detail: "绑定后可在北林登录页输入邮箱；仍需要教务密码、验证码和可访问教务的网络。")
+                purposeRow(icon: "lock.shield.fill", title: "登录方式不变", detail: "邮箱仅用于接收通知；北林登录仍使用学号、教务密码和教务验证码。")
             }
             .listRowBackground(AppTheme.cardBackground)
 
@@ -70,7 +70,7 @@ struct ProfileEmailBindingView: View {
                     }
 
                 HStack(spacing: 12) {
-                    TextField("邮箱验证码", text: $code)
+                    TextField("8 位邮箱验证码", text: $code)
                         .textContentType(.oneTimeCode)
                         .keyboardType(.numberPad)
                         .onChange(of: code) { _, newValue in
@@ -113,7 +113,7 @@ struct ProfileEmailBindingView: View {
             } header: {
                 Text("绑定邮箱")
             } footer: {
-                Text("验证码来自 \(AppBrand.displayName) 邮件。国内邮箱可能需要等待数分钟，请也检查垃圾箱。")
+                Text("请输入 \(AppBrand.displayName) 邮件中的 8 位验证码。国内邮箱可能需要等待数分钟，请也检查垃圾箱。")
             }
             .listRowBackground(AppTheme.cardBackground)
         }
@@ -158,12 +158,12 @@ struct ProfileEmailBindingView: View {
             return "当前可用于登录的邮箱仍是 \(boundEmail)。\(pendingEmail) 验证成功后会替换旧邮箱。"
         }
         if !boundEmail.isEmpty {
-            return "你可以在北林登录页输入此邮箱作为学号别名；登录仍需教务密码、验证码和校园网。"
+            return "此邮箱仅用于接收服务异常和重要通知，不会改变北林登录方式。"
         }
         if !pendingEmail.isEmpty {
             return "验证码已发送到 \(pendingEmail)，输入验证码后完成绑定。"
         }
-        return "绑定邮箱后，重要服务异常可通过邮箱通知你，也可作为北林登录页的学号别名。"
+        return "绑定邮箱后，重要服务异常可通过邮箱通知你；北林登录仍使用学号和教务密码。"
     }
 
     @ViewBuilder
@@ -281,8 +281,8 @@ struct ProfileEmailBindingView: View {
             alertMessage = CampusEmailAliasLoginError.invalidEmail.localizedDescription
             return
         }
-        guard !normalizedCode.isEmpty else {
-            alertMessage = "请输入邮件验证码。"
+        guard CommunityEmailBinding.isCompleteVerificationCode(normalizedCode) else {
+            alertMessage = "请输入邮件中的 8 位验证码。"
             return
         }
 
@@ -294,7 +294,7 @@ struct ProfileEmailBindingView: View {
             email = sessionManager.profile?.boundEmail ?? normalizedEmail
             code = ""
             hasEditedEmail = false
-            alertMessage = "邮箱已绑定。你下次可以在北林登录页输入这个邮箱作为学号别名。"
+            alertMessage = "通知邮箱已绑定。服务异常或重要消息可通过此邮箱联系你。"
         } catch {
             alertMessage = error.localizedDescription
         }
