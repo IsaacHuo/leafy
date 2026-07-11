@@ -1,0 +1,32 @@
+direction: right
+
+foundation: Foundations {
+  color: 语义色与主题色
+  type: 系统字体与显示缩放
+  spacing: 8 / 12 / 16 / 20 / 24
+  radius: 12 / 16 / 24
+}
+
+components: Components {
+  surfaces: Page / Card / Glass Surface
+  controls: Button / Chip / Icon Badge
+  navigation: Tab / Navigation / Sheet
+  feedback: Loading / Empty / Error / Alert
+}
+
+patterns: Product Patterns {
+  timetable: 高密度课表
+  feed: 社区信息流
+  academic: 学业工具入口
+  profile: 系统设置式列表
+}
+
+quality: Quality Gates {
+  accessibility: Dynamic Type 与 VoiceOver
+  appearance: 浅色 / 深色 / 自定义主题
+  states: 完整页面状态
+  compatibility: iOS 17 基线 / iOS 26 增强
+}
+
+foundation -> components -> patterns -> quality
+

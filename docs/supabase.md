@@ -1,534 +1,392 @@
 # MyLeafy Supabase 接入
 
-MyLeafy 使用 Supabase 承接社区、通知、公告、反馈、评教、共享课表和运营后台。Supabase 不替代学校教务登录；内部 Swift/SQL 边界仍保留 Leafy 命名。
+本文说明 MyLeafy 如何使用 Supabase，以及开发环境如何建立可工作的 Auth、Database、Storage 与 Edge Functions。它面向贡献者和自建环境，不包含生产账号、真实密钥或私有运营流程。
 
-## 1. 身份模型
+> Supabase 承载 MyLeafy 业务数据，不替代学校教务登录，也不是学校课表、成绩和考试数据的权威来源。
 
-当前采用“匿名 Supabase 会话 + 教务学号绑定”：
+## 1. 系统边界
 
-1. 用户先在 iOS App 中完成强智教务登录。
-2. App 创建或恢复匿名 Supabase 会话。
-3. App 把已认证的教务学号发送给 `community-bootstrap-user` Edge Function。
-4. Edge Function 使用当前 `auth.uid()` 绑定或复用 `(campus_id, edu_id)` 对应的 profile。
+![Supabase 业务与安全边界](diagrams/supabase-boundary.svg)
 
-这样做的好处：
+图源：[D2 source](diagrams/supabase-boundary.d2)
 
-- 用户不需要额外注册社区账号。
-- iOS 客户端不持有 `service_role`。
-- 社区表仍可用 `auth.uid()`、profile 映射和 RLS 做权限控制。
-- Supabase 只负责 MyLeafy 自己的社区业务数据。
+| 组件 | 使用的凭据 | 允许的操作 |
+|---|---|---|
+| iOS App | publishable key + 普通 Auth 会话 | 受 RLS 约束的用户数据、公开目录、signed URL 和允许的函数 |
+| Cloudflare 管理代理 | 服务端环境变量 + 管理会话 | 转发经过 Origin/CSRF 检查的管理请求 |
+| Edge Functions | 服务端 secrets | 身份绑定、跨表事务、受控管理操作和审计 |
+| 数据库 | PostgreSQL roles / RLS | 执行最终数据访问策略 |
 
-重要边界：当前是 App 端确认教务登录成功后再进行学号绑定。若未来要防止改包伪造学号，需要把教务校验迁到受控后端。
+`service_role` 不得出现在 iOS bundle、网站前端、公开 `.env`、截图、日志或 Git 历史中。
 
-## 2. Supabase 项目配置
+## 2. 身份模型
 
-控制台需要启用：
+### 2.1 学校身份与 Supabase 身份
 
-- Anonymous sign-ins。
-- Email provider。
-- Email OTP / Magic Link 和 Email password 登录。
+MyLeafy 同时维护两个独立身份：
 
-生产或 TestFlight 环境使用自定义 SMTP。北林通知邮箱仅用于管理后台发送服务异常和重要通知，不参与北林登录；验证码邮件建议接入阿里云 DirectMail / 邮件推送，避免 Resend 在国内邮箱上的明显延迟。Cloudflare Email Routing 只用于 `support@myleafy.space` 这类收信转发，不负责 Auth 验证码投递。
+- 学校身份：由目标学校教务系统验证，用于读取用户授权的教务数据。
+- Supabase 身份：由 Supabase Auth 管理，用于 MyLeafy 社区、共享、通知和评价业务。
 
-Supabase Auth 的 Magic Link / OTP 邮件模板应以验证码为主，正文展示 `{{ .Token }}`。不要把主要操作设计成点击 `{{ .ConfirmationURL }}`；`leafy://auth/callback` 仅保留为旧邮件链接兼容。
+当前社区初始化流程：
 
-邮箱绑定使用 Auth 的 `Change email address` 模板。模板源文件为 `supabase/templates/email-change-otp.html`，主题必须为 `MyLeafy 绑定邮箱验证码`，正文必须保留 `{{ .Token }}` 和 `{{ .NewEmail }}`，不得包含 `{{ .ConfirmationURL }}` 或 `{{ .TokenHash }}`。验证码长度固定为 8 位。本地 Supabase 会从 `supabase/config.toml` 加载该模板。
+1. 用户先在 iOS App 完成学校登录。
+2. App 创建或恢复匿名 Supabase Auth 会话。
+3. App 调用 `community-bootstrap-user`，传递当前校园和已登录教务标识。
+4. Edge Function 使用 `auth.uid()` 建立或恢复 profile 与 auth link。
+5. 后续客户端请求依赖 profile 归属、校园范围和 RLS。
 
-托管 Auth 必须开启 **Allow manual linking**，并关闭 **Secure email change**。北林社区身份最初是匿名 Supabase 会话，需要 manual linking 才能关联通知邮箱；匿名会话没有旧邮箱，关闭 secure email change 后只向待绑定的新邮箱发送一套验证码。同一待验证邮箱重发时，App 使用 Auth resend，并且只有最新邮件中的验证码有效。
+这一设计减少了额外注册步骤，但有明确限制：教务标识由已修改的客户端提交时，服务端无法独立证明它一定来自真实学校登录。普通社区能力通过 RLS 和业务限制降低风险；如果未来出现高价值身份权益，必须把学校验证迁移到可信服务端。
 
-托管 Supabase 项目不会自动读取仓库中的 `config.toml`。每次修改模板后，需在 Dashboard 的 **Auth → Email Templates → Change email address** 中粘贴同一份主题和 HTML，或用 Management API 更新对应的 `mailer_subjects_email_change` 与 `mailer_templates_email_change_content`。发布后先发一封测试邮件：它应只显示验证码，不能显示 “Confirm email change” 或任何确认邮箱的超链接。
+### 2.2 Profile 与 Auth link
 
-自定义 SMTP 建议：
+身份相关数据遵循以下原则：
 
-- Sender email：`no-reply@mail.myleafy.space`。
-- Sender name：`MyLeafy`。
-- Host / Port / Username / Password：按阿里云 DirectMail 控制台提供的 SMTP 信息填写。
-- Minimum interval per user：`60` 秒。
+- `auth.users` 是 Supabase 会话主体。
+- `profiles` 是用户在 MyLeafy 中的业务身份。
+- `profile_auth_links` 允许 profile 与一个或多个有效 Auth 主体建立受控映射。
+- `(campus_id, edu_id)` 在业务范围内唯一。
+- 普通客户端不能任意修改自己的教务标识或校园作用域。
+- 昵称是参与社区互动的最小资料；头像、专业和年级等字段按产品规则可选。
 
-阿里云发信域名不要求把域名 NS 迁到阿里云。当前权威 DNS 在 Cloudflare，就在 Cloudflare DNS 手动添加阿里云 DirectMail 控制台给出的所有权验证、SPF、DKIM、MX / 回信地址等记录；阿里云控制台的一键解析只适用于域名也托管在阿里云的情况。
+### 2.3 北京林业大学邮箱绑定
 
-iOS 工程从 `Info.plist` / xcconfig 读取：
+北京林业大学社区的匿名会话可通过允许的账号关联流程绑定已验证邮箱。该邮箱仅用于 MyLeafy 服务异常和重要通知，不改变北林登录方式；北林仍使用学号、教务密码和教务验证码。注意：
 
-- `SUPABASE_URL`
-- `SUPABASE_PUBLISHABLE_KEY`
-- `SUPABASE_COMMUNITY_BOOTSTRAP_FUNCTION`
-- `SUPABASE_CAMPUS_AI_FUNCTION`
+- 必须在 Supabase Auth 中允许所需的 manual linking 行为。
+- 验证码只发送到待绑定的新邮箱。
+- `bound_email` 只能写入已经验证的邮箱；待验证地址单独保存，不能视为有效通知地址或北林登录凭据。
+- 邮件模板保存在 `supabase/templates/`，托管项目不会自动读取本地模板，需在目标项目中同步配置。
+- 邮件正文不得泄露 token hash、内部回调参数或管理员信息。
 
-通常只需要在本地或 CI 的 xcconfig 中设置：
+本地模板验证脚本位于 `supabase/tests/check-email-change-otp-template.sh`。
 
-```text
-SUPABASE_URL = https://your-project-ref.supabase.co
-SUPABASE_PUBLISHABLE_KEY = sb_publishable_xxx
-```
+### 2.4 通用校园账号
 
-`SUPABASE_COMMUNITY_BOOTSTRAP_FUNCTION` 为空时默认使用 `community-bootstrap-user`。
-`SUPABASE_CAMPUS_AI_FUNCTION` 为空时默认使用 `campus-ai-assistant`。当前 App UI 和运行时仅开放用户自备 DeepSeek API Key，由 App 直连 `https://api.deepseek.com`；API Key 仅保存在当前设备 Keychain，不通过 `xcconfig` 或 Info.plist 注入。`campus-ai-assistant`、额度表、StoreKit 和托管鉴权代码仍保留，供后续恢复，但当前用户无法选择托管模式或联网搜索。
+不接入学校教务认证的通用校园入口使用独立的 Supabase 邮箱账号流程，包括注册、邮件验证码和邮箱密码登录。它与北京林业大学的“社区通知邮箱绑定”不是同一产品语义：
 
-## 3. Migration 顺序
+- 通用校园邮箱是 App 入口账号。
+- 北林绑定邮箱只是已登录用户的通知联系方式。
+- 两种模式由校园身份与 capability 决定，UI 和服务不得互相降级或混用。
+- 通用校园账号不应被描述为学校官方身份，除非未来增加可信的学校验证机制。
 
-按顺序执行 `supabase/migrations/` 下的 migration：
+## 3. 数据域
 
-1. `20260423_community_v1.sql`
-2. `20260424000000_community_notifications.sql`
-3. `20260424000100_community_profile_completion.sql`
-4. `20260424000200_remove_profile_edit_lock.sql`
-5. `20260424000300_teacher_ratings.sql`
-6. `20260425000100_posts_soft_delete_policy.sql`
-7. `20260425000200_posts_soft_delete_rpc.sql`
-8. `20260425000300_prevent_post_self_likes.sql`
-9. `20260425000400_site_announcements.sql`
-10. `20260426000100_allow_profile_edits.sql`
-11. `20260426000200_community_profile_auth_links.sql`
-12. `20260427000100_post_upload_limits.sql`
-13. `20260428000100_notifications_feedback_and_comments.sql`
-14. `20260428000200_admin_console.sql`
-15. `20260428000300_admin_console_pgcrypto_search_path.sql`
-16. `20260508000100_admin_analytics.sql`
-17. `20260508000200_guideline_1_2_moderation.sql`
-18. `20260511000100_shared_timetables.sql`
-19. `20260511000200_shared_timetable_digest_search_path.sql`
-20. `20260511000300_shared_timetable_accept_ambiguity.sql`
-21. `20260512000100_community_notification_realtime.sql`
-22. `20260514000100_explicit_data_api_grants.sql`
-23. `20260514000200_restore_revoke_community_terms_rpc.sql`
-24. `20260514000300_post_favorites.sql`
-25. `20260516123040_course_ratings.sql`
-26. `20260517020512_catalog_suggestions.sql`
-27. `20260524140954_catalog_suggestion_teacher_name.sql`
-28. `20260524221717_community_post_pins.sql`
-29. `20260525023043_community_feed_optimization.sql`
-30. `20260525032702_community_feed_hardening.sql`
-31. `20260526144759_campus_weather_cache.sql`
-32. `20260528024930_community_polls_v1.sql`
-33. `20260528045814_community_poll_lifecycle_v2.sql`
-34. `20260528130839_semester_runtime_configs.sql`
-35. `20260529133034_postgraduate_sources.sql`
-36. `20260605005826_campus_scope_v1.sql`
-37. `20260605010100_next_semester_runtime_config.sql`
-38. `20260605075924_reactivate_current_semester_runtime_config.sql`
-39. `20260605080459_semester_runtime_auto_reconcile_guard.sql`
-40. `20260611075655_community_profile_homepage.sql`
-41. `20260611141354_community_profile_stats_v1.sql`
-42. `20260612042443_community_profile_cover_path.sql`
-43. `20260612074957_community_single_pin_category_limit.sql`
-44. `20260615124522_image_posts_publish_after_upload_report_hide.sql`
-45. `20260615165000_national_calendar_runtime_configs.sql`
-46. `20260618132620_school_community_access_v1.sql`
-47. `20260623102832_grant_school_community_admin_access.sql`
-48. `20260623113617_community_school_membership_flow.sql`
-49. `20260625053303_campus_ai_usage_events.sql`
-50. `20260627125947_campus_ai_managed_entitlements.sql`
-51. `20260701090000_backend_capabilities_v1.sql`
-52. `20260702022000_campus_ai_weekly_subscription.sql`
-53. `20260704090000_campus_email_lookup.sql`
-54. `20260710120000_drop_campus_email_lookup.sql`
-55. `20260710121000_admin_security_runtime.sql`
+数据库通过 migration 演进。不要把以下列表当作完整 schema，而应把 `supabase/migrations/` 与 `supabase/schema-ledger.md` 作为事实来源。
 
-`20260605005826_campus_scope_v1.sql` 会建立 `campuses` 表，并把社区、共享课表、运营内容、学期配置等核心表补上 `campus_id`。当前只 seed `bjfu`，但 RLS、profile 绑定和 Feed RPC 已按校园隔离。
+### 3.1 校园与运行配置
 
-这些 migration 覆盖：
+- 校园目录、校园 capability 与访问范围。
+- 当前学期、开始日期、支持周数、研究生学期代码和结构化校历事件。
+- 后端能力版本与客户端兼容信息。
+- 学校/校园申请和相关运营状态。
 
-- `profiles`
-- `campuses`
-- `profile_auth_links`
-- `posts`
-- `post_images`
-- `comments`
-- `post_likes`
-- `post_favorites`
-- `community_post_pins`
-- `community_notifications`
-- `community_notification_settings`
-- `timetable_snapshots`
-- `timetable_invites`
-- `timetable_share_members`
-- `site_announcements`
-- `site_announcement_reads`
-- `feedback_submissions`
-- `teachers`
-- `teacher_ratings`
-- `course_catalog`
-- `course_ratings`
-- `catalog_suggestions`
-- `semester_runtime_configs`
-- `admin_users`
-- `admin_accounts`
-- `admin_sessions`
-- `admin_audit_logs`
-- 后台只读统计 RPC：`admin_daily_counts`、`admin_activity_heatmap`、`admin_category_mix`、`admin_top_content`
-- 社区 Feed RPC：`community_feed_v1`
-- 社区热门 RPC：`community_hot_posts_v1`
-- `community-images` storage bucket
+所有多校园业务表都应显式携带 `campus_id`，RLS 和服务端函数必须验证校园范围，不能依赖客户端查询条件。
 
-同时包含 RLS policy、评论数同步、老师评分汇总、发帖频率限制、图片数量限制、禁言限制、软删除 RPC、后台管理函数、运营统计 RPC、审计逻辑和 Data API 显式授权。后台统计 RPC 只 grant 给 `service_role`，前端仍通过 `admin-community` Edge Function 读取。
+### 3.2 社区
 
-`community_post_pins` 用于社区运营置顶。iOS App 只能读取当前校园内有效、且目标帖子仍为 `published` 的置顶记录；置顶、取消置顶和优先级调整只能通过后台 Edge Function 使用 `service_role` 执行。`community_feed_v1` 会合并当前校园的有效置顶和最新帖子，按是否置顶、优先级、开始时间、发帖时间排序；后台的客户端 Feed 预览和 iOS 社区页使用同一排序语义。`community_hot_posts_v1` 只读取当前校园近 7 天已发布帖子，按 `评论数 * 3 + 点赞数 * 2` 和发帖时间返回最多 10 条热门帖子。
+- profiles 与身份映射。
+- posts、comments、reactions、polls 和 favorites。
+- 内容分类、置顶、软删除与 Feed RPC。
+- notifications、announcements、feedback 和静音偏好。
+- 私有社区图片及其对象路径。
 
-### Data API 授权约定
+核心规则：
 
-MyLeafy 不依赖 Supabase 对 `public` schema 新表的自动 Data API 暴露。`20260514000100_explicit_data_api_grants.sql` 会撤销 repo 管理表、序列和函数的旧默认权限，再按 `authenticated` 与 `service_role` 的真实调用面显式授权；`anon` 不持有表权限，App 的匿名登录用户通过 Supabase Auth 会话按 `authenticated` role 访问。
+- 发帖和互动前满足 profile 完整度要求。
+- 用户只能修改自己拥有且状态允许的内容。
+- 内容删除优先使用软删除或受控函数，避免破坏通知、审计和引用。
+- 置顶和 Feed 顺序由服务端统一计算。
+- 发布频率、图片数量和字段长度由数据库或函数再次校验。
 
-以后新增任何 `public` 表、序列或 Data API/RPC 函数时，必须在同一个 migration 中同时写清：
+### 3.3 评价与目录
 
-- `grant`：只授予该对象实际需要的角色和操作。
-- `alter table ... enable row level security`。
-- 对应 RLS policy；函数没有 RLS，必须用 `grant execute` 控制可调用角色。
+- 教师、课程、菜品等可评价目录。
+- 用户评分和按维度聚合的统计。
+- 缺失目录建议与后台审核。
 
-## 4. Edge Functions
+普通用户只能读取允许发布的目录，并新增或更新自己的评分。评分范围、唯一性和聚合逻辑由数据库约束或 trigger 保证，不能只依赖客户端控件。
 
-当前函数：
+目录型数据需要记录来源与维护责任。仓库提供导入模板，但不附带对真实数据完整性的保证。
 
-- `community-bootstrap-user`
-- `community-feed`
-- `campus-request`
-- `campus-weather`
-- `campus-ai-assistant`
-- `campus-ai-entitlement`
-- `app-store-server-notifications`
-- `share-preview`
-- `admin-login`
-- `admin-me`
-- `admin-logout`
-- `admin-community`
-- `admin-export`
-- `admin-list-announcements`
-- `admin-publish-announcement`
-- `admin-update-announcement`
+### 3.4 共享课表
 
-部署示例：
+- 用户主动发布的学期课表快照。
+- 只保存共享所需最小字段：课程名、教师、地点、周次、节次、学期与发布时间等。
+- 邀请码保存 hash，明文只在生成端短暂展示。
+- 邀请限时且单次接受。
+- 分享关系为单向只读，双方均有相应退出方式。
+
+本地 SwiftData 课表仍是个人数据的权威副本。不得把成绩、考试结果、课程备注、提醒或其他私密字段加入共享快照。
+
+### 3.5 AI 与额度
+
+- 仓库保留托管 AI capability、entitlement 与业务函数，供后续能力评估和兼容使用。
+- 当前 iOS 运行时只开放自备 DeepSeek API Key 直连；订阅、托管额度和联网搜索未开放。
+- 自备 API Key 不存入 Supabase。
+- AI 请求日志应最小化，不长期保存完整个人学业上下文。
+
+### 3.6 运营与审计
+
+- 管理员账号、角色、会话与登录尝试。
+- 管理动作审计、请求 ID、结果和持续时间。
+- 受控搜索和导出。
+- 公告、内容状态、目录和运行配置管理。
+
+普通 App RLS 与管理员授权是两套边界。管理员不能通过客户端普通 API 自动获得服务端权限。
+
+## 4. RLS 设计原则
+
+每张暴露给 Data API 的业务表都需要明确回答：谁可以读取、谁可以创建、谁可以修改、谁可以删除。
+
+### 4.1 所有权
+
+- 所有权优先关联 profile 或稳定业务主体，而不是信任客户端提交的任意 user ID。
+- policy 中从 `auth.uid()` 推导当前 profile。
+- 更新时同时检查旧行和新行，防止用户通过更新所有者字段接管记录。
+
+### 4.2 校园隔离
+
+- 查询、RPC 和 Edge Function 同时验证 `campus_id`。
+- 客户端筛选只改善体验，不构成授权。
+- 跨校园管理员必须拥有显式范围，不能默认读取所有校园。
+
+### 4.3 公开读取
+
+公开目录或分享页面只暴露确实可公开的字段。即使一张表允许匿名读取，也应通过 view、RPC 或字段白名单避免返回邮箱、学号、内部状态和审计字段。
+
+### 4.4 函数安全
+
+使用 `security definer` 时必须：
+
+- 固定安全的 `search_path`。
+- 校验调用者和参数。
+- 只授予必要角色执行权限。
+- 不返回服务端密钥或内部异常详情。
+- 为高风险写操作记录审计。
+
+## 5. Storage
+
+社区图片使用私有 bucket，例如 `community-images`：
+
+- 对象路径按用户或 profile 命名空间隔离。
+- 上传前由客户端进行大小、格式和尺寸处理；服务端策略仍限制路径与权限。
+- 读取通过 signed URL 或受控函数。
+- 删除内容时考虑对象清理、软删除和审计之间的关系。
+- 不使用可预测的公开 URL 暴露私有图片。
+
+头像、帖子图片和其他资源应使用独立路径约定，避免一个功能能覆盖另一个功能的对象。
+
+## 6. Edge Functions
+
+当前 `supabase/functions/` 的主要函数组：
+
+| 领域 | 函数 |
+|---|---|
+| 社区初始化与 Feed | `community-bootstrap-user`、`community-feed` |
+| 校园服务 | `campus-request`、`campus-weather` |
+| Leafy AI（当前 App 未开放托管模式） | `campus-ai-assistant`、`campus-ai-entitlement` |
+| 分享 | `share-preview` |
+| 管理认证 | `admin-login`、`admin-me`、`admin-logout` |
+| 管理业务 | `admin-community`、`admin-export`、公告相关函数 |
+| 平台通知 | `app-store-server-notifications` |
+
+共享代码位于 `_shared/`，负责权限、CSV、安全响应和 AI 计费等跨函数逻辑。
+
+函数约定：
+
+- 验证 `Authorization`，需要管理权限的函数还要验证代理边界。
+- 对输入做类型、长度、枚举和校园范围检查。
+- 返回稳定错误代码和安全消息，不把数据库堆栈直接返回客户端。
+- CORS 只开放真实需要的来源和方法。
+- 可重试请求应考虑幂等性。
+- 高权限操作携带 request ID 并写入审计。
+
+## 7. 本地环境
+
+### 7.1 前置条件
+
+- Supabase CLI。
+- Docker（运行本地 Supabase stack 时需要）。
+- Deno（独立检查 Edge Functions 时推荐）。
+- Xcode 和 Node.js（分别用于 iOS 与管理前端）。
+
+### 7.2 启动本地 Supabase
 
 ```bash
+supabase start
+supabase db reset
+supabase status
+```
+
+`db reset` 会从头重放 migration，并执行配置中的 seed。它会清空本地数据库，不要对需要保留的数据环境使用。
+
+### 7.3 iOS 配置
+
+复制模板：
+
+```bash
+cp Config/Leafy.example.xcconfig Config/Leafy.local.xcconfig
+```
+
+配置项：
+
+```text
+SUPABASE_URL = https:/$()/your-project-ref.supabase.co
+SUPABASE_PUBLISHABLE_KEY = sb_publishable_xxx
+SUPABASE_COMMUNITY_BOOTSTRAP_FUNCTION = community-bootstrap-user
+SUPABASE_COMMUNITY_FEED_FUNCTION = community-feed
+SUPABASE_WEATHER_FUNCTION = campus-weather
+SUPABASE_CAMPUS_AI_FUNCTION = campus-ai-assistant
+SUPABASE_COMMUNITY_EDGE_REGION = ap-northeast-1
+SUPABASE_COMMUNITY_API_BASE_URL =
+```
+
+xcconfig 中 URL 的 `https:/$()/` 写法用于避免 `//` 被当作注释。`Leafy.local.xcconfig` 只能保存在本地或安全 CI 环境。
+
+`SupabaseConfig.load()` 会拒绝空值和模板占位值。配置缺失时，依赖 Supabase 的功能应显示不可用状态，不应导致不相关页面崩溃。
+
+### 7.4 部署到自建项目
+
+```bash
+supabase login
+supabase link --project-ref <project-ref>
+supabase db push
+
 supabase functions deploy community-bootstrap-user
 supabase functions deploy community-feed
-supabase functions deploy campus-request
 supabase functions deploy campus-weather
 supabase functions deploy campus-ai-assistant
-supabase functions deploy campus-ai-entitlement
-supabase functions deploy app-store-server-notifications
-supabase functions deploy share-preview
-supabase functions deploy admin-login
-supabase functions deploy admin-me
-supabase functions deploy admin-logout
-supabase functions deploy admin-community
-supabase functions deploy admin-export
-supabase functions deploy admin-list-announcements
-supabase functions deploy admin-publish-announcement
-supabase functions deploy admin-update-announcement
 ```
 
-如果当前目录没有 link 项目，使用 `--project-ref` 显式指定目标项目。
+只部署你实际配置和需要的函数。管理函数还依赖额外的服务端 secrets 和 Cloudflare 代理，见[运营后台](admin-console.md)。
 
-不要手动设置 `SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、`SUPABASE_DB_URL` 这些 Supabase 保留环境变量；托管 Edge Functions 会自动注入。
-后台登录还需要自定义 secret `ADMIN_PROXY_SECRET`，其值必须与 Cloudflare Pages 的同名 secret 一致。
+## 8. Migration 管理
 
-### Leafy AI 托管服务
+`supabase/migrations/` 是 schema 变更的唯一提交入口。要求：
 
-> 当前状态：基础设施保留但不对 App 用户开放。下面内容用于维护和后续恢复，不代表当前产品入口。
+- 文件名使用递增时间戳和清晰名称。
+- 新 migration 在空数据库和已有数据库上都可前向执行。
+- 不修改已经部署过的历史 migration 来“修正”生产状态；新增补偿 migration。
+- 大规模数据回填与 schema 变更分阶段进行。
+- 新表同步定义约束、索引、RLS、grants 和必要注释。
+- 删除列、函数或 action 前先提供兼容窗口。
 
-`campus-ai-assistant` 要求调用方携带有效 Supabase Auth JWT。函数以 `text/event-stream` 返回 Leafy 归一化后的 `quota` / `delta` / `reasoning_delta` / `done` / `error` 事件，内部使用 DeepSeek Chat Completions `stream: true` 生成 Markdown 回复；不保存 prompt 或 response 正文。`private.campus_ai_usage_events` 只记录用户、校园、模型、状态、字符数、token、估算成本和错误码，用于额度、限流与排障。
+`supabase/schema-ledger.md` 记录关键 schema 不变量和迁移顺序。任何文件名调整必须同步更新 ledger、测试和引用文档。
 
-Leafy 托管模式依赖三个函数：
+## 9. 学期运行配置
 
-- `campus-ai-assistant`：校验 Supabase Auth 和 App Store 安装记录，预约额度，调用 DeepSeek，并完成用量记录。
-- `campus-ai-entitlement`：App 购买、恢复购买或刷新额度时调用，校验 AppTransaction JWS 和可选订阅 Transaction JWS，同步 `private.campus_ai_entitlements`。
-- `app-store-server-notifications`：接收 App Store Server Notifications，处理续订、过期、退款和撤销等状态变更。
+`semester_runtime_configs` 允许在不发布新 App 的情况下切换：
 
-部署前需要设置：
+- `semester_id`
+- `semester_start_date`
+- `supported_weeks`
+- `graduate_timetable_term_code`
+- 结构化 `calendar_events`
+- `is_active`
+
+约束：
+
+- 同一时刻只有一个 active 学期配置。
+- 可提前创建下学期配置，但保持 inactive。
+- 激活前必须从学校真实页面确认所有参数，不能根据年份猜测。
+- App 回退顺序为远程 active 配置、最近成功缓存、内置默认配置。
+- 远程配置失败不能清空本地课表。
+
+建议通过经过权限控制的后台 action 原子切换 active 配置，避免手工 SQL 产生短暂的多 active 状态。
+
+## 10. 目录数据导入
+
+仓库包含：
+
+- `supabase/teacher_import_template.csv`
+- `supabase/course_import_template.csv`
+
+导入前：
+
+1. 确认数据来源和使用授权。
+2. 规范化名称、学院/单位、分类与学分。
+3. 按业务唯一键去重。
+4. 在非生产环境检查行数和搜索结果。
+5. 通过后台或受控脚本导入，并保留来源说明。
+
+不要把抓取到的个人联系方式、未经授权的评价文本或敏感学校字段混入目录。
+
+## 11. 邮件配置
+
+托管环境需要配置可靠的 SMTP 提供商和经过验证的发信域名。基本要求：
+
+- SPF、DKIM 和必要的 DNS 验证正确。
+- 发件地址与产品域名一致。
+- Auth 邮件模板与仓库模板同步。
+- 验证码邮件只包含完成验证所需的信息。
+- 在多个常见邮箱服务商上检查投递、时延和垃圾邮件判定。
+- 限制重发频率，只有最新验证码有效。
+
+SMTP 密码、Management API token 和 DNS 凭据只能存放在目标平台 secrets 中。
+
+## 12. 测试与验证
+
+### 数据库
 
 ```bash
-supabase secrets set DEEPSEEK_API_KEYS='["sk-...", "sk-..."]'
-supabase secrets set APP_STORE_BUNDLE_ID=com.isaachuo.leafy
-supabase secrets set APP_STORE_APP_APPLE_ID=...
-supabase secrets set APP_STORE_SERVER_ENVIRONMENT=Sandbox
-supabase secrets set APPLE_ROOT_CERTIFICATES_BASE64='["..."]'
+supabase db reset
+supabase test db
+bash supabase/tests/verify_admin_security_runtime_migration.sh
 ```
 
-`campus-ai-assistant` 兼容旧的 `DEEPSEEK_API_KEY`，也支持 `DEEPSEEK_API_KEY_1` 到 `DEEPSEEK_API_KEY_10`。推荐使用 `DEEPSEEK_API_KEYS` JSON 数组；函数会按顺序尝试，遇到网络错误、401/403、429 或 5xx 会在开始流式输出前切到下一个 key。
+数据库测试至少覆盖：
 
-`APP_STORE_SERVER_ENVIRONMENT` 在 TestFlight / Sandbox 验证时设为 `Sandbox`，生产发布前改为 `Production`。`APPLE_ROOT_CERTIFICATES_BASE64` 是 Apple Root Certificates 的 Base64 数组 JSON；不要提交到仓库。
+- migration 可重放。
+- 普通用户的允许和拒绝路径。
+- 跨用户、跨校园访问被拒绝。
+- 唯一性、范围和状态约束。
+- 关键 RPC 的返回契约。
 
-App Store Connect 侧需要在 App Store Server Notifications 中配置 Sandbox Server URL：
-
-```text
-https://<project-ref>.supabase.co/functions/v1/app-store-server-notifications
-```
-
-自动续订订阅商品必须创建在 Bundle ID `com.isaachuo.leafy` 对应的 App 下，Product ID 必须和代码一致：
-
-```text
-com.isaachuo.leafy.ai.weekly
-```
-
-周订阅周期为 1 周，当前 App 文案和后端额度按 `50 次/周` 处理。如果 App 内显示“价格未读取”或 StoreKit 没有返回商品，优先检查 App Store Connect 中 Paid Apps Agreement、税务、银行信息、订阅组、商品价格、地区、本地化和商品状态。DeepSeek 或 Supabase secrets 未配置不会影响 StoreKit 价格读取，但会影响额度同步和托管问答。
-
-`admin-community` 承接运营后台的数据读取和受控写操作，包括总览趋势、全局搜索、帖子/评论审核、帖子置顶和取消置顶、客户端 Feed 预览、用户禁言、反馈处理、公告、名录、学期/国家日历运行配置、管理员、会话和审计日志。`admin-export` 独立提供角色/校园/字段白名单约束的 CSV 导出。后台浏览器经 Cloudflare `/api/admin/*` 同域代理调用，不直接保存管理 token。总览趋势请求示例：
-
-```json
-{
-  "action": "overview",
-  "params": { "days": 30, "timezone": "Asia/Shanghai" }
-}
-```
-
-`days` 会归一到 `7`、`30` 或 `90`。响应中的 `analytics` 包含每日趋势、活跃热力、分类分布、热门帖子、反馈老化、教师评分分布和审核压力。`bulkModeratePosts`、`bulkModerateComments`、`pinPost`、`unpinPost`、`previewCommunityFeed`、`getProfile` 也通过 `admin-community` 暴露；批量写操作和置顶操作继续写入 `admin_audit_logs`。
-
-## 5. 客户端能力
-
-iOS 客户端入口：
-
-- `leafy/Services/Supabase/LeafySupabase.swift`
-- `leafy/Services/Supabase/CommunityService.swift`
-- `leafy/Services/Supabase/CommunitySessionManager.swift`
-- `leafy/Features/Discover/CommunityViews.swift`
-- `leafy/Features/Discover/DiscoverFeatureViews.swift`
-- `leafy/Features/Profile/ProfileView.swift`
-
-当前已接能力：
-
-- Supabase client 初始化。
-- 匿名会话恢复和创建。
-- 教务学号 bootstrap。
-- 社区 profile 读取和编辑。
-- 头像上传。
-- 邮箱验证绑定。
-- 帖子列表。
-- 发纯文本帖子。
-- 发带图片帖子。
-- 帖子详情。
-- 评论列表。
-- 发表评论。
-- 点赞 / 取消点赞。
-- 删除自己的帖子。
-- 删除自己的评论。
-- 我的发帖。
-- 我的点赞。
-- 我的评论。
-- 评论和点赞通知。
-- 站内公告。
-- 通知静音设置。
-- 意见反馈。
-- 老师列表搜索。
-- 老师评分详情。
-- 提交或更新 1 到 5 星评分。
-- 手动发布共享课表快照。
-- 生成 7 天过期、单次接受的邀请码。
-- 接受、查看、撤销和移除共享课表。
-
-## 6. 数据规则
-
-社区 profile：
-
-- `edu_id` 与教务学号绑定并唯一。
-- `bound_email` 只保存已验证邮箱，可作为北林登录页的学号别名；`pending_bound_email` 只表示待验证，不能用于登录。
-- 昵称必填。
-- 头像、专业、年级可选。
-- 同一个教务学号可在多个匿名 Supabase `auth.uid()` 间复用同一个 profile。
-
-帖子和评论：
-
-- 发帖、评论、点赞前必须完成社区资料。
-- 每小时发帖上限由数据库触发器限制。
-- 单条帖子图片数由数据库触发器限制。
-- 不能点赞自己的帖子。
-- 评论当前只支持一级评论。
-- 删除使用软删除或状态更新，不直接暴露普通用户硬删能力。
-
-图片：
-
-- `community-images` bucket 保持私有。
-- 客户端通过 signed URL 读取图片。
-- 图片路径按用户命名空间隔离。
-
-评教：
-
-- 老师名录在 `teachers` 表。
-- 每个用户对每位老师最多一条评分。
-- 星级只能是 1 到 5。
-- 普通用户只能新增或更新自己的评分，不能删除评分。
-- 老师平均分、评分数和 1 到 5 星分布由 trigger 汇总。
-
-评课：
-
-- 公选课课程库在 `course_catalog` 表，第一版由后台导入和维护。
-- 课程评分在 `course_ratings` 表。
-- App 里的“缺失课程”建议写入 `catalog_suggestions`，其中 `teacher_name` 仅供后台审核，不改变 `course_catalog` 的课程唯一性。
-- 每个用户对每门课最多一条评分。
-- 星级只能是 1 到 5，暂不支持文字评价。
-- 普通用户只能读取已发布课程、新增或更新自己的评分，不能删除评分。
-- 课程平均分、评分数和 1 到 5 星分布由 trigger 汇总。
-
-共享课表：
-
-- 本地 SwiftData 课表仍是权威数据源。
-- 首次发布需要用户在 App 内手动触发；发布后，课表刷新或全量同步成功时会自动更新已发布的共享快照。
-- 快照只包含课程名、老师、地点、周次、节次、学期和发布时间，不包含成绩、考试、备注、提醒或收藏。
-- 邀请码明文只在客户端生成后临时展示，数据库仅保存 SHA-256 hash。
-- 邀请码 7 天过期且只能被一个用户接受。
-- 共享关系是单向只读，分享者可随时撤销查看权限或停止共享；查看者也可移除对方课表。
-
-## 7. 新学期切换操作
-
-学期运行配置存放在 `semester_runtime_configs`。iOS App 的兜底顺序是：远程 active 配置、上次成功配置缓存、App 内置默认配置。远程失败不能阻断课表刷新；如果教务刷新失败，App 继续显示本地旧缓存并保留失败原因。
-
-切换前准备：
-
-1. 在 Supabase SQL Editor 手动执行 `supabase/migrations/20260528130839_semester_runtime_configs.sql`。该 migration 会 seed 当前学期 `2025-2026-2` 为 active，不会提前切到下学期。
-2. 部署新版 `admin-community` Edge Function，让后台 action 能读取和写入学期运行配置。
-3. 向学校教务或研究生系统确认下学期真实值：`semesterID`、`semesterStartDate`、`supportedWeeks`、`graduateTimetableTermCode`。不要在代码里猜这些值。
-4. 校历图片仍由 App 资源手动替换；`calendarEvents` 只放假期、停课等需要参与 App 日期逻辑的结构化事件。
-5. 可以提前创建下学期记录，但必须保持 `isActive = false`。只要 active 仍是当前学期，当前学期课表、考试、空教室和共享课表分区不会受影响。
-
-后台 action 示例：
-
-```json
-{
-  "action": "upsertSemesterRuntimeConfig",
-  "params": {
-    "semesterID": "2026-2027-1",
-    "semesterStartDate": "2026-09-07",
-    "supportedWeeks": 20,
-    "graduateTimetableTermCode": "47",
-    "calendarEvents": [
-      {
-        "id": "national-2026",
-        "title": "国庆",
-        "startDateString": "2026-10-01",
-        "endDateString": "2026-10-07",
-        "kind": "holiday"
-      }
-    ],
-    "isActive": false
-  }
-}
-```
-
-正式切换时，将下学期记录设为 active。若直接在 SQL Editor 操作，先停用旧 active，再激活新学期，避免触发“同一时间只能有一个 active 学期”的唯一索引：
-
-```sql
-begin;
-
-update public.semester_runtime_configs
-set is_active = false
-where is_active = true;
-
-insert into public.semester_runtime_configs (
-  semester_id,
-  semester_start_date,
-  supported_weeks,
-  graduate_timetable_term_code,
-  calendar_events,
-  is_active
-)
-values (
-  '2026-2027-1',
-  date '2026-09-07',
-  20,
-  '47',
-  '[]'::jsonb,
-  true
-)
-on conflict (semester_id) do update
-set semester_start_date = excluded.semester_start_date,
-    supported_weeks = excluded.supported_weeks,
-    graduate_timetable_term_code = excluded.graduate_timetable_term_code,
-    calendar_events = excluded.calendar_events,
-    is_active = true;
-
-commit;
-```
-
-切换后验收：
-
-1. 在 SQL Editor 确认只返回一条 active 配置：
-
-```sql
-select semester_id, semester_start_date, supported_weeks, graduate_timetable_term_code, is_active
-from public.semester_runtime_configs
-where is_active = true;
-```
-
-2. 打开 App 或从后台回到前台，让 App 拉取远程配置。手动刷新课表和“同步全部教务数据”会强制刷新配置。
-3. 本科课表继续走原教务课表链路；周次、日期、共享课表 `semester_id` 使用新配置。
-4. 研究生课表确认请求使用新的 `graduateTimetableTermCode`。
-5. 考试安排和空教室确认请求参数里的 `xnxqid` / `xnxqh` 使用新的 `semesterID`。
-6. 成绩、教学计划、培养方案仍保持现有全量抓取，不按当前学期强制过滤。
-7. 发布或刷新一次共享课表，确认新快照落到新学期分区，旧学期共享快照保留历史记录。
-
-回滚方式：用同一套 action 或 SQL 把上一个学期重新设为 active。App 下次启动、回前台、手动刷新课表或同步全部教务数据时会重新读取配置；紧急情况下让用户杀掉 App 后重开，可以避开普通前台刷新节流。
-
-## 8. 教师名录导入
-
-当前不在 App 或 migration 中抓取教师名录。先手动整理 CSV 后导入 Supabase。
-
-模板：`supabase/teacher_import_template.csv`
-
-格式：
-
-```csv
-name,unit
-张三,信息学院
-李四,园林学院
-```
-
-导入后进入 App 的 `学业 -> 评教`，下拉刷新或重新进入页面即可看到老师列表。
-
-## 9. 公选课课程库导入
-
-当前不在 App 中实时抓取全校公选课。先整理 CSV 后导入 Supabase 的 `course_catalog` 表。
-
-模板：`supabase/course_import_template.csv`
-
-格式：
-
-```csv
-name,unit,category,credit
-森林生态学导论,林学院,公选课,2.0
-审美艺术导论,艺术设计学院,公选课,2.0
-```
-
-建议先从教务教学计划、成绩页课程类别和运营人工校对结果合并候选数据，再按 `(name, unit, category)` 去重导入。导入后进入 App 的 `学业 -> 评课` 即可搜索课程并评分。
-
-App 提交的缺失课程建议会额外收集 `teacher_name` 帮助后台判断课程是否真实存在；审核通过时仍只按 `name,unit,category,credit` 写入 `course_catalog`。
-
-## 10. 管理员初始化
-
-第一位超级管理员通过数据库连接创建，脚本只读取环境变量，不提交密码：
+### Edge Functions
 
 ```bash
-export SUPABASE_DB_URL='postgresql://...'
-export ADMIN_USERNAME='admin'
-export ADMIN_PASSWORD='replace-with-a-long-password'
-export ADMIN_DISPLAY_NAME='Leafy Admin'
-bash supabase/scripts/create-admin-account.sh
+deno check supabase/functions/community-bootstrap-user/index.ts
+deno check supabase/functions/community-feed/index.ts
+deno check supabase/functions/admin-community/index.ts
 ```
 
-后台使用说明见 [运营后台](admin-console.md)。
+对权限、CSV 和管理 action 使用仓库中的 Deno 测试与契约测试。测试数据不得包含真实学生账号、生产 token 或生产数据库导出。
 
-## 11. 联调顺序
+### 客户端联调顺序
 
-1. 启用 Anonymous sign-ins。
-2. 启用 Email provider、Email OTP / Magic Link 和邮箱密码登录。
-3. 执行所有 migration。
-4. 部署 Edge Functions。
-5. 配置 iOS 工程的 Supabase URL 和 publishable key。
-6. 配置阿里云 DirectMail 自定义 SMTP，并确认 QQ、163、Gmail 都能收到验证码。
-7. 在 iOS App 的社区邮箱验证入口测试验证码投递，确认 QQ、163、Gmail 都能收到验证码。
-8. 先登录北林教务，再进入 `社区`。
-9. 检查 `profiles` 和 `profile_auth_links` 是否生成记录。
-10. 完善资料后测试发帖、图片、评论、点赞和收藏。
-11. 测试通知、公告和意见反馈。
-12. 导入教师 CSV 后测试评教搜索和评分。
-13. 测试邮箱验证绑定。
-14. 在后台 `帖子` 页执行一次置顶和客户端 Feed 预览，确认 iOS 社区页展示置顶标识。
-15. 执行学期运行配置切换演练：创建 inactive 下学期配置、切 active、刷新课表/考试/空教室/共享课表，再切回当前学期。
+1. 启用所需 Auth provider。
+2. 从头重放 migration。
+3. 创建私有 Storage bucket 和对应 policy。
+4. 部署 `community-bootstrap-user` 与当前客户端使用的函数。
+5. 配置 iOS publishable URL/key。
+6. 完成学校登录后进入社区，确认 profile 和 auth link 建立。
+7. 测试资料、发帖、图片、评论、互动、通知和退出恢复。
+8. 测试跨用户不可写、跨校园不可见和软删除状态。
+9. 再按需验证评价、共享课表、AI 与管理能力。
 
-## 12. 当前约束
+## 13. 常见故障
 
-- Supabase 不反查教务系统。
-- 当前 active 学期由 `semester_runtime_configs` 控制；新学期开学日期、研究生 `termcode` 和结构化校历事件需要运营手动填写。
-- 共享课表不会代替本地课表缓存；只有已经发布过共享课表的用户，后续课表刷新成功时才会自动更新共享快照。
-- 教师名录需要手动导入。
-- 评论不支持多级回复。
-- 评教不支持文字评价。
-- 帖子收藏存储在 Supabase；自习室收藏仍是本地 SwiftData 数据。
-- 后台高权限操作必须经 Edge Functions，不允许把 `service_role` 暴露给前端或 iOS App。
+| 现象 | 优先检查 |
+|---|---|
+| App 提示缺少配置 | xcconfig 是否加入 target、键名是否正确、占位值是否仍存在 |
+| 匿名登录失败 | Auth 是否启用 anonymous sign-in、URL/key 是否属于同一项目 |
+| profile 无法创建 | Function 是否部署、JWT 是否有效、migration 是否完整、校园记录是否存在 |
+| 查询返回 401/403 | Auth session、RLS、profile link 和 campus scope |
+| 图片上传成功但不可见 | bucket 是否私有、对象路径、signed URL、Storage policy |
+| Feed 顺序异常 | 服务端 Feed RPC、置顶记录与客户端是否二次排序 |
+| 邮箱绑定收不到码 | Auth provider、模板、SMTP/DNS、频率限制与待绑定邮箱状态 |
+| 学期数据错位 | active 配置是否唯一、学期 ID 与起始日期是否来自学校真实值 |
+
+## 14. 安全清单
+
+- [ ] iOS 和前端只使用 publishable key。
+- [ ] 所有暴露表启用并测试 RLS。
+- [ ] 多校园表和函数验证 `campus_id`。
+- [ ] 更新 policy 防止修改 owner/profile/campus 字段逃逸。
+- [ ] Storage 使用私有 bucket、受控路径和 signed URL。
+- [ ] 管理函数验证角色、范围、参数和代理边界。
+- [ ] CSV 导出防止公式注入并限制字段与行数。
+- [ ] 日志、错误和审计不记录密码、Cookie、完整 token 和不必要的个人数据。
+- [ ] secrets 仅存在于 Supabase、Cloudflare 或安全 CI 的 secret store。
+- [ ] migration、RLS 与 Edge Function 变更有拒绝路径测试。

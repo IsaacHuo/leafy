@@ -1,0 +1,30 @@
+direction: down
+
+start: 用户登录
+session: SchoolNetworkManager {
+  captcha: 获取验证码与临时 key
+  encode: 本地执行强智 encode
+  cookies: 显式同步 Cookie
+}
+request: 教务请求 {
+  direct: URLSession 直连
+  fallback: WKWebView 兜底
+}
+parse: SwiftSoup 解析 {
+  timetable: 课表
+  grades: 成绩与考试
+  cultivation: 教学计划与培养方案
+  classrooms: 空教室
+}
+persist: 本地与展示 {
+  swiftdata: SwiftData 缓存
+  projection: 投影与布局快照
+  view: SwiftUI 页面 / Widget
+}
+
+start -> session.captcha -> session.encode -> session.cookies
+session.cookies -> request.direct
+request.direct -> parse
+request.direct -> request.fallback: 课表不可解析时
+request.fallback -> parse.timetable
+parse -> persist.swiftdata -> persist.projection -> persist.view
