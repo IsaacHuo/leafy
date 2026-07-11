@@ -19,7 +19,8 @@ type SharePreview = {
   canonicalURL: string;
   imageURL: string;
 };
-type ServiceClient = ReturnType<typeof createClient>;
+// Share previews query several dynamic public tables without generated database types.
+type ServiceClient = any;
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {

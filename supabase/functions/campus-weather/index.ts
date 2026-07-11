@@ -227,7 +227,7 @@ async function fetchAmapPayload(key: string, city: string, extensions: "base" | 
   return payload;
 }
 
-async function saveCache(client: ReturnType<typeof createClient>, weather: CampusWeatherResponse) {
+async function saveCache(client: any, weather: CampusWeatherResponse) {
   const { error } = await client
     .from("campus_weather_cache")
     .upsert({
@@ -246,7 +246,7 @@ async function saveCache(client: ReturnType<typeof createClient>, weather: Campu
   }
 }
 
-async function fetchFreshCache(client: ReturnType<typeof createClient>): Promise<WeatherCacheRecord | null> {
+async function fetchFreshCache(client: any): Promise<WeatherCacheRecord | null> {
   const { data, error } = await client
     .from("campus_weather_cache")
     .select("*")

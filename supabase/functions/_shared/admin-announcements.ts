@@ -7,7 +7,8 @@ export const corsHeaders = {
 };
 
 type AdminContext = {
-  adminClient: ReturnType<typeof createClient>;
+  // This function intentionally uses a dynamic public schema; generated DB types are not available in Edge runtime.
+  adminClient: any;
   userID: string;
 };
 
