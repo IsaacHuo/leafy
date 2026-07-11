@@ -12,10 +12,22 @@ fi
 require_pattern() {
   pattern=$1
   description=$2
-  if ! rg --quiet --multiline --pcre2 "$pattern" "$migration"; then
+  if ! matches_pattern "$pattern"; then
     echo "missing migration contract: $description" >&2
     exit 1
   fi
+}
+
+matches_pattern() {
+  python3 - "$1" "$migration" <<'PY'
+import re
+import sys
+
+pattern, path = sys.argv[1:]
+with open(path, encoding="utf-8") as source:
+    content = source.read()
+raise SystemExit(0 if re.search(pattern, content, re.MULTILINE) else 1)
+PY
 }
 
 require_pattern 'create table if not exists public\.admin_login_attempts' 'service-only login-attempt table'
@@ -44,7 +56,7 @@ require_pattern 'grant execute on function public\.admin_upsert_national_calenda
 require_pattern 'grant execute on function public\.admin_begin_login_attempt[\s\S]*to service_role' 'login-attempt begin service-role grant'
 require_pattern 'grant execute on function public\.admin_finish_login_attempt[\s\S]*to service_role' 'login-attempt finish service-role grant'
 
-if rg --quiet --pcre2 '(?i)(create|alter|drop)\s+policy|alter\s+table\s+public\.(?!admin_login_attempts\b)[a-z0-9_]+\s+(enable|disable|force|no force)\s+row\s+level\s+security' "$migration"; then
+if matches_pattern '(?i)(create|alter|drop)\s+policy|alter\s+table\s+public\.(?!admin_login_attempts\b)[a-z0-9_]+\s+(enable|disable|force|no force)\s+row\s+level\s+security'; then
   echo 'migration must not modify existing application RLS or policies' >&2
   exit 1
 fi
