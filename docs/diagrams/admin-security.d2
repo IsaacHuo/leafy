@@ -1,0 +1,31 @@
+direction: down
+
+browser: 管理员浏览器 {
+  console: React-admin UI
+  cookie: HttpOnly 管理会话
+}
+
+cloudflare: Cloudflare Pages Functions {
+  auth: login / me / logout
+  actions: actions / export
+  checks: Origin、CSRF、request ID
+}
+
+edge: Supabase Edge Functions {
+  session: 管理会话校验
+  rbac: 角色与校园范围
+  validation: 参数与资源白名单
+  audit: 审计记录
+}
+
+data: Supabase {
+  postgres: PostgreSQL
+  storage: Storage
+}
+
+browser.console -> cloudflare
+cloudflare -> browser.cookie: Set-Cookie
+browser.cookie -> cloudflare: 自动携带
+cloudflare -> edge: 代理密钥 + 管理 token
+edge -> data: 服务端权限
+edge.audit -> data.postgres

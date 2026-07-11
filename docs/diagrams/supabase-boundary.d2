@@ -1,0 +1,40 @@
+direction: down
+
+ios: iOS App {
+  school_identity: 已验证的教务身份
+  anonymous_auth: 匿名 Supabase 会话
+  repositories: 社区与共享课表仓储
+}
+
+edge: Edge Functions {
+  bootstrap: community-bootstrap-user
+  community: 社区与业务函数
+  ai: Campus AI 能力与额度
+}
+
+database: PostgreSQL {
+  profiles: profiles / profile_auth_links
+  content: posts / comments / reactions
+  operations: notifications / announcements / feedback
+  ratings: teachers / courses / ratings
+  sharing: timetable snapshots / grants
+}
+
+storage: Storage {
+  images: private community-images
+}
+
+policy: 安全边界 {
+  rls: Row Level Security
+  campus: campus_id 隔离
+  ownership: auth.uid() 与 profile 映射
+}
+
+ios.school_identity -> ios.anonymous_auth
+ios.anonymous_auth -> edge.bootstrap: JWT + edu_id
+edge.bootstrap -> database.profiles
+ios.repositories -> database: publishable key + RLS
+ios.repositories -> storage.images: signed URL
+edge -> database
+database -> policy
+storage -> policy
