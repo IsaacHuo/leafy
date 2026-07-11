@@ -1,7 +1,3 @@
-\o /dev/null
-\ir ../migrations/20260710121000_admin_security_runtime.sql
-\o
-
 begin;
 
 create extension if not exists pgtap with schema extensions;

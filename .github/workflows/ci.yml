@@ -147,6 +147,9 @@ jobs:
       - name: Reset database from migrations
         run: supabase db reset --local
 
+      - name: Replay admin security migration
+        run: supabase db query --local --file supabase/migrations/20260710121000_admin_security_runtime.sql
+
       - name: Run database tests
         run: supabase test db
 
