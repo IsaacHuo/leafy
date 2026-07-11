@@ -12,7 +12,7 @@ final class CampusAIAssistantTests: XCTestCase {
         let initial = CampusAISettingsStore.load(userDefaults: defaults)
         XCTAssertEqual(initial.selectedProviderID, .deepSeek)
         XCTAssertEqual(initial.selectedProvider, CampusAIProviderCatalog.deepSeek)
-        XCTAssertTrue(CampusAIServiceMode.allCases.contains(initial.serviceMode))
+        XCTAssertEqual(initial.serviceMode, .ownAPIKey)
         XCTAssertEqual(initial.systemPrompt, CampusAISettingsStore.defaultSystemPrompt)
         XCTAssertTrue(initial.contextSettings.includesTimetable)
         XCTAssertTrue(initial.contextSettings.includesMedicalLedger)
@@ -28,7 +28,8 @@ final class CampusAIAssistantTests: XCTestCase {
         let reloaded = CampusAISettingsStore.load(userDefaults: defaults)
         XCTAssertEqual(reloaded.systemPrompt, "请优先用列表回答")
         XCTAssertFalse(reloaded.contextSettings.includesMedicalLedger)
-        XCTAssertTrue(reloaded.webSearchEnabled)
+        XCTAssertFalse(reloaded.webSearchEnabled)
+        XCTAssertEqual(reloaded.serviceMode, .ownAPIKey)
 
         let reset = CampusAISettingsStore.reset(userDefaults: defaults)
         XCTAssertEqual(reset, .defaultValue)
@@ -70,7 +71,7 @@ final class CampusAIAssistantTests: XCTestCase {
 
         let settings = CampusAISettingsStore.load(userDefaults: defaults)
         XCTAssertEqual(settings.selectedProviderID, .deepSeek)
-        XCTAssertTrue(CampusAIServiceMode.allCases.contains(settings.serviceMode))
+        XCTAssertEqual(settings.serviceMode, .ownAPIKey)
         XCTAssertEqual(settings.systemPrompt, "旧版 Prompt")
         XCTAssertFalse(settings.contextSettings.includesMedicalLedger)
         XCTAssertFalse(settings.webSearchEnabled)
@@ -1551,6 +1552,185 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertEqual(actions.first?.payload.title, "提交实验报告")
         XCTAssertNil(actions.first?.payload.endPeriod)
         XCTAssertEqual(actions.first?.payload.minutesBefore, 0)
+    }
+
+    func testSettingsStoreNormalizesLegacyManagedModeAndWebSearch() throws {
+        let suiteName = "CampusAIAssistantTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let legacyCurrentJSON = """
+        {
+          "serviceMode":"leafyManaged",
+          "selectedProviderID":"deepseek",
+          "systemPrompt":"保留这个偏好",
+          "contextSettings":{
+            "includesTimetable":true,
+            "includesGrades":true,
+            "includesExamsAndPlans":true,
+            "includesLearningWorkspace":true,
+            "includesPostgraduateAndCareer":true,
+            "includesHonorsFitnessQuality":true,
+            "includesMedicalLedger":true,
+            "includesCommunityCache":true
+          },
+          "webSearchEnabled":true
+        }
+        """
+        defaults.set(Data(legacyCurrentJSON.utf8), forKey: "campusAI.userSettings.v2")
+
+        let settings = CampusAISettingsStore.load(userDefaults: defaults)
+
+        XCTAssertEqual(settings.serviceMode, .ownAPIKey)
+        XCTAssertFalse(settings.webSearchEnabled)
+        XCTAssertEqual(settings.systemPrompt, "保留这个偏好")
+    }
+
+    func testArtifactIntentSupportsAutomaticAndForcedModes() {
+        XCTAssertTrue(CampusAIArtifactIntentResolver.shouldGenerateArtifact(
+            message: "帮我做一份期末复习计划",
+            mode: .automatic
+        ))
+        XCTAssertTrue(CampusAIArtifactIntentResolver.shouldGenerateArtifact(
+            message: "明天有什么课？",
+            mode: .artifact
+        ))
+        XCTAssertFalse(CampusAIArtifactIntentResolver.shouldGenerateArtifact(
+            message: "明天有什么课？",
+            mode: .automatic
+        ))
+    }
+
+    func testCampusAIRequestOutputModeDefaultsAndDecodesOldPayload() throws {
+        let request = CampusAIRequest(
+            message: "整理计划",
+            context: minimalAIContext(),
+            recentMessages: []
+        )
+        XCTAssertEqual(request.outputMode, .automatic)
+
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any]
+        )
+        object.removeValue(forKey: "outputMode")
+        let oldData = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(CampusAIRequest.self, from: oldData)
+        XCTAssertEqual(decoded.outputMode, .automatic)
+    }
+
+    func testCompletionPlanParsesArtifactAndValidatesActions() throws {
+        let content = """
+        ```json
+        {
+          "actions": [
+            {"kind":"open_academic_route","title":"","payload":{"route":"trainingProgram"}},
+            {"kind":"open_academic_route","title":"无效","payload":{"route":"not-a-route"}}
+          ],
+          "artifact": {
+            "title": "期末复习计划",
+            "summary": "按周整理复习节奏。",
+            "markdown": "# 期末复习计划\\n\\n## 第一周\\n- 梳理范围"
+          }
+        }
+        ```
+        """
+
+        let plan = try CampusAICompletionPlanParser.parse(content)
+
+        XCTAssertEqual(plan.actions.count, 1)
+        XCTAssertEqual(plan.actions.first?.payload.route, "trainingProgram")
+        XCTAssertEqual(plan.artifact?.title, "期末复习计划")
+        XCTAssertTrue(plan.artifact?.markdown.contains("第一周") == true)
+    }
+
+    func testCompletionPlanRejectsInvalidJSONAndEmptyArtifact() {
+        XCTAssertThrowsError(try CampusAICompletionPlanParser.parse("不是 JSON"))
+        XCTAssertNoThrow(try CampusAICompletionPlanParser.parse("{\"actions\":[],\"artifact\":null}"))
+
+        let plan = try? CampusAICompletionPlanParser.parse(
+            "{\"actions\":[],\"artifact\":{\"title\":\"\",\"summary\":\"\",\"markdown\":\"\"}}"
+        )
+        XCTAssertNil(plan?.artifact)
+    }
+
+    func testArtifactAssemblerAttachesOnlyLocalSources() throws {
+        let context = CampusAIContextBuilder.build(
+            courses: [],
+            grades: [],
+            exams: [],
+            teachingPlan: [],
+            trainingProgram: nil,
+            countdowns: [],
+            learningTasks: [LearningProjectTask(title: "复习数据结构", note: "周五前")]
+        )
+        let retrieval = CampusAILocalKnowledgeIndex.search(query: "复习计划", context: context)
+        let request = CampusAIRequest(
+            message: "生成复习计划",
+            context: context,
+            recentMessages: [],
+            capabilities: CampusAICapabilitySet(serviceMode: .ownAPIKey, webSearchEnabled: false),
+            localRetrieval: retrieval,
+            outputMode: .artifact
+        )
+        let draft = CampusAIArtifactDraft(
+            title: "复习计划",
+            summary: "一周执行清单",
+            markdown: "# 复习计划\n\n- 复习数据结构"
+        )
+
+        let artifact = try XCTUnwrap(CampusAIArtifactAssembler.deliverable(from: draft, request: request))
+
+        XCTAssertEqual(artifact.content?.markdown, draft.markdown)
+        XCTAssertTrue(artifact.sources.allSatisfy { $0.url.hasPrefix("leafy://local/") })
+        XCTAssertTrue(artifact.sources.allSatisfy { $0.siteName == "Leafy 本机数据" })
+    }
+
+    func testLegacyAgentMetadataDefaultsArtifactState() throws {
+        let empty = try JSONDecoder().decode(
+            CampusAIMessageAgentMetadata.self,
+            from: Data("{\"statusText\":null,\"citations\":[],\"agentTrace\":[],\"deliverables\":[]}".utf8)
+        )
+        XCTAssertEqual(empty.artifactState, .none)
+        XCTAssertNil(empty.artifactErrorMessage)
+
+        let legacyReady = try JSONDecoder().decode(
+            CampusAIMessageAgentMetadata.self,
+            from: Data(
+                """
+                {"citations":[],"agentTrace":[],"deliverables":[{"id":"a","title":"成品","query":"q","summary":"s","generatedAt":"now","sources":[],"formats":["markdown"],"content":{"markdown":"# 成品"}}]}
+                """.utf8
+            )
+        )
+        XCTAssertEqual(legacyReady.artifactState, .ready)
+    }
+
+    @MainActor
+    func testArtifactExportServiceExportsFourSafeFormats() async throws {
+        let messageID = UUID()
+        let artifact = CampusAIDeliverable(
+            id: "export-artifact",
+            title: "复习计划",
+            query: "生成复习计划",
+            summary: "一周安排",
+            generatedAt: "2026-07-10T00:00:00Z",
+            sources: [],
+            content: CampusAIArtifactContent(
+                markdown: "# 复习计划\n\n## 周一\n\n- 高等数学\n- 数据结构"
+            )
+        )
+        let service = CampusAIArtifactExportService()
+
+        let markdownURL = try await service.export(artifact, messageID: messageID, format: .markdown)
+        let htmlURL = try await service.export(artifact, messageID: messageID, format: .html)
+        let textURL = try await service.export(artifact, messageID: messageID, format: .plainText)
+        let pdfURL = try await service.export(artifact, messageID: messageID, format: .pdf)
+        defer { try? FileManager.default.removeItem(at: markdownURL.deletingLastPathComponent()) }
+
+        XCTAssertEqual(try String(contentsOf: markdownURL, encoding: .utf8), artifact.content?.markdown)
+        let html = try String(contentsOf: htmlURL, encoding: .utf8)
+        XCTAssertFalse(CampusAIArtifactExportService.containsExecutableScript(html))
+        XCTAssertTrue(html.contains("复习计划"))
+        XCTAssertTrue(try String(contentsOf: textURL, encoding: .utf8).contains("高等数学"))
+        XCTAssertTrue(try Data(contentsOf: pdfURL).starts(with: Data("%PDF".utf8)))
     }
 
     private func minimalAIContext() -> CampusAIContextPayload {

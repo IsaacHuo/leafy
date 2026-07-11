@@ -91,7 +91,9 @@ MyLeafy 是当前面向北京林业大学学生、以课表为核心的校园工
 
 ## 5. Leafy AI、社区和学业
 
-Leafy AI 作为独立根入口，默认只基于用户允许的本机学业上下文回答。用户可以选择自备 DeepSeek API Key，或使用 Leafy 托管模式；对话记录保存在本机，托管模式只记录额度、状态和用量信息。
+Leafy AI 作为独立根入口，采用本地优先的原生对话界面，默认只基于用户允许的本机学业上下文回答。当前仅开放用户自备 DeepSeek API Key，Key 保存在设备 Keychain；订阅、托管额度、服务模式选择和联网搜索暂不在 UI 或运行时开放。对话与 Artifact metadata 保存在本机，清除 Key 后仍可只读浏览历史。
+
+计划、报告、清单、表格和流程图等意图可生成 Artifact。聊天列表只展示轻量 SwiftUI 成品卡片，完整 Markdown、Mermaid、KaTeX 和代码渲染仅在全屏阅读页加载；成品可导出为 PDF、静态 HTML、Markdown 或纯文本。
 
 Leafy AI 支持的动作保持收敛：
 

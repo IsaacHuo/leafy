@@ -58,7 +58,7 @@ SUPABASE_PUBLISHABLE_KEY = sb_publishable_xxx
 
 `SUPABASE_COMMUNITY_BOOTSTRAP_FUNCTION` 为空时默认使用 `community-bootstrap-user`。
 `SUPABASE_EMAIL_LOOKUP_FUNCTION` 为空时默认使用 `campus-email-lookup`，用于把已验证绑定邮箱解析为北林学号；邮箱只作为登录别名，仍需校园网、教务密码和验证码。
-`SUPABASE_CAMPUS_AI_FUNCTION` 为空时默认使用 `campus-ai-assistant`。Campus AI 当前支持两种模式：用户自备 DeepSeek API Key 时由 App 直连 `https://api.deepseek.com`；Leafy 托管模式由 App 调用 `campus-ai-assistant` Edge Function，再由服务端使用 Supabase secret 中的 `DEEPSEEK_API_KEYS` 或 `DEEPSEEK_API_KEY` 请求 DeepSeek。用户自备 API Key 仅保存在当前设备 Keychain，不通过 `xcconfig` 或 Info.plist 注入。
+`SUPABASE_CAMPUS_AI_FUNCTION` 为空时默认使用 `campus-ai-assistant`。当前 App UI 和运行时仅开放用户自备 DeepSeek API Key，由 App 直连 `https://api.deepseek.com`；API Key 仅保存在当前设备 Keychain，不通过 `xcconfig` 或 Info.plist 注入。`campus-ai-assistant`、额度表、StoreKit 和托管鉴权代码仍保留，供后续恢复，但当前用户无法选择托管模式或联网搜索。
 
 ## 3. Migration 顺序
 
@@ -215,6 +215,8 @@ supabase functions deploy admin-update-announcement
 不要手动设置 `SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、`SUPABASE_DB_URL` 这些 Supabase 保留环境变量；托管 Edge Functions 会自动注入。
 
 ### Leafy AI 托管服务
+
+> 当前状态：基础设施保留但不对 App 用户开放。下面内容用于维护和后续恢复，不代表当前产品入口。
 
 `campus-ai-assistant` 要求调用方携带有效 Supabase Auth JWT。函数以 `text/event-stream` 返回 Leafy 归一化后的 `quota` / `delta` / `reasoning_delta` / `done` / `error` 事件，内部使用 DeepSeek Chat Completions `stream: true` 生成 Markdown 回复；不保存 prompt 或 response 正文。`private.campus_ai_usage_events` 只记录用户、校园、模型、状态、字符数、token、估算成本和错误码，用于额度、限流与排障。
 

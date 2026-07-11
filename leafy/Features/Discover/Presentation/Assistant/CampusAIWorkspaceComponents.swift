@@ -1,406 +1,303 @@
 import SwiftData
 import SwiftUI
 
-struct CampusAIChatTopBar: View {
-    @Environment(\.leafyThemeColorPreference) private var themeColorPreference
-
-    let settings: CampusAIUserSettings
-    let quotaSnapshot: CampusAIQuotaSnapshot?
-    let configuredProviderIDs: Set<CampusAIProviderID>
-    let openHistory: () -> Void
-    let openSettings: () -> Void
-    let newConversation: () -> Void
-    let selectServiceMode: (CampusAIServiceMode) -> Void
-
-    var body: some View {
-        LeafyGlassGroup(spacing: AppSpacing.micro) {
-            HStack(spacing: AppSpacing.compact) {
-                iconButton(
-                    systemName: "line.3.horizontal",
-                    accessibilityLabel: "打开历史记录",
-                    action: openHistory
-                )
-
-                iconButton(
-                    systemName: "gearshape",
-                    accessibilityLabel: "打开 Leafy 设置",
-                    action: openSettings
-                )
-
-                serviceModeSelector
-
-                Spacer(minLength: AppSpacing.micro)
-
-                iconButton(
-                    systemName: "plus",
-                    accessibilityLabel: "新建对话",
-                    action: newConversation
-                )
-            }
-        }
-        .padding(.horizontal, AppSpacing.page)
-        .padding(.top, AppSpacing.micro)
-        .padding(.bottom, AppSpacing.micro)
-        .background(AppTheme.cardElevated)
-    }
-
-    private var serviceModeSelector: some View {
-        Menu {
-            Button {
-                selectServiceMode(.leafyManaged)
-            } label: {
-                Label(
-                    CampusAIServiceMode.leafyManaged.title,
-                    systemImage: settings.serviceMode == .leafyManaged ? "checkmark" : "sparkles"
-                )
-            }
-
-            Button {
-                selectServiceMode(.ownAPIKey)
-            } label: {
-                Label(
-                    CampusAIServiceMode.ownAPIKey.title,
-                    systemImage: settings.serviceMode == .ownAPIKey ? "checkmark" : "key.fill"
-                )
-            }
-            .disabled(!configuredProviderIDs.contains(settings.selectedProviderID))
-        } label: {
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
-                    Text(settings.serviceMode.shortTitle)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-
-                    Image(systemName: "chevron.down")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(AppTheme.tertiaryText)
-                }
-
-                if settings.serviceMode == .leafyManaged, let quotaSnapshot {
-                    Text("剩余 \(quotaSnapshot.displayText)")
-                        .font(.caption2)
-                        .foregroundStyle(AppTheme.secondaryText)
-                        .lineLimit(1)
-                }
-            }
-            .foregroundStyle(AppTheme.primaryText)
-            .padding(.horizontal, 12)
-            .frame(maxWidth: 132, alignment: .leading)
-            .frame(height: 38)
-            .leafyGlassSurface(in: Capsule(), isInteractive: true)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("当前 AI 服务 \(settings.serviceMode.title)")
-    }
-
-    private func iconButton(
-        systemName: String,
-        accessibilityLabel: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(AppTheme.accent(for: themeColorPreference))
-                .frame(width: 44, height: 44)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(accessibilityLabel)
-        .leafyGlassSurface(in: Circle(), isInteractive: true)
-    }
-}
-
-struct CampusAIHistoryPanel: View {
-    @Environment(\.leafyThemeColorPreference) private var themeColorPreference
+struct CampusAIHistorySheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var isClearConfirmationPresented = false
 
     let conversations: [CampusAIConversation]
     let selectedConversationID: UUID?
-    let onSelectConversation: (CampusAIConversation) -> Void
-    let onDeleteConversation: (CampusAIConversation) -> Void
-    let onClearHistory: () -> Void
+    let selectConversation: (CampusAIConversation) -> Void
+    let deleteConversation: (CampusAIConversation) -> Void
+    let clearHistory: () -> Void
+    let openSettings: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 4) {
-                    if conversations.isEmpty {
-                        ContentUnavailableView("暂无历史", systemImage: "clock")
-                            .padding(.top, AppSpacing.card)
-                    } else {
+        NavigationStack {
+            Group {
+                if conversations.isEmpty {
+                    ContentUnavailableView(
+                        "暂无对话",
+                        systemImage: "bubble.left.and.bubble.right",
+                        description: Text("新的对话会保存在这台设备上。")
+                    )
+                } else {
+                    List {
                         ForEach(conversations) { conversation in
-                            CampusAIHistoryRow(
-                                conversation: conversation,
-                                isSelected: selectedConversationID == conversation.id,
-                                selectConversation: {
-                                    onSelectConversation(conversation)
-                                },
-                                deleteConversation: {
-                                    onDeleteConversation(conversation)
+                            Button {
+                                selectConversation(conversation)
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(conversation.title.nonEmptyTrimmed ?? "新的对话")
+                                            .font(.body.weight(.medium))
+                                            .foregroundStyle(AppTheme.primaryText)
+                                            .lineLimit(1)
+
+                                        Text(conversation.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                                            .font(.caption)
+                                            .foregroundStyle(AppTheme.secondaryText)
+                                    }
+
+                                    Spacer(minLength: 8)
+
+                                    if selectedConversationID == conversation.id {
+                                        Image(systemName: "checkmark")
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(AppTheme.accent)
+                                    }
                                 }
-                            )
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .swipeActions {
+                                Button(role: .destructive) {
+                                    deleteConversation(conversation)
+                                } label: {
+                                    Label("删除", systemImage: "trash")
+                                }
+                            }
                         }
                     }
+                    .listStyle(.plain)
                 }
-                .padding(.horizontal, AppSpacing.micro)
-                .padding(.bottom, AppSpacing.card)
+            }
+            .navigationTitle("历史记录")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("完成") { dismiss() }
+                }
+
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button(action: openSettings) {
+                        Label("Leafy 设置", systemImage: "gearshape")
+                    }
+
+                    Button(role: .destructive) {
+                        isClearConfirmationPresented = true
+                    } label: {
+                        Label("清空历史", systemImage: "trash")
+                    }
+                    .disabled(conversations.isEmpty)
+                }
+            }
+            .confirmationDialog(
+                "清空全部对话？",
+                isPresented: $isClearConfirmationPresented,
+                titleVisibility: .visible
+            ) {
+                Button("清空全部历史", role: .destructive, action: clearHistory)
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("这只会删除当前设备上的 Leafy 聊天记录。")
             }
         }
-        .leafyGlassSurface(
-            in: RoundedRectangle(cornerRadius: 28, style: .continuous),
-            fallbackFill: AppTheme.cardElevated.opacity(0.92)
-        )
-        .shadow(color: .black.opacity(0.16), radius: 24, x: 8, y: 10)
-    }
-
-    private var header: some View {
-        HStack(spacing: AppSpacing.micro) {
-            Text("历史记录")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(AppTheme.primaryText)
-                .lineLimit(1)
-
-            Spacer(minLength: AppSpacing.micro)
-
-            Button(role: .destructive, action: onClearHistory) {
-                Image(systemName: "trash")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(conversations.isEmpty ? AppTheme.tertiaryText : AppTheme.danger)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .disabled(conversations.isEmpty)
-            .accessibilityLabel("清空历史")
-            .leafyGlassSurface(in: Circle(), isInteractive: true)
-            .contentShape(Circle())
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, AppSpacing.page)
-        .padding(.top, AppSpacing.page)
-        .padding(.bottom, AppSpacing.compact)
-    }
-}
-
-private struct CampusAIHistoryRow: View {
-    @Environment(\.leafyThemeColorPreference) private var themeColorPreference
-
-    let conversation: CampusAIConversation
-    let isSelected: Bool
-    let selectConversation: () -> Void
-    let deleteConversation: () -> Void
-
-    var body: some View {
-        Button(action: selectConversation) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(titleText)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppTheme.primaryText)
-                    .lineLimit(1)
-
-                Text(conversation.updatedAt.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.tertiaryText)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-            .background(
-                isSelected
-                    ? AppTheme.accent(for: themeColorPreference).opacity(0.12)
-                    : Color.clear,
-                in: RoundedRectangle(cornerRadius: AppRadius.small, style: .continuous)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: AppRadius.small, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            Button(role: .destructive, action: deleteConversation) {
-                Label("删除对话", systemImage: "trash")
-            }
-        }
-    }
-
-    private var titleText: String {
-        let trimmed = conversation.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "新的对话" : trimmed
     }
 }
 
 struct CampusAIEmptyConversationPanel: View {
-    @Environment(\.leafyThemeColorPreference) private var themeColorPreference
-
     let prompts: [String]
+    let hasAPIKey: Bool
+    let configureAPIKey: () -> Void
     let selectPrompt: (String) -> Void
 
     var body: some View {
-        VStack(spacing: AppSpacing.card) {
-            VStack(spacing: AppSpacing.compact) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(AppTheme.accent(for: themeColorPreference))
+        VStack(spacing: 28) {
+            VStack(spacing: 12) {
+                Image(systemName: "leaf.fill")
+                    .font(.system(size: 28, weight: .medium))
+                    .foregroundStyle(AppTheme.accent)
                     .frame(width: 58, height: 58)
-                    .background(
-                        AppTheme.accent(for: themeColorPreference).opacity(0.12),
-                        in: Circle()
-                    )
+                    .background(AppTheme.accent.opacity(0.10), in: Circle())
 
                 Text("Leafy")
                     .font(.largeTitle.weight(.semibold))
                     .foregroundStyle(AppTheme.primaryText)
 
-                Text("问问课表、考试、成绩或培养方案。Leafy 会尽量只基于当前设备上的学业数据回答。")
+                Text("基于这台设备上的课表、考试、成绩与个人记录，帮你回答问题并整理成品。")
                     .font(.subheadline)
                     .foregroundStyle(AppTheme.secondaryText)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 360)
+                    .frame(maxWidth: 380)
             }
 
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: AppSpacing.micro) {
-                ForEach(prompts, id: \.self) { prompt in
-                    CampusAIPromptSuggestionButton(title: prompt) {
-                        selectPrompt(prompt)
+            if hasAPIKey {
+                VStack(spacing: 0) {
+                    ForEach(Array(prompts.enumerated()), id: \.element) { index, prompt in
+                        Button {
+                            selectPrompt(prompt)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Text(prompt)
+                                    .font(.body)
+                                    .foregroundStyle(AppTheme.primaryText)
+                                    .multilineTextAlignment(.leading)
+
+                                Spacer(minLength: 8)
+
+                                Image(systemName: "arrow.up.left")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(AppTheme.tertiaryText)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        if index < prompts.count - 1 {
+                            Divider().padding(.leading, 16)
+                        }
                     }
                 }
+                .background(AppTheme.softFill.opacity(0.72), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .frame(maxWidth: 520)
+            } else {
+                CampusAIMissingKeyPanel(configureAPIKey: configureAPIKey)
+                    .frame(maxWidth: 520)
             }
-            .frame(maxWidth: 560)
         }
         .frame(maxWidth: .infinity)
     }
 }
 
-private struct CampusAIPromptSuggestionButton: View {
-    let title: String
-    let action: () -> Void
+struct CampusAIMissingKeyPanel: View {
+    let configureAPIKey: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: AppSpacing.compact) {
-                Text(title)
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(AppTheme.primaryText)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.82)
-                    .allowsTightening(true)
+        VStack(alignment: .leading, spacing: 16) {
+            Label("配置 DeepSeek Key 后开始", systemImage: "key.horizontal")
+                .font(.headline)
+                .foregroundStyle(AppTheme.primaryText)
 
-                Spacer()
+            Text("API Key 只保存在当前设备的 Keychain。Leafy 会把你允许的本机上下文随请求发送给 DeepSeek，不使用托管额度，也不会联网搜索。")
+                .font(.subheadline)
+                .foregroundStyle(AppTheme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
 
-                Image(systemName: "arrow.up.left")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(AppTheme.tertiaryText)
+            Button(action: configureAPIKey) {
+                Text("配置 DeepSeek Key")
+                    .font(.body.weight(.semibold))
+                    .frame(maxWidth: .infinity)
             }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 12)
-            .frame(minHeight: 48)
-            .background(
-                AppTheme.softFill,
-                in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
-            )
+            .buttonStyle(.borderedProminent)
+            .tint(AppTheme.accent)
         }
-        .buttonStyle(.plain)
+        .padding(20)
+        .background(AppTheme.softFill.opacity(0.72), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 
 struct CampusAIComposerBar: View {
-    @Environment(\.leafyThemeColorPreference) private var themeColorPreference
-
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @Binding var draftText: String
+    @Binding var outputMode: CampusAIOutputMode
     let isFocused: FocusState<Bool>.Binding
-    let settings: CampusAIUserSettings
     let isSending: Bool
     let canSend: Bool
+    let hasAPIKey: Bool
+    let configureAPIKey: () -> Void
     let submit: () -> Void
     let cancelStreaming: () -> Void
-    let toggleWebSearch: () -> Void
-
-    private var isWebSearchActive: Bool {
-        settings.serviceMode == .leafyManaged && settings.webSearchEnabled
-    }
 
     var body: some View {
-        LeafyGlassGroup(spacing: AppSpacing.micro) {
-            HStack(alignment: .bottom, spacing: 10) {
-                webSearchToggleButton
-                    .padding(.leading, 8)
-                    .padding(.bottom, 7)
-
-                TextField("功能仍在测试，不作功能保证。", text: $draftText, axis: .vertical)
-                    .focused(isFocused)
-                    .lineLimit(1...5)
-                    .textFieldStyle(.plain)
-                    .submitLabel(.send)
-                    .onSubmit(submit)
-                    .padding(.leading, 2)
-                    .padding(.trailing, 8)
-                    .padding(.vertical, 14)
-
-                Button(action: sendButtonAction) {
-                    Image(systemName: isSending ? "stop.fill" : "arrow.up")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle((canSend || isSending) ? AppTheme.textOnAccent(for: themeColorPreference) : AppTheme.tertiaryText)
-                        .frame(width: 34, height: 34)
-                        .background(
-                            (canSend || isSending)
-                                ? AppTheme.accent(for: themeColorPreference)
-                                : AppTheme.accent(for: themeColorPreference).opacity(0.16),
-                            in: Circle()
-                        )
+        VStack(spacing: 8) {
+            if outputMode == .artifact {
+                HStack(spacing: 8) {
+                    Image(systemName: "doc.richtext")
+                    Text("下一条消息将生成成品")
+                        .font(.caption.weight(.medium))
+                    Spacer(minLength: 8)
+                    Button {
+                        outputMode = .automatic
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.caption.weight(.bold))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("取消生成成品")
                 }
-                .buttonStyle(.plain)
-                .disabled(!canSend && !isSending)
-                .padding(.trailing, 8)
-                .padding(.bottom, 7)
-                .accessibilityLabel(isSending ? "停止生成" : "发送给 Leafy")
+                .foregroundStyle(AppTheme.accent)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(AppTheme.accent.opacity(0.10), in: Capsule())
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            .leafyGlassSurface(
-                in: RoundedRectangle(cornerRadius: 24, style: .continuous),
-                fallbackFill: AppTheme.cardElevated.opacity(0.92)
-            )
+
+            if hasAPIKey {
+                HStack(alignment: .bottom, spacing: 8) {
+                    Menu {
+                        Button {
+                            outputMode = outputMode == .artifact ? .automatic : .artifact
+                        } label: {
+                            Label(
+                                outputMode == .artifact ? "取消生成成品" : "生成成品",
+                                systemImage: outputMode == .artifact ? "checkmark" : "doc.richtext"
+                            )
+                        }
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(AppTheme.secondaryText)
+                            .frame(width: 36, height: 36)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("更多输入选项")
+
+                    TextField("问问 Leafy", text: $draftText, axis: .vertical)
+                        .focused(isFocused)
+                        .lineLimit(1...6)
+                        .textFieldStyle(.plain)
+                        .submitLabel(.send)
+                        .onSubmit(submit)
+                        .padding(.vertical, 10)
+
+                    Button(action: isSending ? cancelStreaming : submit) {
+                        Image(systemName: isSending ? "stop.fill" : "arrow.up")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle((canSend || isSending) ? Color.white : AppTheme.tertiaryText)
+                            .frame(width: 34, height: 34)
+                            .background(
+                                (canSend || isSending) ? AppTheme.accent : AppTheme.softFill,
+                                in: Circle()
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSend && !isSending)
+                    .accessibilityLabel(isSending ? "停止生成" : "发送")
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(AppTheme.separator.opacity(0.42), lineWidth: 0.5)
+                }
+            } else {
+                Button(action: configureAPIKey) {
+                    Label("配置 DeepSeek Key", systemImage: "key.fill")
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(AppTheme.accent)
+            }
         }
         .padding(.horizontal, AppSpacing.page)
-        .padding(.top, AppSpacing.micro)
-        .padding(.bottom, AppSpacing.compact)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+        .background(.bar)
+        .animation(accessibilityReduceMotion ? nil : .easeInOut(duration: 0.2), value: outputMode)
     }
+}
 
-    private var webSearchToggleButton: some View {
-        Button(action: toggleWebSearch) {
-            HStack(spacing: 5) {
-                Image(systemName: isWebSearchActive ? "globe.asia.australia.fill" : "globe")
-                    .font(.system(size: 15, weight: .semibold))
-
-                if isWebSearchActive {
-                    Text("联网")
-                        .font(.caption2.weight(.semibold))
-                        .lineLimit(1)
-                }
-            }
-            .foregroundStyle(isWebSearchActive ? AppTheme.textOnAccent(for: themeColorPreference) : AppTheme.secondaryText)
-            .frame(height: 34)
-            .padding(.horizontal, isWebSearchActive ? 10 : 0)
-            .frame(minWidth: 34)
-            .background(
-                isWebSearchActive
-                    ? AppTheme.accent(for: themeColorPreference)
-                    : AppTheme.softFill.opacity(settings.serviceMode == .leafyManaged ? 0.95 : 0.48),
-                in: Capsule()
-            )
-            .opacity(settings.serviceMode == .leafyManaged ? 1 : 0.58)
-        }
-        .buttonStyle(.plain)
-        .disabled(settings.serviceMode != .leafyManaged || isSending)
-        .accessibilityLabel(isWebSearchActive ? "关闭联网搜索" : "开启联网搜索")
-        .accessibilityValue(isWebSearchActive ? "已开启" : "已关闭")
-    }
-
-    private func sendButtonAction() {
-        if isSending {
-            cancelStreaming()
-        } else {
-            submit()
-        }
+private extension String {
+    var nonEmptyTrimmed: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

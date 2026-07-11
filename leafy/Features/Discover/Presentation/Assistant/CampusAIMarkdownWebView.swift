@@ -8,24 +8,40 @@ import AppKit
 #endif
 
 struct CampusAIMarkdownWebView: View {
+    enum Mode {
+        case compact
+        case document
+    }
+
     let markdown: String
+    let mode: Mode
 
     @State private var contentHeight: CGFloat = 1
     @State private var didFailRendering = false
 
+    init(markdown: String, mode: Mode = .compact) {
+        self.markdown = markdown
+        self.mode = mode
+    }
+
     var body: some View {
         Group {
             if didFailRendering {
-                CampusAIMarkdownFallbackText(markdown: markdown)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                ScrollView {
+                    CampusAIMarkdownFallbackText(markdown: markdown)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(mode == .document ? AppSpacing.page : 0)
+                }
             } else {
                 CampusAIMarkdownPlatformWebView(
                     markdown: markdown,
                     height: $contentHeight,
-                    didFailRendering: $didFailRendering
+                    didFailRendering: $didFailRendering,
+                    isScrollEnabled: mode == .document
                 )
-                .frame(height: max(1, contentHeight))
+                .frame(height: mode == .document ? nil : max(1, contentHeight))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -130,13 +146,14 @@ private struct CampusAIMarkdownPlatformWebView: UIViewRepresentable {
     let markdown: String
     @Binding var height: CGFloat
     @Binding var didFailRendering: Bool
+    let isScrollEnabled: Bool
 
     func makeCoordinator() -> CampusAIMarkdownWebCoordinator {
         CampusAIMarkdownWebCoordinator(height: $height, didFailRendering: $didFailRendering)
     }
 
     func makeUIView(context: Context) -> WKWebView {
-        let webView = Self.makeWebView(context: context)
+        let webView = Self.makeWebView(context: context, isScrollEnabled: isScrollEnabled)
         context.coordinator.attach(to: webView)
         return webView
     }
@@ -149,7 +166,7 @@ private struct CampusAIMarkdownPlatformWebView: UIViewRepresentable {
         coordinator.dismantle(from: webView)
     }
 
-    private static func makeWebView(context: Context) -> WKWebView {
+    private static func makeWebView(context: Context, isScrollEnabled: Bool) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.userContentController = WKUserContentController()
@@ -162,8 +179,8 @@ private struct CampusAIMarkdownPlatformWebView: UIViewRepresentable {
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
-        webView.scrollView.isScrollEnabled = false
-        webView.scrollView.showsVerticalScrollIndicator = false
+        webView.scrollView.isScrollEnabled = isScrollEnabled
+        webView.scrollView.showsVerticalScrollIndicator = isScrollEnabled
         webView.scrollView.showsHorizontalScrollIndicator = false
         return webView
     }
@@ -173,6 +190,7 @@ private struct CampusAIMarkdownPlatformWebView: NSViewRepresentable {
     let markdown: String
     @Binding var height: CGFloat
     @Binding var didFailRendering: Bool
+    let isScrollEnabled: Bool
 
     func makeCoordinator() -> CampusAIMarkdownWebCoordinator {
         CampusAIMarkdownWebCoordinator(height: $height, didFailRendering: $didFailRendering)

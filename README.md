@@ -18,10 +18,10 @@
 |:---|:---|:---|:---|:---|
 | 周视图课表 | DeepSeek 驱动问答 | 帖子流与发布 | 成绩查询 | 社区资料管理 |
 | 课程详情 sheet | 本机学业上下文 | 图片上传 | 考试安排 | 个人内容收藏 |
-| 今日课程摘要 | 自备 Key / 托管模式 | 评论与点赞 | 教学培养方案 | 共享课表 |
+| 今日课程摘要 | 自备 DeepSeek Key | 评论与点赞 | 教学培养方案 | 共享课表 |
 | 单日分享图 | 对话记录本地保存 | 通知与公告 | 自习室查询 | 主题色切换 |
 | 日程与提醒 | 页面跳转与提醒动作 | 评教评分 | 校历与作息 | 深色模式 |
-| WebView 兜底抓取 | Markdown 渲染 | 邮箱验证绑定 | 空教室占用 | 反馈与支持 |
+| WebView 兜底抓取 | Artifact 阅读与导出 | 邮箱验证绑定 | 空教室占用 | 反馈与支持 |
 
 ---
 
@@ -69,7 +69,7 @@ flowchart TB
 | HTML 解析 | SwiftSoup（课表、成绩、考试、培养方案） |
 | 课表兜底 | WKWebView（带 Cookie 复现浏览器路径） |
 | 社区后端 | Supabase Auth / Database / Storage / Edge Functions |
-| AI 引擎 | DeepSeek API（自备 Key 直连 或 Leafy 托管） |
+| AI 引擎 | DeepSeek API（当前仅开放设备 Keychain 中的自备 Key 直连） |
 | 运营后台 | React 18 + Vite + TypeScript |
 | CI/CD | GitHub Actions（分支检查、网站构建、Xcode 项目校验） |
 

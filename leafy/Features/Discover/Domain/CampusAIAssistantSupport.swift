@@ -568,7 +568,7 @@ nonisolated struct CampusAIUserSettings: Codable, Hashable {
 
     static var defaultValue: CampusAIUserSettings {
         CampusAIUserSettings(
-            serviceMode: CampusAIKeychainStore.hasAPIKey() ? .ownAPIKey : .leafyManaged,
+            serviceMode: .ownAPIKey,
             selectedProviderID: CampusAIProviderCatalog.defaultProvider.id,
             systemPrompt: CampusAISettingsStore.defaultSystemPrompt,
             contextSettings: .defaultValue,
@@ -577,17 +577,17 @@ nonisolated struct CampusAIUserSettings: Codable, Hashable {
     }
 
     init(
-        serviceMode: CampusAIServiceMode = .leafyManaged,
+        serviceMode: CampusAIServiceMode = .ownAPIKey,
         selectedProviderID: CampusAIProviderID = CampusAIProviderCatalog.defaultProvider.id,
         systemPrompt: String,
         contextSettings: CampusAIContextSettings,
         webSearchEnabled: Bool = false
     ) {
-        self.serviceMode = serviceMode
+        self.serviceMode = .ownAPIKey
         self.selectedProviderID = selectedProviderID
         self.systemPrompt = systemPrompt
         self.contextSettings = contextSettings
-        self.webSearchEnabled = webSearchEnabled
+        self.webSearchEnabled = false
     }
 
     enum CodingKeys: String, CodingKey {
@@ -600,15 +600,16 @@ nonisolated struct CampusAIUserSettings: Codable, Hashable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        serviceMode = try container.decodeIfPresent(CampusAIServiceMode.self, forKey: .serviceMode) ??
-            (CampusAIKeychainStore.hasAPIKey() ? .ownAPIKey : .leafyManaged)
+        _ = try container.decodeIfPresent(CampusAIServiceMode.self, forKey: .serviceMode)
+        serviceMode = .ownAPIKey
         selectedProviderID = try container.decodeIfPresent(CampusAIProviderID.self, forKey: .selectedProviderID) ??
             CampusAIProviderCatalog.defaultProvider.id
         systemPrompt = try container.decodeIfPresent(String.self, forKey: .systemPrompt) ??
             CampusAISettingsStore.defaultSystemPrompt
         contextSettings = try container.decodeIfPresent(CampusAIContextSettings.self, forKey: .contextSettings) ??
             .defaultValue
-        webSearchEnabled = try container.decodeIfPresent(Bool.self, forKey: .webSearchEnabled) ?? false
+        _ = try container.decodeIfPresent(Bool.self, forKey: .webSearchEnabled)
+        webSearchEnabled = false
     }
 
     var selectedProvider: CampusAIProviderDescriptor {
@@ -618,6 +619,13 @@ nonisolated struct CampusAIUserSettings: Codable, Hashable {
     var effectiveSystemPrompt: String {
         let trimmed = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? CampusAISettingsStore.defaultSystemPrompt : String(trimmed.prefix(3000))
+    }
+
+    var normalizedForLocalRuntime: CampusAIUserSettings {
+        var normalized = self
+        normalized.serviceMode = .ownAPIKey
+        normalized.webSearchEnabled = false
+        return normalized
     }
 }
 
@@ -729,7 +737,11 @@ nonisolated enum CampusAISettingsStore {
     static func load(userDefaults: UserDefaults = .standard) -> CampusAIUserSettings {
         if let data = userDefaults.data(forKey: storageKey),
            let settings = try? JSONDecoder().decode(CampusAIUserSettings.self, from: data) {
-            return settings
+            let normalized = settings.normalizedForLocalRuntime
+            if normalized != settings {
+                save(normalized, userDefaults: userDefaults)
+            }
+            return normalized
         }
 
         guard let legacyData = userDefaults.data(forKey: legacyStorageKey),
@@ -738,7 +750,7 @@ nonisolated enum CampusAISettingsStore {
             return .defaultValue
         }
         let migrated = CampusAIUserSettings(
-            serviceMode: CampusAIKeychainStore.hasAPIKey() ? .ownAPIKey : .leafyManaged,
+            serviceMode: .ownAPIKey,
             systemPrompt: legacySettings.systemPrompt ?? defaultSystemPrompt,
             contextSettings: legacySettings.contextSettings ?? .defaultValue
         )
@@ -747,9 +759,16 @@ nonisolated enum CampusAISettingsStore {
         return migrated
     }
 
-    static func save(_ settings: CampusAIUserSettings, userDefaults: UserDefaults = .standard) {
-        guard let data = try? JSONEncoder().encode(settings) else { return }
-        userDefaults.set(data, forKey: storageKey)
+    @discardableResult
+    static func save(_ settings: CampusAIUserSettings, userDefaults: UserDefaults = .standard) -> Bool {
+        do {
+            let data = try JSONEncoder().encode(settings.normalizedForLocalRuntime)
+            userDefaults.set(data, forKey: storageKey)
+            return true
+        } catch {
+            CampusAIDiagnostics.persistenceFailure(error, operation: "settings.save")
+            return false
+        }
     }
 
     static func reset(userDefaults: UserDefaults = .standard) -> CampusAIUserSettings {
@@ -776,6 +795,22 @@ nonisolated struct CampusAIRequest: Codable, Hashable {
     let webSearchEnabled: Bool
     let capabilities: CampusAICapabilitySet
     let localRetrieval: CampusAILocalRetrievalPayload
+    let outputMode: CampusAIOutputMode
+
+    enum CodingKeys: String, CodingKey {
+        case requestID
+        case message
+        case context
+        case recentMessages
+        case model
+        case userSystemPrompt
+        case contextSettings
+        case agentMode
+        case webSearchEnabled
+        case capabilities
+        case localRetrieval
+        case outputMode
+    }
 
     init(
         requestID: UUID = UUID(),
@@ -788,7 +823,8 @@ nonisolated struct CampusAIRequest: Codable, Hashable {
         agentMode: CampusAIAgentMode = .auto,
         webSearchEnabled: Bool = false,
         capabilities: CampusAICapabilitySet = .disabled,
-        localRetrieval: CampusAILocalRetrievalPayload = .empty(query: "")
+        localRetrieval: CampusAILocalRetrievalPayload = .empty(query: ""),
+        outputMode: CampusAIOutputMode = .automatic
     ) {
         self.requestID = requestID
         self.message = message
@@ -801,6 +837,43 @@ nonisolated struct CampusAIRequest: Codable, Hashable {
         self.webSearchEnabled = webSearchEnabled
         self.capabilities = capabilities
         self.localRetrieval = localRetrieval
+        self.outputMode = outputMode
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        requestID = try container.decodeIfPresent(UUID.self, forKey: .requestID) ?? UUID()
+        message = try container.decode(String.self, forKey: .message)
+        context = try container.decode(CampusAIContextPayload.self, forKey: .context)
+        recentMessages = try container.decodeIfPresent([CampusAIChatMessage].self, forKey: .recentMessages) ?? []
+        model = try container.decodeIfPresent(String.self, forKey: .model)
+            ?? CampusAIProviderCatalog.defaultProvider.modelIdentifier
+        userSystemPrompt = try container.decodeIfPresent(String.self, forKey: .userSystemPrompt)
+            ?? CampusAISettingsStore.defaultSystemPrompt
+        contextSettings = try container.decodeIfPresent(CampusAIContextSettings.self, forKey: .contextSettings)
+            ?? .defaultValue
+        agentMode = try container.decodeIfPresent(CampusAIAgentMode.self, forKey: .agentMode) ?? .auto
+        webSearchEnabled = try container.decodeIfPresent(Bool.self, forKey: .webSearchEnabled) ?? false
+        capabilities = try container.decodeIfPresent(CampusAICapabilitySet.self, forKey: .capabilities) ?? .disabled
+        localRetrieval = try container.decodeIfPresent(CampusAILocalRetrievalPayload.self, forKey: .localRetrieval)
+            ?? .empty(query: message)
+        outputMode = try container.decodeIfPresent(CampusAIOutputMode.self, forKey: .outputMode) ?? .automatic
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(requestID, forKey: .requestID)
+        try container.encode(message, forKey: .message)
+        try container.encode(context, forKey: .context)
+        try container.encode(recentMessages, forKey: .recentMessages)
+        try container.encode(model, forKey: .model)
+        try container.encode(userSystemPrompt, forKey: .userSystemPrompt)
+        try container.encode(contextSettings, forKey: .contextSettings)
+        try container.encode(agentMode, forKey: .agentMode)
+        try container.encode(webSearchEnabled, forKey: .webSearchEnabled)
+        try container.encode(capabilities, forKey: .capabilities)
+        try container.encode(localRetrieval, forKey: .localRetrieval)
+        try container.encode(outputMode, forKey: .outputMode)
     }
 }
 
@@ -2223,8 +2296,10 @@ nonisolated struct CampusAIMessageAgentMetadata: Codable, Hashable {
     var citations: [CampusAICitation]
     var agentTrace: [CampusAIAgentTraceStep]
     var deliverables: [CampusAIDeliverable]
+    var artifactState: CampusAIArtifactGenerationState
+    var artifactErrorMessage: String?
 
-    static let empty = CampusAIMessageAgentMetadata(statusText: nil, citations: [], agentTrace: [], deliverables: [])
+    static let empty = CampusAIMessageAgentMetadata()
 
     enum CodingKeys: String, CodingKey {
         case statusText
@@ -2233,18 +2308,26 @@ nonisolated struct CampusAIMessageAgentMetadata: Codable, Hashable {
         case agentTrace
         case agentTraceSnake = "agent_trace"
         case deliverables
+        case artifactState
+        case artifactStateSnake = "artifact_state"
+        case artifactErrorMessage
+        case artifactErrorMessageSnake = "artifact_error_message"
     }
 
     init(
         statusText: String? = nil,
         citations: [CampusAICitation] = [],
         agentTrace: [CampusAIAgentTraceStep] = [],
-        deliverables: [CampusAIDeliverable] = []
+        deliverables: [CampusAIDeliverable] = [],
+        artifactState: CampusAIArtifactGenerationState = .none,
+        artifactErrorMessage: String? = nil
     ) {
         self.statusText = statusText
         self.citations = citations
         self.agentTrace = agentTrace
         self.deliverables = deliverables
+        self.artifactState = artifactState
+        self.artifactErrorMessage = artifactErrorMessage
     }
 
     init(from decoder: Decoder) throws {
@@ -2256,6 +2339,11 @@ nonisolated struct CampusAIMessageAgentMetadata: Codable, Hashable {
             ?? container.decodeIfPresent([CampusAIAgentTraceStep].self, forKey: .agentTraceSnake)
             ?? []
         deliverables = try container.decodeIfPresent([CampusAIDeliverable].self, forKey: .deliverables) ?? []
+        artifactState = try container.decodeIfPresent(CampusAIArtifactGenerationState.self, forKey: .artifactState)
+            ?? container.decodeIfPresent(CampusAIArtifactGenerationState.self, forKey: .artifactStateSnake)
+            ?? (deliverables.isEmpty ? .none : .ready)
+        artifactErrorMessage = try container.decodeIfPresent(String.self, forKey: .artifactErrorMessage)
+            ?? container.decodeIfPresent(String.self, forKey: .artifactErrorMessageSnake)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -2264,6 +2352,8 @@ nonisolated struct CampusAIMessageAgentMetadata: Codable, Hashable {
         try container.encode(citations, forKey: .citations)
         try container.encode(agentTrace, forKey: .agentTrace)
         try container.encode(deliverables, forKey: .deliverables)
+        try container.encode(artifactState, forKey: .artifactState)
+        try container.encodeIfPresent(artifactErrorMessage, forKey: .artifactErrorMessage)
     }
 }
 
@@ -2277,6 +2367,8 @@ nonisolated struct CampusAIResponse: Codable, Hashable {
     var citations: [CampusAICitation]
     var agentTrace: [CampusAIAgentTraceStep]
     var deliverables: [CampusAIDeliverable]
+    var artifactState: CampusAIArtifactGenerationState
+    var artifactErrorMessage: String?
 
     enum CodingKeys: String, CodingKey {
         case answer
@@ -2289,6 +2381,10 @@ nonisolated struct CampusAIResponse: Codable, Hashable {
         case agentTrace
         case agentTraceSnake = "agent_trace"
         case deliverables
+        case artifactState
+        case artifactStateSnake = "artifact_state"
+        case artifactErrorMessage
+        case artifactErrorMessageSnake = "artifact_error_message"
     }
 
     init(
@@ -2300,7 +2396,9 @@ nonisolated struct CampusAIResponse: Codable, Hashable {
         actions: [CampusAIActionDraft] = [],
         citations: [CampusAICitation] = [],
         agentTrace: [CampusAIAgentTraceStep] = [],
-        deliverables: [CampusAIDeliverable] = []
+        deliverables: [CampusAIDeliverable] = [],
+        artifactState: CampusAIArtifactGenerationState = .none,
+        artifactErrorMessage: String? = nil
     ) {
         self.answer = answer
         self.reasoning = reasoning
@@ -2311,6 +2409,8 @@ nonisolated struct CampusAIResponse: Codable, Hashable {
         self.citations = citations.filter { !$0.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         self.agentTrace = agentTrace
         self.deliverables = deliverables
+        self.artifactState = artifactState
+        self.artifactErrorMessage = artifactErrorMessage
     }
 
     init(from decoder: Decoder) throws {
@@ -2329,6 +2429,11 @@ nonisolated struct CampusAIResponse: Codable, Hashable {
             ?? container.decodeIfPresent([CampusAIAgentTraceStep].self, forKey: .agentTraceSnake)
             ?? []
         deliverables = try container.decodeIfPresent([CampusAIDeliverable].self, forKey: .deliverables) ?? []
+        artifactState = try container.decodeIfPresent(CampusAIArtifactGenerationState.self, forKey: .artifactState)
+            ?? container.decodeIfPresent(CampusAIArtifactGenerationState.self, forKey: .artifactStateSnake)
+            ?? (deliverables.isEmpty ? .none : .ready)
+        artifactErrorMessage = try container.decodeIfPresent(String.self, forKey: .artifactErrorMessage)
+            ?? container.decodeIfPresent(String.self, forKey: .artifactErrorMessageSnake)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -2342,6 +2447,8 @@ nonisolated struct CampusAIResponse: Codable, Hashable {
         try container.encode(citations, forKey: .citations)
         try container.encode(agentTrace, forKey: .agentTrace)
         try container.encode(deliverables, forKey: .deliverables)
+        try container.encode(artifactState, forKey: .artifactState)
+        try container.encodeIfPresent(artifactErrorMessage, forKey: .artifactErrorMessage)
     }
 }
 
@@ -4122,7 +4229,8 @@ nonisolated struct CampusAIService {
         message: String,
         context: CampusAIContextPayload,
         recentMessages: [CampusAIChatMessage],
-        settings: CampusAIUserSettings = .defaultValue
+        settings: CampusAIUserSettings = .defaultValue,
+        outputMode: CampusAIOutputMode = .automatic
     ) async throws -> CampusAIResponse {
         var accumulatedAnswer = ""
         var accumulatedReasoning = ""
@@ -4131,7 +4239,8 @@ nonisolated struct CampusAIService {
             message: message,
             context: context,
             recentMessages: recentMessages,
-            settings: settings
+            settings: settings,
+            outputMode: outputMode
         ) {
             switch event {
             case .delta(let text):
@@ -4162,7 +4271,8 @@ nonisolated struct CampusAIService {
         message: String,
         context: CampusAIContextPayload,
         recentMessages: [CampusAIChatMessage],
-        settings: CampusAIUserSettings = .defaultValue
+        settings: CampusAIUserSettings = .defaultValue,
+        outputMode: CampusAIOutputMode = .automatic
     ) -> AsyncThrowingStream<CampusAIStreamEvent, Error> {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -4170,7 +4280,8 @@ nonisolated struct CampusAIService {
                 continuation.finish(throwing: CampusAIServiceError.emptyMessage)
             }
         }
-        let capabilities = CampusAICapabilitySet(settings: settings)
+        let normalizedSettings = settings.normalizedForLocalRuntime
+        let capabilities = CampusAICapabilitySet(settings: normalizedSettings)
         let localRetrieval = capabilities.localSearchEnabled
             ? CampusAILocalKnowledgeIndex.search(query: trimmed, context: context)
             : .empty(query: trimmed)
@@ -4178,27 +4289,23 @@ nonisolated struct CampusAIService {
             message: trimmed,
             context: context,
             recentMessages: recentMessages,
-            model: settings.selectedProvider.modelIdentifier,
-            userSystemPrompt: settings.effectiveSystemPrompt,
-            contextSettings: settings.contextSettings,
+            model: normalizedSettings.selectedProvider.modelIdentifier,
+            userSystemPrompt: normalizedSettings.effectiveSystemPrompt,
+            contextSettings: normalizedSettings.contextSettings,
             agentMode: .auto,
             webSearchEnabled: capabilities.webSearchEnabled,
             capabilities: capabilities,
-            localRetrieval: localRetrieval
+            localRetrieval: localRetrieval,
+            outputMode: outputMode
         )
-        return streamInvoke(request, settings)
+        return streamInvoke(request, normalizedSettings)
     }
 
     private static func invokeStream(
         _ request: CampusAIRequest,
         settings: CampusAIUserSettings
     ) -> AsyncThrowingStream<CampusAIStreamEvent, Error> {
-        switch settings.serviceMode {
-        case .ownAPIKey:
-            return invokeDirectStream(request, settings: settings)
-        case .leafyManaged:
-            return invokeManagedStream(request, settings: settings)
-        }
+        invokeDirectStream(request, settings: settings.normalizedForLocalRuntime)
     }
 
     private static func invokeDirectStream(
@@ -4208,7 +4315,11 @@ nonisolated struct CampusAIService {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let usesDirectAgent = shouldRunDirectAgent(request)
+                    let shouldCreateArtifact = CampusAIArtifactIntentResolver.shouldGenerateArtifact(
+                        message: request.message,
+                        mode: request.outputMode
+                    )
+                    let usesDirectAgent = shouldRunDirectAgent(request) || shouldCreateArtifact
                     var directAgentTrace: [CampusAIAgentTraceStep] = []
                     if usesDirectAgent {
                         let planningStep = directAgentStep(
@@ -4282,20 +4393,43 @@ nonisolated struct CampusAIService {
                             )
                             directAgentTrace.append(synthesisStep)
                             continuation.yield(.agentStep(synthesisStep))
-                            continuation.yield(.agentStatus("正在规划动作"))
-                            continuation.yield(.agentTool(.init(name: "action.plan", status: "running")))
+                            continuation.yield(.agentStatus(shouldCreateArtifact ? "正在整理成品" : "正在规划动作"))
+                            continuation.yield(.agentTool(.init(name: "completion.plan", status: "running")))
                         }
-                        finalResponse.actions = await directPlannedActions(
-                            request: request,
-                            answer: finalResponse.answer,
-                            settings: settings,
-                            apiKey: apiKey
-                        )
-                        if finalResponse.deliverables.isEmpty {
-                            finalResponse.deliverables = CampusAILocalArtifactBuilder.deliverables(
-                                for: request,
-                                answer: finalResponse.answer
+                        if shouldCreateArtifact {
+                            finalResponse.artifactState = .generating
+                            CampusAIDiagnostics.artifact(.generating, requestID: request.requestID)
+                        }
+                        do {
+                            let completionPlan = try await directCompletionPlan(
+                                request: request,
+                                answer: finalResponse.answer,
+                                settings: settings,
+                                apiKey: apiKey
                             )
+                            finalResponse.actions = completionPlan.actions
+                            if shouldCreateArtifact {
+                                guard let artifact = completionPlan.artifact,
+                                      let deliverable = CampusAIArtifactAssembler.deliverable(
+                                        from: artifact,
+                                        request: request
+                                      )
+                                else {
+                                    throw CampusAICompletionPlanError.artifactMissing
+                                }
+                                finalResponse.deliverables = [deliverable]
+                                finalResponse.artifactState = .ready
+                                finalResponse.artifactErrorMessage = nil
+                                CampusAIDiagnostics.artifact(.ready, requestID: request.requestID)
+                            }
+                        } catch {
+                            CampusAIDiagnostics.failure(error, stage: "completion.plan", requestID: request.requestID)
+                            finalResponse.actions = []
+                            if shouldCreateArtifact {
+                                finalResponse.artifactState = .failed
+                                finalResponse.artifactErrorMessage = error.localizedDescription
+                                CampusAIDiagnostics.artifact(.failed, requestID: request.requestID)
+                            }
                         }
                         if usesDirectAgent {
                             let actionStep = directAgentStep(
@@ -4305,11 +4439,11 @@ nonisolated struct CampusAIService {
                                     ? "没有生成需要确认的动作卡片。"
                                     : "已生成 \(finalResponse.actions.count) 个待确认动作。",
                                 status: finalResponse.actions.isEmpty ? "skipped" : "completed",
-                                tool: "action.plan"
+                                tool: "completion.plan"
                             )
                             directAgentTrace.append(actionStep)
                             continuation.yield(.agentTool(.init(
-                                name: "action.plan",
+                                name: "completion.plan",
                                 status: "completed",
                                 resultCount: finalResponse.actions.count
                             )))
@@ -4538,7 +4672,16 @@ nonisolated struct CampusAIService {
         return CampusAIChatCompletionsPayload(
             model: request.model,
             messages: [
-                .init(role: "system", content: systemPrompt(userPrompt: request.userSystemPrompt)),
+                .init(
+                    role: "system",
+                    content: systemPrompt(
+                        userPrompt: request.userSystemPrompt,
+                        preparesArtifact: CampusAIArtifactIntentResolver.shouldGenerateArtifact(
+                            message: request.message,
+                            mode: request.outputMode
+                        )
+                    )
+                ),
                 .init(role: "user", content: userContentString)
             ],
             stream: true,
@@ -4560,7 +4703,11 @@ nonisolated struct CampusAIService {
             context: request.context,
             contextSettings: request.contextSettings,
             capabilities: request.capabilities,
-            localRetrieval: request.localRetrieval
+            localRetrieval: request.localRetrieval,
+            shouldGenerateArtifact: CampusAIArtifactIntentResolver.shouldGenerateArtifact(
+                message: request.message,
+                mode: request.outputMode
+            )
         )
         guard let userContentString = String(data: try providerJSONEncoder().encode(userContent), encoding: .utf8) else {
             throw CampusAIServiceError.invalidProviderResponse
@@ -4574,12 +4721,15 @@ nonisolated struct CampusAIService {
             ],
             stream: false,
             temperature: 0,
-            maxTokens: 700,
+            maxTokens: CampusAIArtifactIntentResolver.shouldGenerateArtifact(
+                message: request.message,
+                mode: request.outputMode
+            ) ? 4_000 : 700,
             user: nil
         )
     }
 
-    static func systemPrompt(userPrompt: String) -> String {
+    static func systemPrompt(userPrompt: String, preparesArtifact: Bool = false) -> String {
         let customPrompt = userPrompt.nonEmptyTrimmed.map { String($0.prefix(3000)) }
         return [
             "你是 MyLeafy 的校园学习与生活助手，当前是测试功能。",
@@ -4591,14 +4741,20 @@ nonisolated struct CampusAIService {
             "不要推断私信、身份资料、未提供的远端内容或后台登录后的内容。",
             "医疗台账只能做整理、提醒、流程梳理和材料核对，不提供诊断、治疗、用药或医疗决策建议。",
             "回复必须是中文 Markdown。优先使用短标题、列表、加粗和清晰分段；不要输出 JSON，不要输出动作草稿。",
+            preparesArtifact
+                ? "本次会另行生成完整成品。主回答只用一到三句话说明已理解需求、将交付什么，不要重复完整计划、报告、清单或表格。"
+                : nil,
             customPrompt.map { "用户自定义偏好：\n\($0)" }
         ].compactMap { $0 }.joined(separator: "\n")
     }
 
     static func actionPlannerSystemPrompt() -> String {
         [
-            "你是 MyLeafy 的动作规划器，只能输出 JSON，不能输出 Markdown、解释、代码块或多余文本。",
-            "根据用户问题、AI 已生成回答和本机上下文，最多生成 3 个需要用户确认后执行的动作。",
+            "你是 MyLeafy 的交付规划器，只能输出 JSON，不能输出代码块、解释或多余文本。",
+            "根据用户问题、AI 已生成回答和本机上下文，一次返回最多 3 个待确认动作，以及可选的 Artifact 成品。",
+            "输出根对象必须是 {\"actions\":[],\"artifact\":null}。当 should_generate_artifact 为 true 时，artifact 必须是 {\"title\":\"...\",\"summary\":\"...\",\"markdown\":\"...\"}；否则 artifact 必须为 null。",
+            "Artifact 必须是完整、可直接阅读的中文 Markdown 成品。可使用标题、列表、表格、引用、Mermaid 或 KaTeX；不要在 Artifact 中编造来源。",
+            "Artifact 的 title、summary 和正文由你生成；来源、数据范围和本机条目引用由 App 在本地附加，不要输出 sources 字段。",
             "可以使用 local_retrieval 中的 routeHint 和 sourceID 判断动作目标；缺少明确目标 ID 时不要编造编辑或删除动作。",
             "只有用户明确想打开页面、设置重要日期、设置课表提醒，或回答中明显需要这一步时才生成动作；否则返回 {\"actions\":[]}。",
             "支持 kind：openAcademicRoute、createCountdown、createTimetableReminder。",
@@ -4608,34 +4764,37 @@ nonisolated struct CampusAIService {
             "createCountdown 兼容旧字段名，语义是创建重要日期；payload 必须包含 countdownTitle 和 targetDate，targetDate 使用 yyyy-MM-dd。",
             "createTimetableReminder.payload 必须包含 week、dayOfWeek、period、title；dayOfWeek 为 1 到 7，minutesBefore 必须大于等于 0。",
             "不要生成删除、修改成绩或课表原始数据、医疗决策、社区发帖评论、远程抓取、后台登录等动作。",
-            "输出格式必须是 {\"actions\":[{\"kind\":\"...\",\"title\":\"...\",\"detail\":\"...\",\"payload\":{...}}]}。"
+            "输出格式必须是 {\"actions\":[{\"kind\":\"...\",\"title\":\"...\",\"detail\":\"...\",\"payload\":{...}}],\"artifact\":null}，或将 artifact 替换为完整对象。"
         ].joined(separator: "\n")
     }
 
-    private static func directPlannedActions(
+    private static func directCompletionPlan(
         request: CampusAIRequest,
         answer: String,
         settings: CampusAIUserSettings,
         apiKey: String
-    ) async -> [CampusAIActionDraft] {
-        do {
-            let urlRequest = try makeActionPlannerRequest(
-                for: request,
-                answer: answer,
-                baseURLString: settings.selectedProvider.baseURLString,
-                apiKey: apiKey
-            )
-            let (data, response) = try await URLSession.shared.data(for: urlRequest)
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200..<300).contains(httpResponse.statusCode)
-            else {
-                return fallbackActionDrafts(for: request, answer: answer)
-            }
-            let actions = try actionPlannerActions(fromProviderResponseData: data)
-            return actions.isEmpty ? fallbackActionDrafts(for: request, answer: answer) : actions
-        } catch {
-            return fallbackActionDrafts(for: request, answer: answer)
+    ) async throws -> CampusAICompletionPlan {
+        let urlRequest = try makeActionPlannerRequest(
+            for: request,
+            answer: answer,
+            baseURLString: settings.selectedProvider.baseURLString,
+            apiKey: apiKey
+        )
+        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw CampusAIServiceError.invalidProviderResponse
         }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw CampusAIServiceError.providerRejected("成品整理服务返回了 \(httpResponse.statusCode) 错误。")
+        }
+        let providerResponse = try providerJSONDecoder().decode(CampusAIActionPlannerProviderResponse.self, from: data)
+        guard let content = providerResponse.choices?
+            .compactMap({ $0.message?.content?.nonEmptyTrimmed })
+            .first
+        else {
+            throw CampusAIServiceError.invalidProviderResponse
+        }
+        return try CampusAICompletionPlanParser.parse(content)
     }
 
     static func fallbackActionDrafts(
@@ -4864,6 +5023,7 @@ nonisolated private struct CampusAIActionPlannerUserContent: Encodable {
     let contextSettings: CampusAIContextSettings
     let capabilities: CampusAICapabilitySet
     let localRetrieval: CampusAILocalRetrievalPayload
+    let shouldGenerateArtifact: Bool
     let supportedActions: [CampusAIToolSupportedAction]
     let safetyBoundary: [String]
 
@@ -4874,6 +5034,7 @@ nonisolated private struct CampusAIActionPlannerUserContent: Encodable {
         case contextSettings = "context_settings"
         case capabilities
         case localRetrieval = "local_retrieval"
+        case shouldGenerateArtifact = "should_generate_artifact"
         case supportedActions = "supported_actions"
         case safetyBoundary = "safety_boundary"
     }
@@ -4884,7 +5045,8 @@ nonisolated private struct CampusAIActionPlannerUserContent: Encodable {
         context: CampusAIContextPayload,
         contextSettings: CampusAIContextSettings,
         capabilities: CampusAICapabilitySet,
-        localRetrieval: CampusAILocalRetrievalPayload
+        localRetrieval: CampusAILocalRetrievalPayload,
+        shouldGenerateArtifact: Bool
     ) {
         self.message = message
         self.answer = answer
@@ -4892,6 +5054,7 @@ nonisolated private struct CampusAIActionPlannerUserContent: Encodable {
         self.contextSettings = contextSettings
         self.capabilities = capabilities
         self.localRetrieval = localRetrieval
+        self.shouldGenerateArtifact = shouldGenerateArtifact
         supportedActions = CampusAIToolRegistry.supportedActions()
         safetyBoundary = [
             "所有动作都只生成待确认草稿，不会自动执行。",
