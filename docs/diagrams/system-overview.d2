@@ -1,0 +1,55 @@
+direction: right
+
+classes: {
+  client: {
+    style.fill: "#F2F8F1"
+    style.stroke: "#6E8F67"
+    style.border-radius: 14
+  }
+  service: {
+    style.fill: "#F4F7FB"
+    style.stroke: "#6682A3"
+    style.border-radius: 14
+  }
+  external: {
+    style.fill: "#FFF8EA"
+    style.stroke: "#B68A3A"
+    style.border-radius: 14
+  }
+}
+
+app: MyLeafy iOS App {
+  class: client
+  ui: SwiftUI 功能模块
+  local: SwiftData 本地数据
+  network: 教务与业务服务
+
+  ui -> local: 读取与缓存
+  ui -> network: 发起请求
+}
+
+school: 北京林业大学教务系统 {
+  class: external
+  login: 登录与会话
+  academic: 课表、成绩、考试、培养数据
+}
+
+supabase: Supabase {
+  class: service
+  auth: Auth
+  data: PostgreSQL 与 RLS
+  edge: Edge Functions
+  storage: Storage
+}
+
+admin: 运营后台 {
+  class: client
+  web: React-admin
+  proxy: Cloudflare Pages Functions
+  web -> proxy
+}
+
+app.network -> school: HTTPS / HTTP + Cookie
+app.network -> supabase: publishable key + user session
+admin.proxy -> supabase.edge: 管理会话 + 代理密钥
+

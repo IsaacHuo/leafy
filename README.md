@@ -1,220 +1,172 @@
 # MyLeafy
 
 <p align="center">
-  <img src="https://img.shields.io/badge/platform-iOS%2017.0%2B-blue?logo=apple" alt="Platform: iOS 17.0+">
-  <img src="https://img.shields.io/badge/Swift-5.x-FA7343?logo=swift" alt="Swift 5.x">
-  <img src="https://img.shields.io/badge/license-CC%20BY--NC--SA%204.0-lightgrey" alt="License: CC BY-NC-SA 4.0">
+  面向高校学习与校园生活的原生 iOS 应用，目前主要服务北京林业大学。
 </p>
 
-**MyLeafy** 是面向北京林业大学学生的校园工具 App。以课表为核心，整合全屏 **Leafy AI 工作空间**、**社区**、**学业管理**和**校园服务**，直连北林强智教务系统，并通过 Supabase 承接社区、通知、评教与运营后台。
+<p align="center">
+  <img src="https://img.shields.io/badge/iOS-17.0%2B-111111?logo=apple" alt="iOS 17.0+">
+  <img src="https://img.shields.io/badge/Swift-5.x-F05138?logo=swift&logoColor=white" alt="Swift 5.x">
+  <img src="https://img.shields.io/badge/UI-SwiftUI-0A84FF" alt="SwiftUI">
+  <img src="https://img.shields.io/badge/backend-Supabase-3FCF8E?logo=supabase&logoColor=white" alt="Supabase">
+  <img src="https://img.shields.io/badge/license-CC%20BY--NC--SA%204.0-555555" alt="CC BY-NC-SA 4.0">
+</p>
 
-> 内部代码名、target 和类型命名继续使用 `Leafy`。
+MyLeafy 以课表和学业数据为核心，将教务查询、学习管理、校园社区、共享课表与全屏 Leafy AI 工作空间整合在一个原生 iOS 客户端中。项目直接连接目标学校的教务系统获取授权数据，并使用 Supabase 承载社区、通知、评分、共享与运营数据。
 
----
+> 仓库名、Xcode target 与部分内部类型仍使用 `leafy` / `Leafy`。对外产品名称统一为 **MyLeafy**。
 
-## ✨ 功能矩阵
+![MyLeafy 系统概览](docs/diagrams/system-overview.svg)
 
-| 📅 课表 | 🤖 Leafy AI | 👥 社区 | 📚 学业 | ⚙️ 我的 |
-|:---|:---|:---|:---|:---|
-| 周视图课表 | DeepSeek 通用问答 | 帖子流与发布 | 成绩查询 | 社区资料管理 |
-| 课程详情 sheet | 按需使用本机上下文 | 图片上传 | 考试安排 | 个人内容收藏 |
-| 今日课程摘要 | 自备 DeepSeek Key | 评论与点赞 | 教学培养方案 | 共享课表 |
-| 单日分享图 | 对话记录本地保存 | 通知与公告 | 自习室查询 | 主题色切换 |
-| 日程与提醒 | 页面跳转与提醒动作 | 评教评分 | 校历与作息 | 深色模式 |
-| WebView 兜底抓取 | 历史抽屉、成品库与导出 | 邮箱验证绑定 | 空教室占用 | 反馈与支持 |
+图源：[D2 source](docs/diagrams/system-overview.d2)
 
----
+## 项目能力
 
-## 🏗 技术架构
+| 领域 | 当前能力 |
+|---|---|
+| 课表 | 周课表、课程详情、时间范围、日程叠加、提醒、分享图、小组件与共享课表 |
+| 学业 | 成绩、考试、教学计划、培养方案、空教室、校历、学习空间、体育与职业相关工具 |
+| Leafy AI | 全屏 AI 工作空间；基于用户授权的本机学业上下文问答，并生成可阅读、可导出的 Artifact |
+| 社区 | 帖子、图片、评论、点赞、投票、通知、公告、个人内容与内容分享 |
+| 评价 | 教师、课程等结构化评分；数据能力按校园配置开放 |
+| 个性化 | 浅色/深色外观、主题色、显示密度、多语言与课表背景 |
+| 运营 | 独立 Web 管理后台、角色权限、内容管理、配置管理、审计与受控导出 |
 
-```mermaid
-flowchart TB
-    subgraph iOS["iOS App (SwiftUI)"]
-        direction TB
-        subgraph Features["Feature Modules"]
-            Auth["🔐 Auth<br/>强智登录"]
-            Timetable["📅 Timetable<br/>课表抓取"]
-            Community["👥 Community<br/>Supabase"]
-            Discover["📚 Discover<br/>学业 / AI"]
-        end
-        subgraph Services["Services Layer"]
-            SNM["SchoolNetworkManager"]
-            SP["SwiftSoup"]
-            WV["WKWebView 兜底"]
-            SC["Supabase Client"]
-            SD["SwiftData"]
-            KC["Keychain"]
-        end
-        Features --> Services
-    end
+功能是否显示由校园能力配置、用户身份与后端配置共同决定，并非所有入口都会在每个校园环境中开放。
 
-    subgraph External["External Systems"]
-        QZ["🏫 强智教务系统<br/>newjwxt.bjfu.edu.cn<br/>课表 · 成绩 · 考试 · 培养"]
-        SB["⚡ Supabase (BaaS)<br/>Auth · DB · Storage · Edge Functions<br/>社区 · 通知 · 评教 · 公告 · 后台 · AI"]
-    end
+## 设计与架构
 
-    SNM --> QZ
-    WV --> QZ
-    SP --> QZ
-    SC --> SB
-```
+MyLeafy 采用原生 iOS 优先、边界清晰和本地可用的工程策略：
 
-### 核心技术选型
+- SwiftUI 构建页面与导航，iOS 17 为部署基线；在 iOS 26 上使用受可用性检查保护的系统视觉能力。
+- 教务数据通过 `URLSession`、显式 Cookie 管理和 SwiftSoup 解析；课表链路在必要时使用 `WKWebView` 复现浏览器路径。
+- SwiftData 保存课表、成绩和用户侧本地数据；页面通过预计算投影与快照降低复杂网格的渲染成本。
+- Supabase Auth、PostgreSQL、Storage 与 Edge Functions 承载非教务业务；RLS、校园范围和资源所有权共同约束数据访问。
+- Web 运营后台通过 Cloudflare Pages Functions 代理管理请求，管理会话不暴露给浏览器 JavaScript。
 
-| 层 | 技术 |
-|:---|:---|
-| UI | SwiftUI，iOS 17.0+，部分 iOS 26 Liquid Glass API（`#available` 保护） |
-| 本地持久化 | SwiftData（课表缓存、成绩、提醒、收藏） |
-| 教务网络 | `URLSession` + 显式 Cookie 管理（非隐式） |
-| HTML 解析 | SwiftSoup（课表、成绩、考试、培养方案） |
-| 课表兜底 | WKWebView（带 Cookie 复现浏览器路径） |
-| 社区后端 | Supabase Auth / Database / Storage / Edge Functions |
-| AI 引擎 | DeepSeek API（当前仅开放设备 Keychain 中的自备 Key 直连） |
-| 运营后台 | React 18 + Vite + TypeScript |
-| CI/CD | GitHub Actions（分支检查、网站构建、Xcode 项目校验） |
+详细边界、数据流和依赖方向见[架构说明](docs/architecture.md)。
 
----
+## 技术栈
 
-## 📁 项目结构
+| 范围 | 技术 |
+|---|---|
+| iOS UI | SwiftUI |
+| 本地持久化 | SwiftData |
+| 教务网络 | URLSession、HTTPCookieStorage、WKWebView |
+| HTML 解析 | SwiftSoup |
+| 系统服务 | WeatherKit、WidgetKit、Keychain |
+| 业务后端 | Supabase Auth、PostgreSQL、Storage、Edge Functions |
+| Web 后台 | React 18、React-admin 5、MUI、ECharts、Vite、TypeScript |
+| 边缘代理 | Cloudflare Pages Functions |
+| 自动化检查 | GitHub Actions、Vitest、Playwright、XCTest |
+
+## 仓库结构
 
 ```text
 leafy/
-├── leafy/                    # iOS App 主工程
-│   ├── App/                  # 启动、根导航、主题、生命周期
-│   ├── Features/             # Auth / Timetable / Community / Discover / Profile
-│   │   ├── */Presentation/   # SwiftUI 页面与子视图
-│   │   ├── */Application/    # 用例、仓储协议、缓存协调
-│   │   └── */Domain/         # 纯计算模型与投影
-│   ├── Services/             # SchoolNetworkManager、Supabase、诊断
-│   ├── Parsers/              # SwiftSoup HTML 解析器
-│   └── Shared/Models/        # 社区 DTO、SwiftData 模型
-├── leafyTests/               # 单元测试
-├── supabase/                 # Supabase 配置
-│   ├── migrations/           # 数据库 schema、RLS、trigger
-│   ├── functions/            # Edge Functions（Deno/TypeScript）
-│   └── scripts/              # 管理脚本
-├── site/                     # 官网 + 运营后台
-│   └── src/admin/            # React 后台（/admin）
-├── docs/                     # 项目文档中心
-└── Config/                   # Xcode 构建配置（本地 xcconfig 不入库）
+├── leafy/                  # iOS 主应用
+│   ├── App/                # 应用启动、根导航、主题与生命周期
+│   ├── Core/               # 依赖、持久化、校园能力、并发等基础设施
+│   ├── Features/           # Auth、Timetable、Community、Discover、Profile
+│   ├── Services/           # 教务、Supabase、同步与诊断服务
+│   ├── Parsers/            # 教务 HTML 解析
+│   └── Shared/             # 跨功能模型与共享组件
+├── leafyTests/             # iOS 单元与契约测试
+├── leafyWidget/            # Widget 扩展
+├── LeafyShareExtension/    # 系统分享扩展
+├── supabase/               # migrations、Edge Functions、模板与测试
+├── site/                   # 官网、运营后台与 Cloudflare Functions
+├── Config/                 # 可提交的配置模板；本地密钥文件不入库
+└── docs/                   # 产品、架构、设计与后端文档
 ```
 
----
+## 本地运行
 
-## 🚀 快速开始
+### 环境要求
 
-### 前置条件
+- macOS 与 Xcode 26 或更新版本（项目引用 iOS 26 SDK API，并为 iOS 17–25 提供运行时回退）
+- iOS 17.0 或更新版本的模拟器/设备
+- Node.js 20.19 或更新版本，或 Node.js 22.12 及更新版本（仅网站与运营后台）
+- 可用的目标学校教务账号（验证真实教务链路时需要）
+- 自建 Supabase 项目（验证社区、共享与运营能力时需要）
 
-- **Xcode** 15+（Swift 5.x，iOS 17.0 SDK）
-- **Node.js** 18+（仅构建后台和官网时需要）
-- 北京林业大学强智教务账号（用于 App 内登录）
-
-### 构建 iOS App
+### iOS App
 
 ```bash
-git clone https://github.com/<org>/leafy.git
+git clone https://github.com/IsaacHuo/leafy.git
 cd leafy
 
-# 创建本地构建配置
 cp Config/Leafy.example.xcconfig Config/Leafy.local.xcconfig
-# 编辑 Leafy.local.xcconfig，填入 Supabase URL 和 publishable key
-
-# 在 Xcode 中打开项目
 open leafy.xcodeproj
-# 选择 leafy target，在模拟器或真机上 ⌘R 运行
 ```
 
-### 部署 Supabase 后端
+在 `Config/Leafy.local.xcconfig` 中配置本地 Supabase URL 与 publishable key，然后选择 `leafy` scheme 运行。真实密钥、本地 xcconfig、证书和描述文件不得提交到仓库。
 
-```bash
-# 安装 Supabase CLI 并登录
-supabase link --project-ref <your-project-ref>
+若只关注不依赖 Supabase 的本地页面，可保留示例配置；社区、共享课表和部分远程能力会进入不可用状态。
 
-# 按顺序执行 migration
-for f in supabase/migrations/*.sql; do
-  supabase db push
-done
-
-# 部署 Edge Functions
-supabase functions deploy community-bootstrap-user
-supabase functions deploy campus-ai-assistant
-# ... 其他 functions
-```
-
-详细的 Supabase 配置（Anonymous sign-ins、Email provider、SMTP、Storage bucket、RLS）请参考 [Supabase 接入文档](docs/supabase.md)。
-
-### 构建运营后台
+### 网站与运营后台
 
 ```bash
 cd site
-cp .env.example .env
-# 编辑 .env，填入 VITE_SUPABASE_URL 和 VITE_SUPABASE_PUBLISHABLE_KEY
-npm install
-npm run dev     # 本地调试
-npm run build   # 生产构建
+npm ci
+npm run dev
 ```
 
----
+`npm run dev` 适合开发公开网站或使用 mock API 调试后台界面。包含 Cloudflare Pages Functions 的真实代理链路使用：
 
-## 📖 文档
+```bash
+npm run dev:pages
+```
 
-| 文档 | 说明 |
-|:---|:---|
-| [项目总览](docs/overview.md) | 产品定位、已落地能力、数据源边界 |
-| [架构说明](docs/architecture.md) | 分层设计、教务直连、SwiftData、Supabase、后台架构 |
-| [App 设计](docs/app-design.md) | 页面信息架构、5 个根 Tab、状态与交互 |
-| [UI 风格指南](docs/ui-style-guide.md) | 主题色、字体、圆角、间距、卡片、状态展示 |
-| [Supabase 接入](docs/supabase.md) | 身份模型、migration 顺序、Edge Functions、配置 |
-| [运营后台](docs/admin-console.md) | React 后台配置、模块、安全边界 |
-| [贡献规范](docs/contributing.md) | Issue/PR 流程、分支命名、CI |
-| [路线图](docs/roadmap.md) | P0-P3 优先级与后续计划 |
-| [TestFlight 检查清单](docs/testflight-checklist.md) | 发包前逐项检查 |
-| [发布说明](docs/release-notes.md) | App Store / TestFlight 文案 |
+环境变量与安全边界见[运营后台](docs/admin-console.md)。
 
----
+### Supabase
 
-## 🤝 贡献
+仓库中的 `supabase/` 包含数据库迁移、Edge Functions、邮件模板、导入模板与验证脚本。新环境应从空项目按迁移顺序建立 schema，并按需部署函数：
 
-欢迎贡献！请先阅读 [贡献规范](docs/contributing.md)。
+```bash
+supabase link --project-ref <project-ref>
+supabase db push
+supabase functions deploy community-bootstrap-user
+```
 
-**基本流程：** 开 Issue 说明问题 → 从 `main` 拉分支 → 提交 PR → GitHub Actions 通过 → 合并。
+不要在 iOS、网站前端或公开配置中使用 `service_role`。完整说明见[Supabase 接入](docs/supabase.md)。
 
-**分支命名：** `feature/<slug>`、`fix/<slug>`、`docs/<slug>`、`chore/<slug>`
+## 文档
 
-CI 在 PR 和 push 到 `main` 时自动运行：
-- 仓库卫生检查（分支命名、敏感文件、密钥格式）
-- 网站构建（`site/` 目录 `npm ci && npm run build`）
-- Xcode 项目结构校验
+| 文档 | 适用读者 | 内容 |
+|---|---|---|
+| [项目总览](docs/overview.md) | 所有人 | 产品定位、能力范围、数据边界与限制 |
+| [架构说明](docs/architecture.md) | iOS/后端开发者 | 分层、依赖、教务链路、本地存储与系统边界 |
+| [App 产品设计](docs/app-design.md) | 产品与客户端开发者 | 信息架构、核心流程、页面状态与产品原则 |
+| [UI 风格规范](docs/ui-style-guide.md) | 设计与客户端开发者 | 设计令牌、组件、可访问性与页面模式 |
+| [Supabase 接入](docs/supabase.md) | 后端与客户端开发者 | 身份、数据域、RLS、Storage、Functions 与本地联调 |
+| [运营后台](docs/admin-console.md) | Web/后端开发者 | 管理架构、角色、安全、资源与开发验证 |
+| [贡献规范](docs/contributing.md) | 贡献者 | Issue、分支、PR、测试与安全要求 |
 
----
+文档索引见 [`docs/README.md`](docs/README.md)。
 
-## 🗺 路线图
+## 已知边界
 
-当前阶段重点：**稳定核心链路**，准备 TestFlight 分发。
+- 教务系统不是稳定 API。页面结构、登录流程或网络策略变化可能使解析暂时失效。
+- 当前教务身份绑定由 App 在登录成功后发起；它不等同于服务端对学校身份进行独立证明。
+- 社区、评价和共享能力依赖正确部署的 Supabase schema、RLS 与 Edge Functions。
+- 教师与课程等目录型数据需要经过可信来源整理或后台审核，仓库不会自动保证数据完整性。
+- 这是持续演进中的校园产品，内部数据模型与未稳定接口可能变化。
 
-| 优先级 | 重点 |
-|:---|:---|
-| **P0** | TestFlight 安全检查、隐私合规、配置隔离 |
-| **P1** | 课表解析稳定性、错误文案优化、HTMLParser 回归测试 |
-| **P2** | 社区运营工具完善、教师名录维护、通知体验优化 |
-| **P3** | 帖子收藏、缓存同步、数据安全说明 |
+## 发展方向
 
-详见 [路线图](docs/roadmap.md)。
+项目近期优先级是提高教务解析韧性、完善错误与恢复体验、收紧后端安全边界，并让不同校园能够通过能力配置复用基础架构。未来功能以真实使用反馈为依据，不承诺固定时间表。
 
----
+## 参与贡献
 
-## 📄 许可证
+提交代码前请阅读[贡献规范](docs/contributing.md)。涉及新功能或行为变化的 PR 应同时更新对应文档；涉及用户数据、认证、校园身份或管理权限的改动必须说明安全边界与验证方式。
 
-本项目采用 **[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)** 许可。
+## 许可
 
-**简单来说：**
-- ✅ 个人学习、研究、非商业用途自由使用
-- ✅ 可修改和再分发（需署名 + 相同方式共享）
-- ❌ **不得用于商业目的**
+本项目使用 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) 许可。允许在署名、非商业和相同方式共享的前提下学习、修改与再分发。第三方依赖、学校系统内容、品牌资源和用户数据不因本仓库许可而获得额外授权。
 
----
+## 联系
 
-## 📬 联系方式
-
-- **反馈与问题**：通过 App 内「我的 → 支持 → 意见反馈」提交，或在 GitHub 提交 [Issue](../../issues)
-- **联系邮箱**：`support@myleafy.space`
+- 问题与建议：[GitHub Issues](../../issues)
+- 邮箱：`support@myleafy.space`

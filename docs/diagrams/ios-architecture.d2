@@ -1,0 +1,64 @@
+direction: down
+
+classes: {
+  layer: {
+    style.fill: "#F7FAF7"
+    style.stroke: "#789374"
+    style.border-radius: 16
+  }
+  boundary: {
+    style.fill: "#F5F7FA"
+    style.stroke: "#6C7F95"
+    style.border-radius: 16
+  }
+  external: {
+    style.fill: "#FFF8EA"
+    style.stroke: "#B68A3A"
+    style.border-radius: 16
+  }
+}
+
+presentation: Presentation {
+  class: layer
+  views: SwiftUI Views
+  state: ViewModels 与页面状态
+  navigation: AppNavigationCoordinator
+}
+
+application: Application {
+  class: layer
+  usecases: 用例与协调器
+  repositories: 窄仓储协议
+  projections: 展示投影与快照
+}
+
+domain: Domain {
+  class: layer
+  models: 业务模型
+  rules: 纯规则与计算
+}
+
+infrastructure: Infrastructure {
+  class: boundary
+  school: SchoolNetworkManager
+  parser: SwiftSoup Parsers
+  local: SwiftData
+  community: Supabase Services
+  webview: WKWebView 课表兜底
+}
+
+systems: 外部系统 {
+  class: external
+  qz: 强智教务
+  sb: Supabase
+  weather: WeatherKit
+}
+
+presentation -> application
+application -> domain
+application -> infrastructure: 通过协议访问
+infrastructure.school -> systems.qz
+infrastructure.webview -> systems.qz
+infrastructure.community -> systems.sb
+infrastructure -> systems.weather
+

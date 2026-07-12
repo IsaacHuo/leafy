@@ -1,4 +1,4 @@
-// Local Supabase settings template for TestFlight builds.
+// Local Supabase settings template for development builds.
 // Copy this file to Leafy.local.xcconfig. Do not commit the local file.
 
 SUPABASE_URL = https:/$()/your-project-ref.supabase.co
