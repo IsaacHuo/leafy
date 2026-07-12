@@ -5,7 +5,10 @@ struct CampusAISettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @Binding var settings: CampusAIUserSettings
+    let hasHistory: Bool
+    let clearHistory: () -> Void
     @State private var hasAPIKey = false
+    @State private var isClearHistoryConfirmationPresented = false
     @State private var operationAlert: LeafyOperationAlert?
 
     var body: some View {
@@ -63,10 +66,15 @@ struct CampusAISettingsView: View {
                     Text("清除 API Key 后仍可只读浏览已有对话；聊天历史不会自动同步到云端。")
                         .font(.footnote)
                         .foregroundStyle(AppTheme.secondaryText)
+
+                    Button("清空全部历史记录", role: .destructive) {
+                        isClearHistoryConfirmationPresented = true
+                    }
+                    .disabled(!hasHistory)
                 }
 
                 Section("隐私与限制") {
-                    Text("Leafy 会把你的问题及已启用的本机上下文直接发送给 DeepSeek。API Key 不会写入设置文件；生成内容可能有错误，请以学校官方信息为准。")
+                    Text("Leafy 会把你的问题及已启用的本机上下文直接发送给 DeepSeek。API Key 不会写入设置文件；生成内容可能有错误，重要事项请以权威来源为准。")
                         .font(.footnote)
                         .foregroundStyle(AppTheme.secondaryText)
                         .textSelection(.enabled)
@@ -87,6 +95,16 @@ struct CampusAISettingsView: View {
             }
             .onChange(of: settings) { _, _ in
                 persistSettings()
+            }
+            .confirmationDialog(
+                "清空全部对话与成品？",
+                isPresented: $isClearHistoryConfirmationPresented,
+                titleVisibility: .visible
+            ) {
+                Button("清空全部历史记录", role: .destructive, action: clearHistory)
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("这会删除当前设备上的 Leafy 对话、动作记录与成品缓存，且无法撤销。")
             }
         }
         .presentationDetents([.large])

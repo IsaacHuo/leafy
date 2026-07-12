@@ -48,7 +48,6 @@ nonisolated struct CampusAICompletionPlan: Codable, Hashable {
 }
 
 nonisolated enum CampusAIArtifactExportFormat: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case pdf
     case html
     case markdown
     case plainText
@@ -57,7 +56,6 @@ nonisolated enum CampusAIArtifactExportFormat: String, CaseIterable, Identifiabl
 
     var title: String {
         switch self {
-        case .pdf: return "PDF"
         case .html: return "HTML"
         case .markdown: return "Markdown"
         case .plainText: return "纯文本"
@@ -66,7 +64,6 @@ nonisolated enum CampusAIArtifactExportFormat: String, CaseIterable, Identifiabl
 
     var systemImage: String {
         switch self {
-        case .pdf: return "doc.richtext"
         case .html: return "chevron.left.forwardslash.chevron.right"
         case .markdown: return "text.document"
         case .plainText: return "doc.plaintext"
@@ -75,7 +72,6 @@ nonisolated enum CampusAIArtifactExportFormat: String, CaseIterable, Identifiabl
 
     var fileExtension: String {
         switch self {
-        case .pdf: return "pdf"
         case .html: return "html"
         case .markdown: return "md"
         case .plainText: return "txt"

@@ -64,7 +64,14 @@ extension RootTab: CaseIterable, Identifiable {
 
 @MainActor
 final class AppNavigationCoordinator: ObservableObject {
-    @Published var selectedRootTab: RootTab = .timetable
+    @Published var selectedRootTab: RootTab = .timetable {
+        didSet {
+            if selectedRootTab != .leafy {
+                lastNonLeafyRootTab = selectedRootTab
+            }
+        }
+    }
+    @Published private(set) var lastNonLeafyRootTab: RootTab = .timetable
     @Published var selectedAcademicTab: AcademicPrimaryTab = .cultivation
     @Published var requestedAcademicRoute: AcademicRoute?
     @Published var requestedAcademicDetailRoute: AcademicDetailRoute?
@@ -74,6 +81,10 @@ final class AppNavigationCoordinator: ObservableObject {
     @Published var requestedTimetableCourseID: UUID?
     @Published var requestedCommunityPostID: UUID?
     private var deferredRouteRequestTask: Task<Void, Never>?
+
+    func leaveLeafyWorkspace() {
+        selectedRootTab = lastNonLeafyRootTab == .leafy ? .timetable : lastNonLeafyRootTab
+    }
 
     func openAcademic(tab: AcademicPrimaryTab) {
         selectedAcademicTab = tab

@@ -4,6 +4,176 @@ import XCTest
 @testable import Leafy
 
 final class CampusAIAssistantTests: XCTestCase {
+    @MainActor
+    func testLeafyWorkspaceReturnsToMostRecentNonLeafyTab() {
+        let navigation = AppNavigationCoordinator()
+
+        XCTAssertEqual(navigation.lastNonLeafyRootTab, .timetable)
+
+        navigation.selectedRootTab = .academics
+        navigation.selectedRootTab = .leafy
+        navigation.leaveLeafyWorkspace()
+        XCTAssertEqual(navigation.selectedRootTab, .academics)
+
+        navigation.selectedRootTab = .profile
+        navigation.selectedRootTab = .leafy
+        navigation.leaveLeafyWorkspace()
+        XCTAssertEqual(navigation.selectedRootTab, .profile)
+    }
+
+    @MainActor
+    func testLeavingLeafyWorkspaceDoesNotCancelActiveChatSession() {
+        let navigation = AppNavigationCoordinator()
+        let session = CampusAIChatSession()
+        session.start { _ in
+            try? await Task.sleep(for: .seconds(30))
+        }
+
+        navigation.selectedRootTab = .leafy
+        navigation.leaveLeafyWorkspace()
+
+        XCTAssertEqual(navigation.selectedRootTab, .timetable)
+        XCTAssertTrue(session.isSending)
+        session.cancel()
+    }
+
+    func testSettingsStoreMigratesOnlyLegacyDefaultSystemPrompt() throws {
+        let suiteName = "CampusAIAssistantTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var legacyDefaultSettings = CampusAIUserSettings.defaultValue
+        legacyDefaultSettings.systemPrompt = CampusAISettingsStore.legacyCampusDefaultSystemPrompt
+        defaults.set(try JSONEncoder().encode(legacyDefaultSettings), forKey: "campusAI.userSettings.v2")
+
+        let migrated = CampusAISettingsStore.load(userDefaults: defaults)
+        XCTAssertEqual(migrated.systemPrompt, CampusAISettingsStore.defaultSystemPrompt)
+        XCTAssertTrue(migrated.systemPrompt.contains("通用 AI"))
+        XCTAssertFalse(migrated.systemPrompt.contains("围绕校园"))
+
+        var customSettings = CampusAIUserSettings.defaultValue
+        customSettings.systemPrompt = "始终先问我一个澄清问题"
+        defaults.set(try JSONEncoder().encode(customSettings), forKey: "campusAI.userSettings.v2")
+
+        XCTAssertEqual(
+            CampusAISettingsStore.load(userDefaults: defaults).systemPrompt,
+            "始终先问我一个澄清问题"
+        )
+    }
+
+    func testArtifactLibraryBuildsStableSortedItemsAndIgnoresFailedOrEmptyArtifacts() throws {
+        let olderConversation = CampusAIConversation(id: UUID(), title: "旧对话", summary: "复习总结")
+        let newerConversation = CampusAIConversation(id: UUID(), title: "新对话", summary: "旅行计划")
+        let olderMessage = CampusAIMessage(
+            id: UUID(),
+            conversationID: olderConversation.id.uuidString,
+            roleRawValue: CampusAIMessageRole.assistant.rawValue,
+            text: "已整理",
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        let newerMessage = CampusAIMessage(
+            id: UUID(),
+            conversationID: newerConversation.id.uuidString,
+            roleRawValue: CampusAIMessageRole.assistant.rawValue,
+            text: "已完成",
+            createdAt: Date(timeIntervalSince1970: 200)
+        )
+        let failedMessage = CampusAIMessage(
+            conversationID: newerConversation.id.uuidString,
+            roleRawValue: CampusAIMessageRole.assistant.rawValue,
+            text: "生成失败"
+        )
+        let emptyMessage = CampusAIMessage(
+            conversationID: newerConversation.id.uuidString,
+            roleRawValue: CampusAIMessageRole.assistant.rawValue,
+            text: "没有正文"
+        )
+
+        olderMessage.agentMetadataJSON = try metadataJSON(
+            deliverable: artifactDeliverable(
+                id: "older-artifact",
+                title: "概率论复习计划",
+                summary: "三周复习安排",
+                generatedAt: "2026-07-10T08:00:00Z",
+                markdown: "# 概率论复习计划\n\n第一周复习基础。"
+            )
+        )
+        newerMessage.agentMetadataJSON = try metadataJSON(
+            deliverable: artifactDeliverable(
+                id: "newer-artifact",
+                title: "香港旅行清单",
+                summary: "周末行程与物品",
+                generatedAt: "2026-07-11T08:00:00Z",
+                markdown: "# 香港旅行清单\n\n- 证件"
+            )
+        )
+        failedMessage.agentMetadataJSON = try metadataJSON(
+            deliverable: artifactDeliverable(
+                id: "failed-artifact",
+                title: "失败成品",
+                summary: "不应进入成品库",
+                generatedAt: "2026-07-12T08:00:00Z",
+                markdown: "# 失败"
+            ),
+            state: .failed
+        )
+        emptyMessage.agentMetadataJSON = try metadataJSON(
+            deliverable: artifactDeliverable(
+                id: "empty-artifact",
+                title: "空成品",
+                summary: "没有正文",
+                generatedAt: "2026-07-12T09:00:00Z",
+                markdown: ""
+            )
+        )
+
+        let items = CampusAIArtifactLibraryIndex.items(
+            messages: [olderMessage, newerMessage, failedMessage, emptyMessage],
+            conversations: [olderConversation, newerConversation]
+        )
+
+        XCTAssertEqual(items.map(\.deliverable.id), ["newer-artifact", "older-artifact"])
+        XCTAssertEqual(items.first?.conversationTitle, "新对话")
+        XCTAssertEqual(items.first?.id, "\(newerMessage.id.uuidString):newer-artifact")
+        XCTAssertEqual(Set(items.map(\.id)).count, items.count)
+    }
+
+    func testWorkspaceSearchMatchesOnlyConversationAndArtifactSummaries() throws {
+        let conversation = CampusAIConversation(
+            title: "香港闲聊话题",
+            summary: "周末聊天准备"
+        )
+        let message = CampusAIMessage(
+            conversationID: conversation.id.uuidString,
+            roleRawValue: CampusAIMessageRole.assistant.rawValue,
+            text: "正文里有隐藏关键词，不应该被搜索"
+        )
+        message.agentMetadataJSON = try metadataJSON(
+            deliverable: artifactDeliverable(
+                id: "artifact",
+                title: "概率论复习计划",
+                summary: "三周统计学安排",
+                generatedAt: "2026-07-11T08:00:00Z",
+                markdown: "# 计划"
+            )
+        )
+        let artifacts = CampusAIArtifactLibraryIndex.items(
+            messages: [message],
+            conversations: [conversation]
+        )
+
+        let conversationResults = CampusAIWorkspaceSearch.conversations(
+            [conversation],
+            query: "周末"
+        )
+        let artifactResults = CampusAIWorkspaceSearch.artifacts(artifacts, query: "统计学")
+
+        XCTAssertEqual(conversationResults.map(\.id), [conversation.id])
+        XCTAssertEqual(artifactResults.map(\.deliverable.id), ["artifact"])
+        XCTAssertTrue(CampusAIWorkspaceSearch.conversations([conversation], query: "隐藏关键词").isEmpty)
+        XCTAssertTrue(CampusAIWorkspaceSearch.artifacts(artifacts, query: "隐藏关键词").isEmpty)
+    }
+
     func testSettingsStoreDefaultsToAllContextScopesAndCustomPrompt() throws {
         let suiteName = "CampusAIAssistantTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -839,8 +1009,9 @@ final class CampusAIAssistantTests: XCTestCase {
     func testSystemPromptIsBroaderButKeepsBoundaries() {
         let prompt = CampusAIService.systemPrompt(userPrompt: "请顺便给生活建议")
 
-        XCTAssertTrue(prompt.contains("校园学习与生活助手"))
-        XCTAssertTrue(prompt.contains("一般建议"))
+        XCTAssertTrue(prompt.contains("通用 AI 助手"))
+        XCTAssertTrue(prompt.contains("可以回答通用问题"))
+        XCTAssertTrue(prompt.contains("问题与已提供的课程、考试、学习、提醒或个人事项相关时"))
         XCTAssertTrue(prompt.contains("不要反复解释内部数据来源"))
         XCTAssertTrue(prompt.contains("PDF"))
         XCTAssertTrue(prompt.contains("本地文件路径"))
@@ -1704,7 +1875,7 @@ final class CampusAIAssistantTests: XCTestCase {
     }
 
     @MainActor
-    func testArtifactExportServiceExportsFourSafeFormats() async throws {
+    func testArtifactExportServiceExportsThreeSafeFormats() async throws {
         let messageID = UUID()
         let artifact = CampusAIDeliverable(
             id: "export-artifact",
@@ -1722,7 +1893,6 @@ final class CampusAIAssistantTests: XCTestCase {
         let markdownURL = try await service.export(artifact, messageID: messageID, format: .markdown)
         let htmlURL = try await service.export(artifact, messageID: messageID, format: .html)
         let textURL = try await service.export(artifact, messageID: messageID, format: .plainText)
-        let pdfURL = try await service.export(artifact, messageID: messageID, format: .pdf)
         defer { try? FileManager.default.removeItem(at: markdownURL.deletingLastPathComponent()) }
 
         XCTAssertEqual(try String(contentsOf: markdownURL, encoding: .utf8), artifact.content?.markdown)
@@ -1730,7 +1900,35 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertFalse(CampusAIArtifactExportService.containsExecutableScript(html))
         XCTAssertTrue(html.contains("复习计划"))
         XCTAssertTrue(try String(contentsOf: textURL, encoding: .utf8).contains("高等数学"))
-        XCTAssertTrue(try Data(contentsOf: pdfURL).starts(with: Data("%PDF".utf8)))
+    }
+
+    private func metadataJSON(
+        deliverable: CampusAIDeliverable,
+        state: CampusAIArtifactGenerationState = .ready
+    ) throws -> String {
+        let metadata = CampusAIMessageAgentMetadata(
+            deliverables: [deliverable],
+            artifactState: state
+        )
+        return try XCTUnwrap(String(data: JSONEncoder().encode(metadata), encoding: .utf8))
+    }
+
+    private func artifactDeliverable(
+        id: String,
+        title: String,
+        summary: String,
+        generatedAt: String,
+        markdown: String
+    ) -> CampusAIDeliverable {
+        CampusAIDeliverable(
+            id: id,
+            title: title,
+            query: "测试请求",
+            summary: summary,
+            generatedAt: generatedAt,
+            sources: [],
+            content: CampusAIArtifactContent(markdown: markdown)
+        )
     }
 
     private func minimalAIContext() -> CampusAIContextPayload {

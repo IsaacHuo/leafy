@@ -728,6 +728,10 @@ nonisolated struct CampusAICapabilitySet: Codable, Hashable {
 
 nonisolated enum CampusAISettingsStore {
     static let defaultSystemPrompt = """
+    你是 Leafy 的通用 AI 助手。请用中文回答，默认简短直接，先给结论和下一步；相关时可以结合用户允许的本机数据提供更具体的建议。信息不足时直接说缺什么，不要编造。
+    """
+
+    static let legacyCampusDefaultSystemPrompt = """
     请用中文回答，默认简短直接，先给结论和下一步。可以围绕校园学习、生活安排和个人事项整理建议；信息不足时直接说缺什么，不要编造。
     """
 
@@ -737,7 +741,7 @@ nonisolated enum CampusAISettingsStore {
     static func load(userDefaults: UserDefaults = .standard) -> CampusAIUserSettings {
         if let data = userDefaults.data(forKey: storageKey),
            let settings = try? JSONDecoder().decode(CampusAIUserSettings.self, from: data) {
-            let normalized = settings.normalizedForLocalRuntime
+            let normalized = migrateDefaultPrompt(in: settings.normalizedForLocalRuntime)
             if normalized != settings {
                 save(normalized, userDefaults: userDefaults)
             }
@@ -749,11 +753,11 @@ nonisolated enum CampusAISettingsStore {
         else {
             return .defaultValue
         }
-        let migrated = CampusAIUserSettings(
+        let migrated = migrateDefaultPrompt(in: CampusAIUserSettings(
             serviceMode: .ownAPIKey,
             systemPrompt: legacySettings.systemPrompt ?? defaultSystemPrompt,
             contextSettings: legacySettings.contextSettings ?? .defaultValue
-        )
+        ))
         save(migrated, userDefaults: userDefaults)
         userDefaults.removeObject(forKey: legacyStorageKey)
         return migrated
@@ -775,6 +779,15 @@ nonisolated enum CampusAISettingsStore {
         userDefaults.removeObject(forKey: storageKey)
         userDefaults.removeObject(forKey: legacyStorageKey)
         return .defaultValue
+    }
+
+    private static func migrateDefaultPrompt(in settings: CampusAIUserSettings) -> CampusAIUserSettings {
+        guard settings.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            == legacyCampusDefaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        else { return settings }
+        var migrated = settings
+        migrated.systemPrompt = defaultSystemPrompt
+        return migrated
     }
 
     private struct LegacyUserSettings: Decodable {
@@ -4732,9 +4745,9 @@ nonisolated struct CampusAIService {
     static func systemPrompt(userPrompt: String, preparesArtifact: Bool = false) -> String {
         let customPrompt = userPrompt.nonEmptyTrimmed.map { String($0.prefix(3000)) }
         return [
-            "你是 MyLeafy 的校园学习与生活助手，当前是测试功能。",
+            "你是 Leafy 的通用 AI 助手，当前是测试功能。",
             "回答要直接、具体、可执行；能给结论就先给结论，不要反复解释内部数据来源。",
-            "可以结合已提供的课程、考试、学习、提醒和个人事项上下文，也可以补充合理的一般建议；不要把不确定内容说成事实。",
+            "可以回答通用问题；当用户问题与已提供的课程、考试、学习、提醒或个人事项相关时，再结合这些本机上下文给出更具体的建议。不要为了使用本机数据而牵强关联，也不要把不确定内容说成事实。",
             "如果输入包含 local_retrieval，优先使用其中最相关的结果；不要把它作为工程细节反复解释给用户。",
             "缺少关键信息时，用一句话说明缺什么，并给出用户下一步能做的选择。",
             "不要声称读取了未提供的数据，不要声称读取了用户上传文件正文、图片像素、OCR、PDF、Word、PPT、表格或本地文件路径。",

@@ -5,6 +5,7 @@ struct CampusAIAssistantView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var appNavigation: AppNavigationCoordinator
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @AppStorage(Self.experimentalNoticeAcknowledgedKey) private var experimentalNoticeAcknowledged = false
     @FocusState private var isComposerFocused: Bool
     @Query(sort: \CampusAIConversation.updatedAt, order: .reverse) private var conversations: [CampusAIConversation]
@@ -26,6 +27,9 @@ struct CampusAIAssistantView: View {
     @State private var visibleSuggestionPrompts = Self.randomSuggestionPrompts()
     @State private var configuredProviderIDs: Set<CampusAIProviderID> = []
     @State private var artifactCompletionSignal = 0
+    @State private var workspacePath: [CampusAIWorkspaceRoute] = []
+    @State private var isSidebarPresented = false
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     private var hasAPIKey: Bool {
         configuredProviderIDs.contains(userSettings.selectedProviderID)
@@ -50,6 +54,10 @@ struct CampusAIAssistantView: View {
         return messages.filter { $0.conversationID == key }
     }
 
+    private var artifactLibraryItems: [CampusAIArtifactLibraryItem] {
+        CampusAIArtifactLibraryIndex.items(messages: messages, conversations: conversations)
+    }
+
     private func actionRecords(for message: CampusAIMessage) -> [CampusAIActionRecord] {
         actionRecords.filter {
             $0.conversationID == message.conversationID &&
@@ -62,41 +70,15 @@ struct CampusAIAssistantView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            conversationScroll
-                .background(AppTheme.cardElevated)
-                .navigationTitle("Leafy")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button {
-                            isComposerFocused = false
-                            activeSheet = .history
-                        } label: {
-                            Label("历史记录", systemImage: "line.3.horizontal")
-                        }
-                    }
-
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button(action: startNewConversation) {
-                            Label("新建对话", systemImage: "square.and.pencil")
-                        }
-                    }
-                }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    CampusAIComposerBar(
-                        draftText: $draftText,
-                        outputMode: $outputMode,
-                        isFocused: $isComposerFocused,
-                        isSending: isSending,
-                        canSend: canSend,
-                        hasAPIKey: hasAPIKey,
-                        configureAPIKey: openAPIKeySetup,
-                        submit: submitDraft,
-                        cancelStreaming: cancelStreaming
-                    )
-                }
+        CampusAIWorkspaceShell(
+            isSidebarPresented: $isSidebarPresented,
+            columnVisibility: $columnVisibility
+        ) {
+            workspaceSidebar
+        } content: {
+            workspaceNavigation
         }
+        .toolbar(.hidden, for: .tabBar)
         .onAppear {
             selectInitialConversationIfNeeded()
             presentExperimentalNoticeIfNeeded()
@@ -108,17 +90,12 @@ struct CampusAIAssistantView: View {
         }
         .sheet(item: $activeSheet, onDismiss: handleSheetDismissal) { destination in
             switch destination {
-            case .history:
-                CampusAIHistorySheet(
-                    conversations: conversations,
-                    selectedConversationID: selectedConversation?.id,
-                    selectConversation: { selectedConversationID = $0.id },
-                    deleteConversation: deleteConversation,
-                    clearHistory: clearAllHistory,
-                    openSettings: { activeSheet = .settings }
-                )
             case .settings:
-                CampusAISettingsView(settings: $userSettings)
+                CampusAISettingsView(
+                    settings: $userSettings,
+                    hasHistory: !conversations.isEmpty,
+                    clearHistory: clearAllHistory
+                )
             case .apiKey:
                 NavigationStack {
                     CampusAIAPIKeySetupView(
@@ -154,6 +131,99 @@ struct CampusAIAssistantView: View {
         }
         .leafyOperationAlert($operationAlert)
         .sensoryFeedback(.success, trigger: artifactCompletionSignal)
+    }
+
+    private var workspaceNavigation: some View {
+        NavigationStack(path: $workspacePath) {
+            conversationScroll
+                .background(AppTheme.cardElevated)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(action: toggleSidebar) {
+                            Label("打开 Leafy 菜单", systemImage: "line.3.horizontal")
+                        }
+                    }
+
+                    ToolbarItem(placement: .principal) {
+                        Text("Leafy")
+                            .font(.headline)
+                    }
+
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: startNewConversation) {
+                            Label("新建对话", systemImage: "square.and.pencil")
+                        }
+                    }
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    CampusAIComposerBar(
+                        draftText: $draftText,
+                        outputMode: $outputMode,
+                        isFocused: $isComposerFocused,
+                        isSending: isSending,
+                        canSend: canSend,
+                        hasAPIKey: hasAPIKey,
+                        configureAPIKey: openAPIKeySetup,
+                        submit: submitDraft,
+                        cancelStreaming: cancelStreaming
+                    )
+                }
+                .navigationDestination(for: CampusAIWorkspaceRoute.self) { route in
+                    workspaceDestination(for: route)
+                }
+        }
+    }
+
+    private var workspaceSidebar: some View {
+        CampusAIWorkspaceSidebar(
+            isActive: horizontalSizeClass == .regular || isSidebarPresented,
+            conversations: conversations,
+            selectedConversationID: selectedConversation?.id,
+            artifactCount: artifactLibraryItems.count,
+            search: openWorkspaceSearch,
+            startNewConversation: startNewConversation,
+            openArtifactLibrary: openArtifactLibrary,
+            selectConversation: selectConversationFromSidebar,
+            deleteConversation: deleteConversation,
+            openSettings: openSettings,
+            leaveWorkspace: leaveWorkspace
+        )
+    }
+
+    @ViewBuilder
+    private func workspaceDestination(for route: CampusAIWorkspaceRoute) -> some View {
+        switch route {
+        case .search:
+            CampusAIWorkspaceSearchView(
+                conversations: conversations,
+                artifacts: artifactLibraryItems,
+                selectConversation: selectConversationFromSearch,
+                openArtifact: openArtifact
+            )
+        case .artifactLibrary:
+            CampusAIArtifactLibraryView(
+                items: artifactLibraryItems,
+                openArtifact: openArtifact
+            )
+        case .artifact(let messageID, let deliverableID):
+            if let item = artifactLibraryItems.first(where: {
+                $0.messageID == messageID && $0.deliverable.id == deliverableID
+            }) {
+                CampusAIArtifactReaderView(
+                    deliverable: item.deliverable,
+                    messageID: item.messageID
+                )
+            } else {
+                ContentUnavailableView(
+                    "成品不可用",
+                    systemImage: "doc.badge.ellipsis",
+                    description: Text("这份成品可能已随原对话删除。")
+                )
+                .navigationTitle("成品")
+                .navigationBarTitleDisplayMode(.inline)
+            }
+        }
     }
 
     private var conversationScroll: some View {
@@ -235,16 +305,14 @@ struct CampusAIAssistantView: View {
     }
 
     private static let suggestionPrompts = [
-        "明天有哪些课？",
-        "最近考试怎么复习？",
-        "还有哪些学业风险？",
-        "这周哪些课要预习？",
-        "今天适合复习什么？",
-        "先复习哪几门课？",
-        "公选课还差多少？",
-        "本周哪天最忙？",
-        "期末节奏怎么排？",
-        "帮我找自习时间。"
+        "帮我梳理今天最重要的三件事。",
+        "把这个想法整理成一份执行计划。",
+        "用简单的例子解释一个复杂概念。",
+        "帮我比较两个方案的优缺点。",
+        "把零散信息整理成清晰清单。",
+        "结合我的本机记录安排这一周。",
+        "帮我设计一个可执行的学习节奏。",
+        "把这段内容改写得更清楚。"
     ]
 
     private static func randomSuggestionPrompts() -> [String] {
@@ -252,6 +320,64 @@ struct CampusAIAssistantView: View {
     }
 
     private static let experimentalNoticeAcknowledgedKey = "campusAI.experimentalNoticeAcknowledged.v1"
+
+    private func toggleSidebar() {
+        isComposerFocused = false
+        if horizontalSizeClass == .regular {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+            }
+        } else {
+            withAnimation(accessibilityReduceMotion ? .easeOut(duration: 0.16) : .spring(response: 0.34, dampingFraction: 0.88)) {
+                isSidebarPresented.toggle()
+            }
+        }
+    }
+
+    private func closeSidebar() {
+        withAnimation(accessibilityReduceMotion ? .easeOut(duration: 0.16) : .spring(response: 0.34, dampingFraction: 0.88)) {
+            isSidebarPresented = false
+        }
+    }
+
+    private func openWorkspaceSearch() {
+        isComposerFocused = false
+        closeSidebar()
+        workspacePath = [.search]
+    }
+
+    private func openArtifactLibrary() {
+        isComposerFocused = false
+        closeSidebar()
+        workspacePath = [.artifactLibrary]
+    }
+
+    private func openArtifact(_ item: CampusAIArtifactLibraryItem) {
+        workspacePath.append(.artifact(messageID: item.messageID, deliverableID: item.deliverable.id))
+    }
+
+    private func selectConversationFromSidebar(_ conversation: CampusAIConversation) {
+        selectedConversationID = conversation.id
+        workspacePath.removeAll()
+        closeSidebar()
+    }
+
+    private func selectConversationFromSearch(_ conversation: CampusAIConversation) {
+        selectedConversationID = conversation.id
+        workspacePath.removeAll()
+    }
+
+    private func openSettings() {
+        isComposerFocused = false
+        closeSidebar()
+        activeSheet = .settings
+    }
+
+    private func leaveWorkspace() {
+        isComposerFocused = false
+        closeSidebar()
+        appNavigation.leaveLeafyWorkspace()
+    }
 
     private func selectInitialConversationIfNeeded() {
         if let selectedConversationID,
@@ -263,6 +389,8 @@ struct CampusAIAssistantView: View {
 
     private func startNewConversation() {
         cancelStreaming()
+        workspacePath.removeAll()
+        closeSidebar()
         let conversation = CampusAIConversation()
         modelContext.insert(conversation)
         selectedConversationID = conversation.id
@@ -659,7 +787,7 @@ struct CampusAIAssistantView: View {
 
     private func handleSheetDismissal() {
         refreshConfiguredProviders()
-        if hasAPIKey {
+        if hasAPIKey, workspacePath.isEmpty {
             isComposerFocused = true
         }
     }
@@ -891,15 +1019,12 @@ struct CampusAIAssistantView: View {
 }
 
 private enum CampusAISheetDestination: Identifiable {
-    case history
     case settings
     case apiKey
     case actionEditor(CampusAIActionEditorPresentation)
 
     var id: String {
         switch self {
-        case .history:
-            return "history"
         case .settings:
             return "settings"
         case .apiKey:
