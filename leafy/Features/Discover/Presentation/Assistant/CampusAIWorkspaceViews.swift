@@ -74,20 +74,12 @@ struct CampusAIWorkspaceShell<Sidebar: View, Content: View>: View {
                             Color.black.opacity(0.001)
                                 .contentShape(Rectangle())
                                 .onTapGesture(perform: closeSidebar)
-                                .gesture(closeGesture(drawerWidth: drawerWidth))
                         }
                     }
-
-                if !isSidebarPresented {
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .frame(width: 24)
-                        .frame(maxHeight: .infinity)
-                        .gesture(openGesture(drawerWidth: drawerWidth))
-                        .accessibilityHidden(true)
-                }
             }
             .clipped()
+            .contentShape(Rectangle())
+            .simultaneousGesture(drawerGesture(drawerWidth: drawerWidth))
         }
     }
 
@@ -101,29 +93,23 @@ struct CampusAIWorkspaceShell<Sidebar: View, Content: View>: View {
         return min(max(rawProgress, 0), 1)
     }
 
-    private func openGesture(drawerWidth: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 10)
+    private func drawerGesture(drawerWidth: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 8)
             .updating($dragTranslation) { value, state, _ in
-                state = max(0, value.translation.width)
+                guard CampusAIDrawerInteraction.isHorizontal(value.translation) else { return }
+                state = isSidebarPresented
+                    ? min(0, value.translation.width)
+                    : max(0, value.translation.width)
             }
             .onEnded { value in
-                let projected = max(value.translation.width, value.predictedEndTranslation.width)
-                if projected > drawerWidth * 0.24 {
-                    openSidebar()
-                }
-            }
-    }
-
-    private func closeGesture(drawerWidth: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 10)
-            .updating($dragTranslation) { value, state, _ in
-                state = min(0, value.translation.width)
-            }
-            .onEnded { value in
-                let projected = min(value.translation.width, value.predictedEndTranslation.width)
-                if projected < -drawerWidth * 0.18 {
-                    closeSidebar()
-                }
+                guard CampusAIDrawerInteraction.isHorizontal(value.translation) else { return }
+                let shouldOpen = CampusAIDrawerInteraction.shouldOpen(
+                    isOpen: isSidebarPresented,
+                    translation: value.translation.width,
+                    predictedTranslation: value.predictedEndTranslation.width,
+                    drawerWidth: drawerWidth
+                )
+                shouldOpen ? openSidebar() : closeSidebar()
             }
     }
 
@@ -152,12 +138,10 @@ struct CampusAIWorkspaceSidebar: View {
     let selectedConversationID: UUID?
     let artifactCount: Int
     let search: () -> Void
-    let startNewConversation: () -> Void
     let openArtifactLibrary: () -> Void
     let selectConversation: (CampusAIConversation) -> Void
     let deleteConversation: (CampusAIConversation) -> Void
     let openSettings: () -> Void
-    let leaveWorkspace: () -> Void
     @AccessibilityFocusState private var isHeaderFocused: Bool
 
     var body: some View {
@@ -200,22 +184,21 @@ struct CampusAIWorkspaceSidebar: View {
         List {
             Section {
                 sidebarButton(
-                    title: "新建对话",
-                    systemImage: "square.and.pencil",
-                    action: startNewConversation
-                )
-                sidebarButton(
                     title: "成品库",
                     systemImage: "books.vertical",
                     value: artifactCount == 0 ? nil : String(artifactCount),
                     action: openArtifactLibrary
                 )
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
             }
 
             Section("最近") {
                 if conversations.isEmpty {
                     Text("暂无对话")
                         .foregroundStyle(AppTheme.secondaryText)
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                 } else {
                     ForEach(conversations) { conversation in
                         Button {
@@ -238,6 +221,8 @@ struct CampusAIWorkspaceSidebar: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                         .swipeActions {
                             Button(role: .destructive) {
                                 deleteConversation(conversation)
@@ -251,20 +236,42 @@ struct CampusAIWorkspaceSidebar: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .environment(\.defaultMinListRowHeight, 48)
     }
 
     private var footer: some View {
-        VStack(spacing: 0) {
-            Divider()
-            sidebarButton(title: "设置", systemImage: "gearshape", action: openSettings)
-            sidebarButton(
-                title: "返回 MyLeafy",
-                systemImage: "rectangle.portrait.and.arrow.right",
-                action: leaveWorkspace
-            )
+        HStack {
+            settingsButton
+            Spacer()
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+    }
+
+    @ViewBuilder
+    private var settingsButton: some View {
+        if #available(iOS 26.0, *) {
+            Button(action: openSettings) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 18, weight: .medium))
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.glass)
+            .accessibilityLabel("设置")
+        } else {
+            Button(action: openSettings) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(AppTheme.primaryText)
+                    .frame(width: 44, height: 44)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .overlay {
+                        Circle().strokeBorder(AppTheme.separator.opacity(0.4), lineWidth: 0.5)
+                    }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("设置")
+        }
     }
 
     private func sidebarButton(
@@ -301,6 +308,27 @@ struct CampusAIWorkspaceSidebar: View {
             await Task.yield()
             isHeaderFocused = true
         }
+    }
+}
+
+nonisolated enum CampusAIDrawerInteraction {
+    static func isHorizontal(_ translation: CGSize) -> Bool {
+        abs(translation.width) > 8 && abs(translation.width) > abs(translation.height) * 1.15
+    }
+
+    static func shouldOpen(
+        isOpen: Bool,
+        translation: CGFloat,
+        predictedTranslation: CGFloat,
+        drawerWidth: CGFloat
+    ) -> Bool {
+        guard drawerWidth > 0 else { return isOpen }
+        if isOpen {
+            let projected = min(translation, predictedTranslation)
+            return projected > -drawerWidth * 0.22
+        }
+        let projected = max(translation, predictedTranslation)
+        return projected > drawerWidth * 0.24
     }
 }
 

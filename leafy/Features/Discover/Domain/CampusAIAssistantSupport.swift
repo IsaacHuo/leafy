@@ -728,6 +728,10 @@ nonisolated struct CampusAICapabilitySet: Codable, Hashable {
 
 nonisolated enum CampusAISettingsStore {
     static let defaultSystemPrompt = """
+    你是 Leafy 的通用 AI 助手。请用中文回答，默认简短直接，先给结论和下一步；相关时可以结合用户允许的本机数据提供更具体的建议。使用清晰的 Markdown 层级：不同主题换段或使用短标题，三项以上并列信息使用列表，不要用 emoji、连续加粗或挤在一段中的序号模拟结构。信息不足时直接说缺什么，不要编造。
+    """
+
+    static let previousGeneralDefaultSystemPrompt = """
     你是 Leafy 的通用 AI 助手。请用中文回答，默认简短直接，先给结论和下一步；相关时可以结合用户允许的本机数据提供更具体的建议。信息不足时直接说缺什么，不要编造。
     """
 
@@ -782,9 +786,10 @@ nonisolated enum CampusAISettingsStore {
     }
 
     private static func migrateDefaultPrompt(in settings: CampusAIUserSettings) -> CampusAIUserSettings {
-        guard settings.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            == legacyCampusDefaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        else { return settings }
+        let storedPrompt = settings.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let knownDefaults = [legacyCampusDefaultSystemPrompt, previousGeneralDefaultSystemPrompt]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard knownDefaults.contains(storedPrompt) else { return settings }
         var migrated = settings
         migrated.systemPrompt = defaultSystemPrompt
         return migrated
@@ -4753,7 +4758,7 @@ nonisolated struct CampusAIService {
             "不要声称读取了未提供的数据，不要声称读取了用户上传文件正文、图片像素、OCR、PDF、Word、PPT、表格或本地文件路径。",
             "不要推断私信、身份资料、未提供的远端内容或后台登录后的内容。",
             "医疗台账只能做整理、提醒、流程梳理和材料核对，不提供诊断、治疗、用药或医疗决策建议。",
-            "回复必须是中文 Markdown。优先使用短标题、列表、加粗和清晰分段；不要输出 JSON，不要输出动作草稿。",
+            "回复必须是中文 Markdown，并保持适合手机阅读的块级结构。先给结论；不同主题必须换段或使用短标题；三项以上并列信息必须使用列表；不要用 emoji、连续加粗或挤在同一段中的序号模拟结构。不要输出 JSON，不要输出动作草稿。",
             preparesArtifact
                 ? "本次会另行生成完整成品。主回答只用一到三句话说明已理解需求、将交付什么，不要重复完整计划、报告、清单或表格。"
                 : nil,

@@ -9,17 +9,11 @@ struct CampusAIEmptyConversationPanel: View {
     var body: some View {
         VStack(spacing: 28) {
             VStack(spacing: 12) {
-                Image(systemName: "leaf.fill")
-                    .font(.system(size: 28, weight: .medium))
-                    .foregroundStyle(AppTheme.accent)
-                    .frame(width: 58, height: 58)
-                    .background(AppTheme.accent.opacity(0.10), in: Circle())
-
                 Text("Leafy")
                     .font(.largeTitle.weight(.semibold))
                     .foregroundStyle(AppTheme.primaryText)
 
-                Text("和 Leafy 讨论任何问题；需要时，它也能结合你允许的本机数据整理建议与成品。")
+                Text("和 Leafy 讨论任何问题。\n需要时，它也能结合你允许的本机数据整理建议与成品。")
                     .font(.subheadline)
                     .foregroundStyle(AppTheme.secondaryText)
                     .multilineTextAlignment(.center)
@@ -118,8 +112,12 @@ struct CampusAIComposerBar: View {
         .frame(maxWidth: 820)
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 16)
-        .padding(.top, 8)
         .padding(.bottom, 8)
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(key: CampusAIComposerHeightPreferenceKey.self, value: proxy.size.height)
+            }
+        }
         .animation(accessibilityReduceMotion ? nil : .easeInOut(duration: 0.2), value: outputMode)
     }
 
@@ -128,23 +126,23 @@ struct CampusAIComposerBar: View {
         if #available(iOS 26.0, *) {
             GlassEffectContainer(spacing: 10) {
                 composerContent
-                    .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 28))
+                    .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 26))
             }
         } else {
             composerContent
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
                         .strokeBorder(AppTheme.separator.opacity(0.40), lineWidth: 0.5)
                 }
-                .shadow(color: Color.black.opacity(0.07), radius: 14, y: 6)
+                .shadow(color: Color.black.opacity(0.055), radius: 12, y: 5)
         }
     }
 
     @ViewBuilder
     private var composerContent: some View {
         if hasAPIKey {
-            HStack(alignment: .bottom, spacing: 4) {
+            HStack(alignment: .center, spacing: 2) {
                 Menu {
                     Button {
                         outputMode = outputMode == .artifact ? .automatic : .artifact
@@ -156,7 +154,7 @@ struct CampusAIComposerBar: View {
                     }
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 19, weight: .medium))
+                        .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(AppTheme.primaryText)
                         .frame(width: 44, height: 44)
                         .contentShape(Circle())
@@ -170,13 +168,13 @@ struct CampusAIComposerBar: View {
                     .textFieldStyle(.plain)
                     .submitLabel(.send)
                     .onSubmit(submit)
-                    .padding(.vertical, 15)
+                    .padding(.vertical, 10)
 
                 Button(action: isSending ? cancelStreaming : submit) {
                     Image(systemName: isSending ? "stop.fill" : "arrow.up")
                         .font(.system(size: 15, weight: .bold))
                         .foregroundStyle((canSend || isSending) ? Color.white : AppTheme.tertiaryText)
-                        .frame(width: 36, height: 36)
+                        .frame(width: 34, height: 34)
                         .background(
                             (canSend || isSending) ? AppTheme.accent : AppTheme.softFill,
                             in: Circle()
@@ -188,13 +186,13 @@ struct CampusAIComposerBar: View {
                 .accessibilityLabel(isSending ? "停止生成" : "发送")
             }
             .padding(.horizontal, 8)
-            .frame(minHeight: 56)
+            .frame(minHeight: 52)
         } else {
             Button(action: configureAPIKey) {
                 Label("配置 DeepSeek Key", systemImage: "key.fill")
                     .font(.body.weight(.semibold))
                     .frame(maxWidth: .infinity)
-                    .frame(minHeight: 56)
+                    .frame(minHeight: 52)
             }
             .buttonStyle(.plain)
             .foregroundStyle(AppTheme.accent)
@@ -233,6 +231,14 @@ struct CampusAIComposerBar: View {
                     Capsule().strokeBorder(AppTheme.accent.opacity(0.18), lineWidth: 0.5)
                 }
         }
+    }
+}
+
+struct CampusAIComposerHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 

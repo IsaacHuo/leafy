@@ -126,16 +126,31 @@ struct CampusAIMessageRow: View {
                 }
 
                 if !actions.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(actions) { action in
-                            CampusAIActionCard(
-                                action: action,
-                                executeAction: executeAction,
-                                cancelAction: cancelAction
-                            )
-                        }
-                    }
+                    CampusAIActionList(
+                        actions: actions,
+                        executeAction: executeAction,
+                        cancelAction: cancelAction
+                    )
                     .padding(.top, 2)
+                }
+
+                if !isStreaming {
+                    HStack(spacing: 0) {
+                        Button(action: regenerate) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(AppTheme.secondaryText)
+                                .frame(width: 32, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 8)
+                        .accessibilityLabel(regenerateTitle)
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.leading, -6)
                 }
             }
             .font(.body)
@@ -340,10 +355,64 @@ private struct CampusAISourceAttachmentPillList: View {
     }
 }
 
-private struct CampusAIActionCard: View {
-    let action: CampusAIActionRecord
+private struct CampusAIActionList: View {
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    let actions: [CampusAIActionRecord]
     let executeAction: (CampusAIActionRecord) -> Void
     let cancelAction: (CampusAIActionRecord) -> Void
+    @State private var expandedCompletedActionIDs: Set<UUID> = []
+    @Namespace private var transitionNamespace
+
+    private var visibleActions: [CampusAIActionRecord] {
+        actions.filter { CampusAIActionPresentationPolicy.isVisible($0.status) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(visibleActions) { action in
+                CampusAIActionCard(
+                    action: action,
+                    isExpanded: action.status != .completed || expandedCompletedActionIDs.contains(action.id),
+                    transitionNamespace: transitionNamespace,
+                    executeAction: executeAction,
+                    cancelAction: cancelAction,
+                    toggleCompleted: { toggleCompleted(action.id) }
+                )
+                .transition(
+                    accessibilityReduceMotion
+                        ? .opacity
+                        : .asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .bottomLeading)),
+                            removal: .opacity.combined(with: .scale(scale: 0.85, anchor: .bottomLeading))
+                        )
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(
+            accessibilityReduceMotion ? .easeOut(duration: 0.14) : .spring(response: 0.3, dampingFraction: 0.88),
+            value: actions.map { "\($0.id.uuidString):\($0.status.rawValue)" }
+        )
+    }
+
+    private func toggleCompleted(_ id: UUID) {
+        withAnimation(accessibilityReduceMotion ? .easeOut(duration: 0.14) : .spring(response: 0.3, dampingFraction: 0.88)) {
+            if expandedCompletedActionIDs.contains(id) {
+                expandedCompletedActionIDs.remove(id)
+            } else {
+                expandedCompletedActionIDs.insert(id)
+            }
+        }
+    }
+}
+
+private struct CampusAIActionCard: View {
+    let action: CampusAIActionRecord
+    let isExpanded: Bool
+    let transitionNamespace: Namespace.ID
+    let executeAction: (CampusAIActionRecord) -> Void
+    let cancelAction: (CampusAIActionRecord) -> Void
+    let toggleCompleted: () -> Void
 
     private var isPending: Bool {
         action.status == .pending
@@ -375,87 +444,109 @@ private struct CampusAIActionCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                if isPending {
-                    executeAction(action)
+        Group {
+            if action.status == .completed, !isExpanded {
+                collapsedCompletedButton
+            } else {
+                expandedCard
+            }
+        }
+        .matchedGeometryEffect(id: action.id, in: transitionNamespace)
+    }
+
+    private var expandedCard: some View {
+        HStack(spacing: 4) {
+            Button(action: primaryAction) {
+                HStack(spacing: 10) {
+                    actionIcon
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(action.title.nonEmptyTrimmed ?? kindTitle)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(AppTheme.primaryText)
+                                .lineLimit(1)
+
+                            Text(statusText)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(statusForeground)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(statusForeground.opacity(0.1), in: Capsule())
+                        }
+
+                        Text(action.detail.nonEmptyTrimmed ?? kindTitle)
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.secondaryText)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 4)
+
+                    if isPending {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(AppTheme.tertiaryText)
+                    }
                 }
-            } label: {
-                cardContent
-                    .padding(13)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        AppTheme.softFill.opacity(0.72),
-                        in: RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    )
-                    .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(!isPending)
-            .accessibilityHint(isPending ? "点按打开或编辑这个动作" : statusText)
+            .disabled(action.status == .failed)
 
             if isPending {
                 Button {
                     cancelAction(action)
                 } label: {
-                    Label("忽略", systemImage: "xmark")
-                        .font(.caption.weight(.semibold))
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(AppTheme.secondaryText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(AppTheme.cardElevated.opacity(0.7), in: Capsule())
+                        .frame(width: 36, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .padding(.leading, 42)
+                .accessibilityLabel("忽略动作")
             }
         }
+        .padding(.leading, 11)
+        .padding(.trailing, isPending ? 4 : 11)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+        .background(AppTheme.softFill.opacity(0.72), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
-    private var cardContent: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: iconName)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(AppTheme.accent)
-                .frame(width: 32, height: 32)
-                .background(AppTheme.accent.opacity(0.12), in: Circle())
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(kindTitle)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AppTheme.secondaryText)
-
-                    Text(statusText)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(statusForeground)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(statusForeground.opacity(0.1), in: Capsule())
-                }
-
-                Text(action.title.nonEmptyTrimmed ?? kindTitle)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppTheme.primaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if let detail = action.detail.nonEmptyTrimmed {
-                    Text(detail)
-                        .font(.footnote)
-                        .foregroundStyle(AppTheme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            Spacer(minLength: AppSpacing.micro)
-
-            if isPending {
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(AppTheme.tertiaryText)
-                    .frame(width: 20, height: 32)
-            }
+    private var collapsedCompletedButton: some View {
+        Button(action: toggleCompleted) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(Color.white)
+                .frame(width: 36, height: 36)
+                .background(Color.green, in: Circle())
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .buttonStyle(.plain)
+        .accessibilityLabel("已执行，展开动作详情")
+    }
+
+    private var actionIcon: some View {
+        Image(systemName: iconName)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(AppTheme.accent)
+            .frame(width: 30, height: 30)
+            .background(AppTheme.accent.opacity(0.12), in: Circle())
+    }
+
+    private func primaryAction() {
+        switch action.status {
+        case .pending:
+            executeAction(action)
+        case .completed:
+            toggleCompleted()
+        case .cancelled, .failed:
+            break
+        }
     }
 
     private var statusForeground: Color {
@@ -489,9 +580,98 @@ private struct CampusAIMessageMarkdown: View {
     let isStreaming: Bool
 
     var body: some View {
-        CampusAIMarkdownFallbackText(markdown: markdown)
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
+        let document = CampusAIResponseDocument(markdown: markdown)
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(document.blocks.enumerated()), id: \.offset) { _, block in
+                CampusAIResponseBlockView(block: block)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .textSelection(.enabled)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct CampusAIResponseBlockView: View {
+    let block: CampusAIResponseDocument.Block
+
+    var body: some View {
+        switch block {
+        case .heading(let level, let text):
+            inlineText(text)
+                .font(headingFont(level))
+                .padding(.top, level == 1 ? 3 : 1)
+        case .paragraph(let text):
+            inlineText(text)
+                .font(.body)
+                .lineSpacing(3)
+        case .unorderedList(let items):
+            list(items: items, ordered: false)
+        case .orderedList(let items):
+            list(items: items, ordered: true)
+        case .quote(let text):
+            HStack(alignment: .top, spacing: 10) {
+                Capsule()
+                    .fill(AppTheme.accent.opacity(0.45))
+                    .frame(width: 3)
+                inlineText(text)
+                    .font(.callout)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .lineSpacing(2)
+            }
+        case .code(let language, let source):
+            VStack(alignment: .leading, spacing: 6) {
+                if let language {
+                    Text(language)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    Text(source)
+                        .font(.system(.footnote, design: .monospaced))
+                        .textSelection(.enabled)
+                }
+            }
+            .padding(12)
+            .background(AppTheme.softFill.opacity(0.72), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    private func list(items: [String], ordered: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                HStack(alignment: .firstTextBaseline, spacing: 9) {
+                    Text(ordered ? "\(index + 1)." : "•")
+                        .font(.body.weight(ordered ? .regular : .semibold))
+                        .foregroundStyle(ordered ? AppTheme.secondaryText : AppTheme.primaryText)
+                        .frame(minWidth: 16, alignment: .trailing)
+                    inlineText(item)
+                        .font(.body)
+                        .lineSpacing(2)
+                }
+            }
+        }
+    }
+
+    private func inlineText(_ markdown: String) -> Text {
+        if let attributed = try? AttributedString(
+            markdown: markdown,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) {
+            return Text(attributed)
+        }
+        return Text(markdown)
+    }
+
+    private func headingFont(_ level: Int) -> Font {
+        switch level {
+        case 1:
+            return .title2.weight(.semibold)
+        case 2:
+            return .headline
+        default:
+            return .subheadline.weight(.semibold)
+        }
     }
 }
 

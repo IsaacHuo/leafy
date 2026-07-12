@@ -87,7 +87,7 @@ struct CampusAIArtifactCard: View {
                         .foregroundStyle(AppTheme.accent)
                 }
             }
-            .padding(18)
+            .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 LinearGradient(

@@ -61,6 +61,101 @@ final class CampusAIAssistantTests: XCTestCase {
         )
     }
 
+    func testSettingsStoreMigratesPreviousGeneralDefaultPrompt() throws {
+        let suiteName = "CampusAIAssistantTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var settings = CampusAIUserSettings.defaultValue
+        settings.systemPrompt = CampusAISettingsStore.previousGeneralDefaultSystemPrompt
+        defaults.set(try JSONEncoder().encode(settings), forKey: "campusAI.userSettings.v2")
+
+        let migrated = CampusAISettingsStore.load(userDefaults: defaults)
+        XCTAssertEqual(migrated.systemPrompt, CampusAISettingsStore.defaultSystemPrompt)
+        XCTAssertTrue(migrated.systemPrompt.contains("三项以上并列信息使用列表"))
+    }
+
+    func testResponseDocumentParsesNativeMarkdownBlocksAndIncompleteFence() {
+        let document = CampusAIResponseDocument(
+            markdown: """
+            # 结论
+
+            先完成最重要的一项。
+
+            - 第一项
+            - 第二项
+
+            1. 准备
+            2. 执行
+
+            > 保持节奏
+
+            ```swift
+            let value = 1
+            """
+        )
+
+        XCTAssertEqual(
+            document.blocks,
+            [
+                .heading(level: 1, text: "结论"),
+                .paragraph("先完成最重要的一项。"),
+                .unorderedList(["第一项", "第二项"]),
+                .orderedList(["准备", "执行"]),
+                .quote("保持节奏"),
+                .code(language: "swift", source: "let value = 1")
+            ]
+        )
+    }
+
+    func testActionPresentationHidesCancelledAndCollapsesCompletedByDefault() {
+        XCTAssertTrue(CampusAIActionPresentationPolicy.isVisible(.pending))
+        XCTAssertTrue(CampusAIActionPresentationPolicy.isVisible(.completed))
+        XCTAssertTrue(CampusAIActionPresentationPolicy.isVisible(.failed))
+        XCTAssertFalse(CampusAIActionPresentationPolicy.isVisible(.cancelled))
+        XCTAssertTrue(CampusAIActionPresentationPolicy.isCollapsedByDefault(.completed))
+        XCTAssertFalse(CampusAIActionPresentationPolicy.isCollapsedByDefault(.pending))
+    }
+
+    func testDrawerInteractionRequiresHorizontalIntentAndUsesProjectedPosition() {
+        XCTAssertTrue(CampusAIDrawerInteraction.isHorizontal(CGSize(width: 80, height: 20)))
+        XCTAssertFalse(CampusAIDrawerInteraction.isHorizontal(CGSize(width: 20, height: 80)))
+        XCTAssertFalse(CampusAIDrawerInteraction.isHorizontal(CGSize(width: 6, height: 0)))
+
+        XCTAssertTrue(
+            CampusAIDrawerInteraction.shouldOpen(
+                isOpen: false,
+                translation: 30,
+                predictedTranslation: 120,
+                drawerWidth: 320
+            )
+        )
+        XCTAssertFalse(
+            CampusAIDrawerInteraction.shouldOpen(
+                isOpen: false,
+                translation: 30,
+                predictedTranslation: 50,
+                drawerWidth: 320
+            )
+        )
+        XCTAssertFalse(
+            CampusAIDrawerInteraction.shouldOpen(
+                isOpen: true,
+                translation: -40,
+                predictedTranslation: -100,
+                drawerWidth: 320
+            )
+        )
+        XCTAssertTrue(
+            CampusAIDrawerInteraction.shouldOpen(
+                isOpen: true,
+                translation: -20,
+                predictedTranslation: -40,
+                drawerWidth: 320
+            )
+        )
+    }
+
     func testArtifactLibraryBuildsStableSortedItemsAndIgnoresFailedOrEmptyArtifacts() throws {
         let olderConversation = CampusAIConversation(id: UUID(), title: "旧对话", summary: "复习总结")
         let newerConversation = CampusAIConversation(id: UUID(), title: "新对话", summary: "旅行计划")

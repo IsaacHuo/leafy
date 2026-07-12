@@ -369,6 +369,18 @@
     });
   }
 
+  function decorateTables(root) {
+    root.querySelectorAll("table").forEach(function (table) {
+      if (table.parentElement && table.parentElement.classList.contains("table-scroll")) {
+        return;
+      }
+      const wrapper = document.createElement("div");
+      wrapper.className = "table-scroll";
+      table.parentNode.insertBefore(wrapper, table);
+      wrapper.appendChild(table);
+    });
+  }
+
   function render(markdown) {
     try {
       const md = createMarkdownIt();
@@ -393,6 +405,7 @@
         })
         .then(function () {
           decorateCodeBlocks(content);
+          decorateTables(content);
           reportHeight();
         });
     } catch (error) {

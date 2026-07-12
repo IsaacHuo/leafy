@@ -30,6 +30,7 @@ struct CampusAIAssistantView: View {
     @State private var workspacePath: [CampusAIWorkspaceRoute] = []
     @State private var isSidebarPresented = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var composerHeight: CGFloat = 68
 
     private var hasAPIKey: Bool {
         configuredProviderIDs.contains(userSettings.selectedProviderID)
@@ -136,8 +137,9 @@ struct CampusAIAssistantView: View {
     private var workspaceNavigation: some View {
         NavigationStack(path: $workspacePath) {
             conversationScroll
-                .background(AppTheme.cardElevated)
+                .background(AppTheme.cardElevated.ignoresSafeArea())
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(.hidden, for: .navigationBar)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button(action: toggleSidebar) {
@@ -145,18 +147,17 @@ struct CampusAIAssistantView: View {
                         }
                     }
 
-                    ToolbarItem(placement: .principal) {
-                        Text("Leafy")
-                            .font(.headline)
-                    }
-
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
                         Button(action: startNewConversation) {
                             Label("新建对话", systemImage: "square.and.pencil")
                         }
+
+                        Button(action: leaveWorkspace) {
+                            Label("退出 Leafy", systemImage: "rectangle.portrait.and.arrow.right")
+                        }
                     }
                 }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
+                .overlay(alignment: .bottom) {
                     CampusAIComposerBar(
                         draftText: $draftText,
                         outputMode: $outputMode,
@@ -168,6 +169,10 @@ struct CampusAIAssistantView: View {
                         submit: submitDraft,
                         cancelStreaming: cancelStreaming
                     )
+                }
+                .onPreferenceChange(CampusAIComposerHeightPreferenceKey.self) { height in
+                    guard height > 0, abs(height - composerHeight) > 0.5 else { return }
+                    composerHeight = height
                 }
                 .navigationDestination(for: CampusAIWorkspaceRoute.self) { route in
                     workspaceDestination(for: route)
@@ -182,12 +187,10 @@ struct CampusAIAssistantView: View {
             selectedConversationID: selectedConversation?.id,
             artifactCount: artifactLibraryItems.count,
             search: openWorkspaceSearch,
-            startNewConversation: startNewConversation,
             openArtifactLibrary: openArtifactLibrary,
             selectConversation: selectConversationFromSidebar,
             deleteConversation: deleteConversation,
-            openSettings: openSettings,
-            leaveWorkspace: leaveWorkspace
+            openSettings: openSettings
         )
     }
 
@@ -240,7 +243,7 @@ struct CampusAIAssistantView: View {
                                 isComposerFocused = true
                             }
                         )
-                            .padding(.top, 80)
+                            .padding(.top, 44)
                     } else {
                         ForEach(selectedMessages) { message in
                             CampusAIMessageRow(
@@ -275,7 +278,7 @@ struct CampusAIAssistantView: View {
                 }
                 .leafyAdaptiveContentWidth(maxWidth: 820, horizontalPadding: AppSpacing.page)
                 .padding(.top, AppSpacing.card)
-                .padding(.bottom, AppSpacing.card)
+                .padding(.bottom, composerHeight + AppSpacing.card)
                 .animation(
                     accessibilityReduceMotion ? nil : .easeOut(duration: 0.18),
                     value: selectedMessages.map(\.id)
@@ -721,8 +724,10 @@ struct CampusAIAssistantView: View {
     @MainActor
     private func cancelActionRecord(_ record: CampusAIActionRecord) {
         guard record.status == .pending else { return }
-        record.statusRawValue = CampusAIActionStatus.cancelled.rawValue
-        record.updatedAt = Date()
+        withAnimation(accessibilityReduceMotion ? .easeOut(duration: 0.14) : .easeInOut(duration: 0.2)) {
+            record.statusRawValue = CampusAIActionStatus.cancelled.rawValue
+            record.updatedAt = Date()
+        }
         persistModelContext(operation: "action.cancel")
     }
 
@@ -881,8 +886,10 @@ struct CampusAIAssistantView: View {
     }
 
     private func markAction(_ record: CampusAIActionRecord, status: CampusAIActionStatus) {
-        record.statusRawValue = status.rawValue
-        record.updatedAt = Date()
+        withAnimation(accessibilityReduceMotion ? .easeOut(duration: 0.14) : .spring(response: 0.3, dampingFraction: 0.88)) {
+            record.statusRawValue = status.rawValue
+            record.updatedAt = Date()
+        }
         persistModelContext(operation: "action.update")
     }
 
