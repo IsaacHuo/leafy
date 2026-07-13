@@ -369,27 +369,27 @@ function adminValueLabel(source: string, value: unknown) {
     : text;
 }
 
-function actionConfirmation(resource: string, record: Record<string, any>, action: RowActionConfig) {
+export function actionConfirmation(resource: string, record: Record<string, any>, action: RowActionConfig) {
   if (resource === "ratings") {
-    const target = record.teacher?.name ?? record.dish?.name ?? `ID ${record.teacher_id ?? record.dish_id}`;
-    const user = record.user?.nickname ?? record.user_id ?? "未知用户";
+    const target = record.teacher?.name || record.dish?.name || `ID ${record.teacher_id ?? record.dish_id ?? "未知"}`;
+    const user = record.user?.nickname || record.user_id || "未知用户";
     const time = record.updated_at ? new Date(record.updated_at).toLocaleString("zh-CN") : "时间未知";
     return {
-      summary: `删除 ${target} 的 ${record.stars ?? "—"} 星评分（用户：${user}，${time}）`,
+      summary: `评分：${target} · ${record.stars ?? "—"} 星 · 用户：${user} · ${time}`,
       impact: "删除后无法恢复，相关聚合评分会立即重新计算。",
     };
   }
   if (resource === "sessions") {
-    const admin = record.admin?.display_name ?? record.admin_id ?? "未知管理员";
+    const admin = record.admin?.display_name || record.admin_id || "未知管理员";
     const lastSeen = record.last_seen_at ? new Date(record.last_seen_at).toLocaleString("zh-CN") : "无活动记录";
-    return { summary: `撤销 ${admin} 的管理会话（最近活动：${lastSeen}）`, impact: "该会话会立即失效，管理员需要重新登录。" };
+    return { summary: `管理会话：${admin} · 最近活动 ${lastSeen}`, impact: "该会话会立即失效，管理员需要重新登录。" };
   }
   if (resource === "admins" && action.action === "disableAdmin") {
-    const admin = record.display_name ?? record.username ?? record.id;
-    return { summary: `停用管理员账号：${admin}`, impact: "账号将无法继续登录，已有会话也应尽快撤销。" };
+    const admin = record.display_name || record.username || record.id || "未知管理员";
+    return { summary: `管理员账号：${admin}`, impact: "账号将无法继续登录，已有会话也应尽快撤销。" };
   }
-  const identity = record.title ?? record.name ?? record.nickname ?? record.display_name ?? record.id ?? "当前记录";
-  return { summary: `${action.label}：${identity}`, impact: "此操作会立即影响当前记录。" };
+  const identity = record.title || record.name || record.nickname || record.display_name || record.id || "当前记录";
+  return { summary: `操作对象：${identity}`, impact: "此操作会立即影响当前记录。" };
 }
 function isMissing(value: unknown) { return value === undefined || value === null || (typeof value === "string" && value.trim() === ""); }
 function toSnake(value: string) {

@@ -78,7 +78,7 @@ test("logs in through the BFF and opens a real resource route", async ({ page })
 
   await page.getByText("评分", { exact: true }).click();
   await page.getByRole("button", { name: "删除", exact: true }).click();
-  await expect(page.getByText(/删除 测试教师 的 4 星评分/)).toBeVisible();
+  await expect(page.getByText(/评分：测试教师 · 4 星 · 用户：测试用户/)).toBeVisible();
   await expect(page.getByText("undefined", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "取消" }).click();
   await expect(page.evaluate(() => localStorage.getItem("leafy-admin-session"))).resolves.toBeNull();
