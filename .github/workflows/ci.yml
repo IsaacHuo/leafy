@@ -121,10 +121,13 @@ jobs:
             supabase/functions/admin-me/index.ts \
             supabase/functions/admin-logout/index.ts \
             supabase/functions/admin-community/index.ts \
-            supabase/functions/admin-export/index.ts
+            supabase/functions/admin-export/index.ts \
+            supabase/functions/admin-list-announcements/index.ts \
+            supabase/functions/admin-publish-announcement/index.ts \
+            supabase/functions/admin-update-announcement/index.ts
 
       - name: Run admin permissions tests
-        run: deno test --allow-read=supabase/functions/admin-community/index.ts supabase/functions/_shared/admin-permissions.test.ts supabase/functions/_shared/admin-csv.test.ts supabase/functions/admin-community/admin-community.contract.test.ts
+        run: deno test --allow-read=supabase/functions/admin-community/index.ts supabase/functions/_shared/admin-core.test.ts supabase/functions/_shared/admin-permissions.test.ts supabase/functions/_shared/admin-csv.test.ts supabase/functions/admin-community/admin-community.contract.test.ts
 
       - name: Verify migration contracts
         run: bash supabase/tests/verify_admin_security_runtime_migration.sh
