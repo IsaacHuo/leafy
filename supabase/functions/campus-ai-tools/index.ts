@@ -239,7 +239,7 @@ async function reserveToolCall(
   requestID: string,
   tool: CampusAIWebToolName,
 ) {
-  const { data, error } = await adminClient.schema("private").rpc(
+  const { data, error } = await adminClient.rpc(
     "reserve_campus_ai_tool_call",
     {
       p_auth_user_id: userID,
@@ -265,7 +265,7 @@ async function completeToolCall(
   resultCount: number,
   errorCode: string | null,
 ) {
-  const { error } = await adminClient.schema("private").rpc(
+  const { error } = await adminClient.rpc(
     "complete_campus_ai_tool_call",
     {
       p_request_uuid: requestID,
