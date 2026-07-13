@@ -16,6 +16,7 @@ struct CampusAIMarkdownWebView: View {
     let markdown: String
     let mode: Mode
 
+    @Environment(\.openURL) private var openURL
     @State private var contentHeight: CGFloat = 1
     @State private var didFailRendering = false
 
@@ -39,7 +40,8 @@ struct CampusAIMarkdownWebView: View {
                     markdown: markdown,
                     height: $contentHeight,
                     didFailRendering: $didFailRendering,
-                    isScrollEnabled: mode == .document
+                    isScrollEnabled: mode == .document,
+                    openURL: { openURL($0) }
                 )
                 .frame(height: mode == .document ? nil : max(1, contentHeight))
             }
@@ -147,9 +149,14 @@ private struct CampusAIMarkdownPlatformWebView: UIViewRepresentable {
     @Binding var height: CGFloat
     @Binding var didFailRendering: Bool
     let isScrollEnabled: Bool
+    let openURL: (URL) -> Void
 
     func makeCoordinator() -> CampusAIMarkdownWebCoordinator {
-        CampusAIMarkdownWebCoordinator(height: $height, didFailRendering: $didFailRendering)
+        CampusAIMarkdownWebCoordinator(
+            height: $height,
+            didFailRendering: $didFailRendering,
+            openURL: openURL
+        )
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -159,6 +166,7 @@ private struct CampusAIMarkdownPlatformWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
+        context.coordinator.openURL = openURL
         context.coordinator.update(markdown: markdown, in: webView)
     }
 
@@ -191,9 +199,14 @@ private struct CampusAIMarkdownPlatformWebView: NSViewRepresentable {
     @Binding var height: CGFloat
     @Binding var didFailRendering: Bool
     let isScrollEnabled: Bool
+    let openURL: (URL) -> Void
 
     func makeCoordinator() -> CampusAIMarkdownWebCoordinator {
-        CampusAIMarkdownWebCoordinator(height: $height, didFailRendering: $didFailRendering)
+        CampusAIMarkdownWebCoordinator(
+            height: $height,
+            didFailRendering: $didFailRendering,
+            openURL: openURL
+        )
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -203,6 +216,7 @@ private struct CampusAIMarkdownPlatformWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+        context.coordinator.openURL = openURL
         context.coordinator.update(markdown: markdown, in: webView)
     }
 
@@ -238,10 +252,16 @@ private final class CampusAIMarkdownWebCoordinator: NSObject, WKNavigationDelega
     private var isRendererReady = false
     private var pendingMarkdown = ""
     private var renderedMarkdown: String?
+    var openURL: (URL) -> Void
 
-    init(height: Binding<CGFloat>, didFailRendering: Binding<Bool>) {
+    init(
+        height: Binding<CGFloat>,
+        didFailRendering: Binding<Bool>,
+        openURL: @escaping (URL) -> Void
+    ) {
         self.height = height
         self.didFailRendering = didFailRendering
+        self.openURL = openURL
     }
 
     func attach(to webView: WKWebView) {
@@ -325,7 +345,7 @@ private final class CampusAIMarkdownWebCoordinator: NSObject, WKNavigationDelega
             return
         }
 
-        if Self.openExternally(url) {
+        if open(url) {
             decisionHandler(.cancel)
         } else {
             decisionHandler(.allow)
@@ -355,18 +375,14 @@ private final class CampusAIMarkdownWebCoordinator: NSObject, WKNavigationDelega
         #endif
     }
 
-    private static func openExternally(_ url: URL) -> Bool {
+    private func open(_ url: URL) -> Bool {
         guard let scheme = url.scheme?.lowercased(),
               ["http", "https", "mailto"].contains(scheme)
         else {
             return false
         }
 
-        #if os(iOS)
-        UIApplication.shared.open(url)
-        #elseif os(macOS)
-        NSWorkspace.shared.open(url)
-        #endif
+        openURL(url)
         return true
     }
 }

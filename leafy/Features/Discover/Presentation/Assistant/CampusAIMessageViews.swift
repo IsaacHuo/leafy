@@ -63,6 +63,7 @@ struct CampusAIMessageRow: View {
                 }
             }
         }
+        .campusAIInAppBrowser()
     }
 
     @ViewBuilder

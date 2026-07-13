@@ -213,6 +213,7 @@ struct CampusAIArtifactReaderView: View {
         } message: {
             Text(exportError ?? "请稍后重试。")
         }
+        .campusAIInAppBrowser()
     }
 
     private var exportErrorBinding: Binding<Bool> {
