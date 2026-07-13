@@ -26,7 +26,8 @@ Deno.serve(async (request) => {
     .limit(100);
 
   if (error) {
-    return errorResponse(500, "backend_unavailable", error.message);
+    console.error(JSON.stringify({ event: "admin_list_announcements_failed", error: error.message }));
+    return errorResponse(500, "backend_unavailable", "后台暂时不可用，请稍后重试。");
   }
 
   return json({ announcements: data ?? [] });

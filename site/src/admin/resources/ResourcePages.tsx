@@ -7,6 +7,7 @@ import {
   Datagrid,
   DateField,
   FunctionField,
+  FilterButton,
   List,
   NumberField,
   SelectInput,
@@ -50,16 +51,16 @@ export function createResourcePages(resource: string) {
   if (!config) throw new Error(`Missing resource UI config for ${resource}`);
   return {
     list: () => <ResourceList resource={resource} config={config} />,
-    create: config.form ? () => <ResourceCreate config={config} /> : undefined,
+    create: config.createForm ? () => <ResourceCreate config={config} /> : undefined,
   };
 }
 
 export function ResourceList({ resource, config }: { resource: string; config: ResourceConfig }) {
   const filters = [
-    <TextInput key="search" source="search" label="搜索" alwaysOn resettable />,
+    ...(config.searchable === false ? [] : [<TextInput key="search" source="search" label="搜索" alwaysOn resettable />]),
     ...(config.statusChoices ? [<SelectInput key="status" source="status" label="状态" choices={config.statusChoices} alwaysOn />] : []),
     ...(resource === "ratings" ? [<SelectInput key="target" source="target" label="评分类型" choices={[{ id: "teacher", name: "教师" }, { id: "dish", name: "菜品" }]} alwaysOn />] : []),
-    ...(config.filters ?? []).map((field) => <FilterInput key={field.source} field={field} />),
+    ...(config.filters ?? []).map(renderFilterInput),
     ...(dateFilterResources.has(resource) ? [
       <TextInput key="start" source="start" label="开始日期" type="date" />,
       <TextInput key="end" source="end" label="结束日期" type="date" />,
@@ -72,10 +73,10 @@ export function ResourceList({ resource, config }: { resource: string; config: R
       perPage={20}
       pagination={<AdminPagination />}
       actions={<ListActions resource={resource} config={config} />}
-      sort={{ field: "created_at", order: "DESC" }}
+      sort={config.defaultSort ?? { field: "created_at", order: "DESC" }}
     >
       <Datagrid bulkActionButtons={resource === "posts" || resource === "comments" ? <BulkHideButton resource={resource} /> : false} rowClick={false}>
-        {config.columns.map((column) => <Column key={column.source} config={column} />)}
+        {config.columns.map(renderColumn)}
         <FunctionField label="操作" render={() => <RowActions resource={resource} config={config} />} />
       </Datagrid>
     </List>{resource === "posts" && <PostFeedPreview />}</>
@@ -120,26 +121,28 @@ function PostFeedPreview() {
   );
 }
 
-function FilterInput({ field }: { field: FormFieldConfig }) {
-  if (field.kind === "select") return <SelectInput source={field.source} label={field.label} choices={field.choices ?? []} />;
-  return <TextInput source={field.source} label={field.label} type={field.kind === "date" ? "date" : field.kind === "number" ? "number" : "text"} resettable />;
+function renderFilterInput(field: FormFieldConfig) {
+  if (field.kind === "select") return <SelectInput key={field.source} source={field.source} label={field.label} choices={field.choices ?? []} />;
+  return <TextInput key={field.source} source={field.source} label={field.label} type={field.kind === "date" ? "date" : field.kind === "number" ? "number" : "text"} resettable />;
 }
 
 const dateFilterResources = new Set(["posts", "polls", "comments", "reports", "profiles", "feedback", "postgraduate-suggestions", "suggestions", "ratings", "audit-logs"]);
 
-function Column({ config }: { config: ColumnConfig }) {
-  if (config.kind === "date") return <DateField source={config.source} label={config.label} showTime emptyText="—" />;
-  if (config.kind === "number") return <NumberField source={config.source} label={config.label} emptyText="—" />;
-  if (config.kind === "boolean") return <BooleanField source={config.source} label={config.label} />;
-  if (config.kind === "json") return <FunctionField label={config.label} render={(record: RaRecord) => truncate(JSON.stringify(getValue(record, config.source)), 80)} />;
-  return <FunctionField label={config.label} render={(record: RaRecord) => truncate(String(getValue(record, config.source) ?? "—"), config.source.includes("body") ? 120 : 60)} />;
+function renderColumn(config: ColumnConfig) {
+  const props = { source: config.source, label: config.label, sortable: config.sortable === true };
+  if (config.kind === "date") return <DateField key={config.source} {...props} showTime emptyText="—" />;
+  if (config.kind === "number") return <NumberField key={config.source} {...props} emptyText="—" />;
+  if (config.kind === "boolean") return <BooleanField key={config.source} {...props} />;
+  if (config.kind === "json") return <FunctionField key={config.source} {...props} render={(record: RaRecord) => truncate(JSON.stringify(getValue(record, config.source)), 80)} />;
+  return <FunctionField key={config.source} {...props} render={(record: RaRecord) => truncate(adminValueLabel(config.source, getValue(record, config.source)), config.source.includes("body") ? 120 : 60)} />;
 }
 
 function ListActions({ resource, config }: { resource: string; config: ResourceConfig }) {
   const { canAccess: canCreate } = useCanAccess({ resource, action: "create" });
   return (
     <TopToolbar>
-      {config.form && canCreate && <CreateButton />}
+      <FilterButton />
+      {config.createForm && canCreate && <CreateButton />}
       {config.exportable && <ExportResourceButton resource={resource} />}
     </TopToolbar>
   );
@@ -169,7 +172,7 @@ function RowActions({ resource, config }: { resource: string; config: ResourceCo
   return (
     <Stack direction="row" spacing={0.5} flexWrap="wrap">
       <RecordDetailDialog resource={resource} record={record} />
-      {config.editable && config.form && <RecordFormDialog resource={resource} config={config} record={record} />}
+      {config.editable && config.editForm && <RecordFormDialog resource={resource} config={config} record={record} />}
       {config.actions?.filter((action) => !action.visible || action.visible(record)).map((action) => <ActionDialogButton key={action.label} resource={resource} record={record} action={action} />)}
     </Stack>
   );
@@ -182,17 +185,14 @@ function ActionDialogButton({ resource, record, action }: { resource: string; re
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [values, setValues] = useState<Record<string, unknown>>({});
-  const { canAccess } = useCanAccess({ resource, action: "edit", record });
+  const { canAccess } = useCanAccess({ resource, action: action.permissionAction ?? "edit", record });
   if (!canAccess) return null;
 
   async function run() {
     setLoading(true);
     try {
       if (action.action === "__deleteRating") {
-        const isDish = Boolean(record.dish_id);
-        await dataProvider.execute(isDish ? "deleteDishRating" : "deleteTeacherRating", isDish
-          ? { dishID: record.dish_id, userID: record.user_id }
-          : { teacherID: record.teacher_id, userID: record.user_id });
+        await dataProvider.delete(resource, { id: record.id, previousData: record as RaRecord });
       } else {
         const combined = { ...(action.fixed ?? {}), ...values };
         const payload = action.build ? action.build(record, combined) : { id: record.id, ...combined };
@@ -208,12 +208,14 @@ function ActionDialogButton({ resource, record, action }: { resource: string; re
     }
   }
 
+  const confirmation = actionConfirmation(resource, record, action);
+
   return (
     <>
       <Button color={action.tone === "danger" ? "error" : "primary"} label={action.label} onClick={() => setOpen(true)} />
       <Dialog open={open} onClose={() => !loading && setOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>{action.label}</DialogTitle>
-        <DialogContent><Stack spacing={2} mt={1}><Typography color="text.secondary">此操作将立即影响“{record.title ?? record.name ?? record.nickname ?? record.id}”，并写入审计日志。</Typography>{action.fields?.map((field) => <DialogField key={field.source} field={field} value={values[field.source]} onChange={(value) => setValues((current) => ({ ...current, [field.source]: value }))} />)}{!action.fields?.length && <Typography>请确认继续执行。</Typography>}</Stack></DialogContent>
+        <DialogContent><Stack spacing={2} mt={1}><Typography fontWeight={650}>{confirmation.summary}</Typography><Typography color="text.secondary">{confirmation.impact} 操作结果将写入审计日志。</Typography>{action.fields?.map((field) => <DialogField key={field.source} field={field} value={values[field.source]} onChange={(value) => setValues((current) => ({ ...current, [field.source]: value }))} />)}{!action.fields?.length && <Typography>请确认继续执行。</Typography>}</Stack></DialogContent>
         <DialogActions><Button label="取消" onClick={() => setOpen(false)} /><Button label="确认" color={action.tone === "danger" ? "error" : "primary"} disabled={loading || action.fields?.some((field) => field.required && isMissing(values[field.source]))} onClick={() => void run()} /></DialogActions>
       </Dialog>
     </>
@@ -225,7 +227,7 @@ function RecordFormDialog({ resource, config, record }: { resource: string; conf
   const notify = useNotify();
   const refresh = useRefresh();
   const [open, setOpen] = useState(false);
-  const initial = useMemo(() => Object.fromEntries((config.form ?? []).map((field) => [field.source, formInitial(record, field)])), [config.form, record]);
+  const initial = useMemo(() => Object.fromEntries((config.editForm ?? []).map((field) => [field.source, formInitial(record, field)])), [config.editForm, record]);
   const [values, setValues] = useState<Record<string, unknown>>(initial);
   const [loading, setLoading] = useState(false);
 
@@ -246,8 +248,8 @@ function RecordFormDialog({ resource, config, record }: { resource: string; conf
       <Button label="编辑" startIcon={<Edit />} onClick={() => { setValues(initial); setOpen(true); }} />
       <Dialog open={open} onClose={() => !loading && setOpen(false)} fullWidth maxWidth="md">
         <DialogTitle>编辑{config.label}</DialogTitle>
-        <DialogContent><Stack spacing={2} mt={1}>{config.form?.map((field) => <DialogField key={field.source} field={field} value={values[field.source]} onChange={(value) => setValues((current) => ({ ...current, [field.source]: value }))} />)}</Stack></DialogContent>
-        <DialogActions><Button label="取消" onClick={() => setOpen(false)} /><Button label="保存" disabled={loading || config.form?.some((field) => field.required && isMissing(values[field.source]))} onClick={() => void save()} /></DialogActions>
+        <DialogContent><Stack spacing={2} mt={1}>{config.editForm?.map((field) => <DialogField key={field.source} field={field} value={values[field.source]} onChange={(value) => setValues((current) => ({ ...current, [field.source]: value }))} />)}</Stack></DialogContent>
+        <DialogActions><Button label="取消" onClick={() => setOpen(false)} /><Button label="保存" disabled={loading || config.editForm?.some((field) => field.required && isMissing(values[field.source]))} onClick={() => void save()} /></DialogActions>
       </Dialog>
     </>
   );
@@ -256,7 +258,7 @@ function RecordFormDialog({ resource, config, record }: { resource: string; conf
 function ResourceCreate({ config }: { config: ResourceConfig }) {
   return (
     <Create title={`新增${config.label}`}>
-      <SimpleForm>{config.form?.map((field) => <AdminInput key={field.source} field={field} />)}</SimpleForm>
+      <SimpleForm>{config.createForm?.map((field) => <AdminInput key={field.source} field={field} />)}</SimpleForm>
     </Create>
   );
 }
@@ -353,6 +355,42 @@ function AdminPagination() {
 
 function getValue(record: Record<string, any>, source: string) { return source.split(".").reduce((value, key) => value?.[key], record); }
 function truncate(value: string, max: number) { return value.length > max ? `${value.slice(0, max - 1)}…` : value; }
+function adminValueLabel(source: string, value: unknown) {
+  if (value === undefined || value === null || value === "") return "—";
+  const labels: Record<string, string> = {
+    published: "已发布", pending: "待处理", pending_review: "待审核", hidden: "已隐藏", deleted: "已删除",
+    open: "未查看", reviewed: "已查看待处理", resolved: "已处理", rejected: "已驳回", closed: "已完成",
+    draft: "草稿", archived: "已下线", approved: "已通过", success: "成功", failure: "失败",
+    viewer: "只读管理员", operator: "运营管理员", super_admin: "超级管理员",
+  };
+  const text = String(value);
+  return source === "status" || source.endsWith("_status") || source === "outcome" || source === "role"
+    ? labels[text] ?? text
+    : text;
+}
+
+function actionConfirmation(resource: string, record: Record<string, any>, action: RowActionConfig) {
+  if (resource === "ratings") {
+    const target = record.teacher?.name ?? record.dish?.name ?? `ID ${record.teacher_id ?? record.dish_id}`;
+    const user = record.user?.nickname ?? record.user_id ?? "未知用户";
+    const time = record.updated_at ? new Date(record.updated_at).toLocaleString("zh-CN") : "时间未知";
+    return {
+      summary: `删除 ${target} 的 ${record.stars ?? "—"} 星评分（用户：${user}，${time}）`,
+      impact: "删除后无法恢复，相关聚合评分会立即重新计算。",
+    };
+  }
+  if (resource === "sessions") {
+    const admin = record.admin?.display_name ?? record.admin_id ?? "未知管理员";
+    const lastSeen = record.last_seen_at ? new Date(record.last_seen_at).toLocaleString("zh-CN") : "无活动记录";
+    return { summary: `撤销 ${admin} 的管理会话（最近活动：${lastSeen}）`, impact: "该会话会立即失效，管理员需要重新登录。" };
+  }
+  if (resource === "admins" && action.action === "disableAdmin") {
+    const admin = record.display_name ?? record.username ?? record.id;
+    return { summary: `停用管理员账号：${admin}`, impact: "账号将无法继续登录，已有会话也应尽快撤销。" };
+  }
+  const identity = record.title ?? record.name ?? record.nickname ?? record.display_name ?? record.id ?? "当前记录";
+  return { summary: `${action.label}：${identity}`, impact: "此操作会立即影响当前记录。" };
+}
 function isMissing(value: unknown) { return value === undefined || value === null || (typeof value === "string" && value.trim() === ""); }
 function toSnake(value: string) {
   return value

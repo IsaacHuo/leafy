@@ -47,7 +47,8 @@ Deno.serve(async (request) => {
       p_ip_address: ipAddress,
     });
     if (attemptBeginError) {
-      return errorResponse(500, "backend_unavailable", attemptBeginError.message);
+      console.error(JSON.stringify({ event: "admin_login_attempt_start_failed", request_id: requestId, error: attemptBeginError.message }));
+      return errorResponse(500, "backend_unavailable", "后台暂时不可用，请稍后重试。", { details: { request_id: requestId } });
     }
     const attempt = Array.isArray(attemptRows) ? attemptRows[0] : attemptRows;
     if (attempt?.is_rate_limited) {
@@ -76,9 +77,10 @@ Deno.serve(async (request) => {
       if (attemptError) {
         console.error(JSON.stringify({ event: "admin_login_attempt_audit_failed", request_id: requestId, error: attemptError.message }));
       }
-      const message = error.message.includes("ADMIN_INVALID_CREDENTIALS")
-        ? "账号或密码错误。"
-        : error.message;
+      if (!invalidCredentials) {
+        console.error(JSON.stringify({ event: "admin_login_failed", request_id: requestId, error: error.message }));
+      }
+      const message = invalidCredentials ? "账号或密码错误。" : "后台暂时不可用，请稍后重试。";
       return errorResponse(
         error.message.includes("ADMIN_INVALID_CREDENTIALS") ? 401 : 500,
         error.message.includes("ADMIN_INVALID_CREDENTIALS") ? "unauthorized" : "backend_unavailable",
@@ -139,7 +141,7 @@ Deno.serve(async (request) => {
       session: { expires_at: row.expires_at },
     });
   } catch (error) {
-    return mapFunctionError(error);
+    return mapFunctionError(error, requestId);
   }
 });
 

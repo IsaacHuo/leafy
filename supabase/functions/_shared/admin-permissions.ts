@@ -42,20 +42,32 @@ const operatorExportResources = new Set([
   "ratings",
 ]);
 
+const operatorResourceActions: Record<string, string[]> = {
+  "campus-requests": ["edit"],
+  posts: ["edit", "bulk", "export"],
+  polls: ["edit", "export"],
+  comments: ["edit", "bulk", "export"],
+  reports: ["edit", "export"],
+  profiles: ["edit"],
+  feedback: ["edit"],
+  announcements: ["create", "edit", "export"],
+  postgraduate: ["create", "edit", "export"],
+  "postgraduate-suggestions": ["edit"],
+  suggestions: ["edit", "export"],
+  teachers: ["create", "edit", "export"],
+  courses: ["create", "edit", "export"],
+  dishes: ["create", "edit", "export"],
+  ratings: ["delete", "export"],
+  "semester-configs": ["create", "edit"],
+  "national-calendar": ["create", "edit"],
+};
+
 export function permissionsForRole(role: AdminRole): AdminPermission[] {
   const permissions: AdminPermission[] = readableResources.map((resource) => ({
     resource,
     actions: role === "viewer"
       ? ["list", "show"]
-      : [
-        "list",
-        "show",
-        "create",
-        "edit",
-        "delete",
-        "bulk",
-        ...(operatorExportResources.has(resource) ? ["export"] : []),
-      ],
+      : ["list", "show", ...(operatorResourceActions[resource] ?? [])],
   }));
 
   permissions.push({ resource: "global-search", actions: ["search"] });

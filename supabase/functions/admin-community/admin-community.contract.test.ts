@@ -26,3 +26,23 @@ Deno.test("authenticated failures and successes both use structured audit metada
   assert(source.includes('outcome: "failure"'));
   assert(source.includes("errorCode: errorCodeFor(error)"));
 });
+
+Deno.test("catalog ratings accept numeric identifiers and expose stable record ids", () => {
+  assert(source.includes('requiredIdentifier(params, "teacherID", "teacher_id")'));
+  assert(source.includes('requiredIdentifier(params, "dishID", "dish_id")'));
+  assert(source.includes('id: `teacher:${item.teacher_id}:${item.user_id}`'));
+  assert(source.includes('id: `dish:${item.dish_id}:${item.user_id}`'));
+  assert(source.includes('.select("teacher_id, user_id, stars, created_at, updated_at")'));
+  assert(source.includes(".maybeSingle()"));
+});
+
+Deno.test("list contracts validate sorting and use an exclusive end date", () => {
+  assert(source.includes("function applySort("));
+  assert(source.includes("throw new HttpError(400, `不支持按 ${requestedField} 排序。`)"));
+  assert(source.includes("query.lt(column, end)"));
+});
+
+Deno.test("pending feedback includes open and reviewed", () => {
+  assert(source.includes("pending: input.feedbackOpen + input.feedbackReviewed"));
+  assert(source.includes('.in("status", ["open", "reviewed"])'));
+});

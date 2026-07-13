@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AppBar,
   Layout,
@@ -61,6 +61,8 @@ function AdminAppBar() {
   const [campuses, setCampuses] = useState<Campus[]>([]);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<GlobalSearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const searchSequence = useRef(0);
 
   useEffect(() => {
     const showAuditWarning = (event: Event) => {
@@ -81,14 +83,22 @@ function AdminAppBar() {
   }, [dataProvider, notify]);
 
   useEffect(() => {
+    const sequence = ++searchSequence.current;
     if (query.trim().length < 2) {
       setResults([]);
+      setSearching(false);
       return;
     }
     const timer = window.setTimeout(() => {
-      dataProvider.globalSearch(query.trim()).then(setResults).catch((error) => {
+      setSearching(true);
+      dataProvider.globalSearch(query.trim()).then((nextResults) => {
+        if (sequence === searchSequence.current) setResults(nextResults);
+      }).catch((error) => {
+        if (sequence !== searchSequence.current) return;
         setResults([]);
         notify(error instanceof Error ? error.message : "全局搜索失败。", { type: "error" });
+      }).finally(() => {
+        if (sequence === searchSequence.current) setSearching(false);
       });
     }, 250);
     return () => window.clearTimeout(timer);
@@ -106,6 +116,12 @@ function AdminAppBar() {
           size="small"
           sx={{ width: { xs: 160, md: 240, lg: 360 } }}
           options={options}
+          loading={searching}
+          loadingText="正在搜索…"
+          noOptionsText={query.trim().length < 2 ? "请输入至少 2 个字符" : "未找到匹配结果"}
+          openText="打开搜索结果"
+          closeText="关闭搜索结果"
+          clearText="清除搜索"
           inputValue={query}
           onInputChange={(_, value) => setQuery(value)}
           onChange={(_, value) => value && redirect(value.path.replace(/^\/admin(?=\/|$)/, "") || "/")}

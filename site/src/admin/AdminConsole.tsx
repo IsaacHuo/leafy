@@ -34,8 +34,8 @@ const theme = createTheme({
   },
 });
 
-const i18nProvider = {
-  translate: (key: string, options: Record<string, unknown> = {}) => translateMessage(String(options._ ?? chineseMessages[key] ?? key), options),
+export const i18nProvider = {
+  translate: (key: string, options: Record<string, unknown> = {}) => translateMessage(String(chineseMessages[key] ?? options._ ?? key), options),
   changeLocale: async () => undefined,
   getLocale: () => "zh-CN",
 };
@@ -59,6 +59,7 @@ const chineseMessages: Record<string, string> = {
   "ra.action.delete": "删除",
   "ra.action.show": "查看",
   "ra.action.search": "搜索",
+  "ra.action.sort": "排序",
   "ra.action.refresh": "刷新",
   "ra.action.cancel": "取消",
   "ra.action.select_all": "全选",
@@ -87,6 +88,9 @@ const chineseMessages: Record<string, string> = {
   "ra.navigation.page_rows_per_page": "每页行数：",
   "ra.navigation.page_range_info": "%{offsetBegin}-%{offsetEnd} / %{total}",
   "ra.navigation.skip_nav": "跳到主要内容",
+  "ra.sort.sort_by": "按%{field}排序（%{order}）",
+  "ra.sort.ASC": "升序",
+  "ra.sort.DESC": "降序",
   "ra.page.loading": "加载中",
   "ra.notification.updated": "保存成功",
   "ra.notification.created": "创建成功",

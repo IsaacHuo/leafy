@@ -2,6 +2,7 @@ export type ColumnConfig = {
   source: string;
   label: string;
   kind?: "text" | "date" | "number" | "boolean" | "json";
+  sortable?: boolean;
 };
 
 export type FormFieldConfig = {
@@ -16,6 +17,7 @@ export type RowActionConfig = {
   label: string;
   action: string;
   tone?: "primary" | "danger";
+  permissionAction?: "edit" | "delete" | "bulk";
   visible?: (record: Record<string, any>) => boolean;
   fields?: FormFieldConfig[];
   fixed?: Record<string, unknown>;
@@ -27,18 +29,22 @@ export type ResourceConfig = {
   columns: ColumnConfig[];
   statusChoices?: Array<{ id: string; name: string }>;
   filters?: FormFieldConfig[];
-  form?: FormFieldConfig[];
+  createForm?: FormFieldConfig[];
+  editForm?: FormFieldConfig[];
   actions?: RowActionConfig[];
   exportable?: boolean;
   editable?: boolean;
+  searchable?: boolean;
+  defaultSort?: { field: string; order: "ASC" | "DESC" };
 };
 
 const status = (...values: string[]) => values.map((value) => ({ id: value, name: statusName(value) }));
+const feedbackStatus = (...values: string[]) => values.map((value) => ({ id: value, name: ({ open: "未查看", reviewed: "已查看待处理", closed: "已完成", all: "全部" } as Record<string, string>)[value] ?? value }));
 const reasonField = (label = "原因"): FormFieldConfig => ({ source: "reason", label, kind: "longtext", required: true });
 const idParams = (record: Record<string, any>, values: Record<string, unknown>) => ({ id: record.id, ...values });
 
 export const resourceConfigs: Record<string, ResourceConfig> = {
-  campuses: { label: "学校空间", columns: columns(["id", "ID"], ["display_name", "学校"], ["connector_kind", "连接器"], ["is_community_enabled", "社区开放", "boolean"], ["status", "状态"]) },
+  campuses: { label: "学校空间", columns: columns(["id", "ID"], ["display_name", "学校"], ["connector_kind", "连接器"], ["is_community_enabled", "社区开放", "boolean"], ["status", "状态"]), searchable: false },
   "campus-requests": {
     label: "学校归属申请", columns: columns(["request_type", "类型"], ["school_name", "学校"], ["requester.nickname", "用户"], ["status", "状态"], ["admin_note", "审核备注"], ["created_at", "时间", "date"]), statusChoices: status("pending", "approved", "rejected", "all"),
     actions: [
@@ -108,24 +114,25 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
   },
   feedback: {
     label: "反馈",
-    columns: columns(["issue_type", "类型"], ["body", "内容"], ["contact", "联系方式"], ["status", "状态"], ["created_at", "提交时间", "date"]),
-    statusChoices: status("open", "reviewed", "closed", "all"),
+    columns: columns(["issue_type", "类型", "text", true], ["body", "内容"], ["contact", "联系方式"], ["status", "状态", "text", true], ["created_at", "提交时间", "date", true]),
+    statusChoices: feedbackStatus("open", "reviewed", "closed", "all"),
     editable: true, exportable: true,
     filters: [{ source: "issueType", label: "反馈类型" }],
-    form: [{ source: "status", label: "状态", kind: "select", choices: status("open", "reviewed", "closed"), required: true }, { source: "adminNote", label: "处理备注", kind: "longtext" }],
+    editForm: [{ source: "status", label: "状态", kind: "select", choices: feedbackStatus("open", "reviewed", "closed"), required: true }, { source: "adminNote", label: "处理备注", kind: "longtext" }],
+    defaultSort: { field: "created_at", order: "DESC" },
   },
   announcements: {
     label: "公告",
     columns: columns(["title", "标题"], ["level", "级别"], ["status", "状态"], ["published_at", "发布时间", "date"], ["expires_at", "过期时间", "date"]),
     statusChoices: status("published", "draft", "archived", "all"), exportable: true, editable: true,
-    form: [{ source: "title", label: "标题", required: true }, { source: "body", label: "正文", kind: "longtext", required: true }, { source: "level", label: "级别", kind: "select", choices: [{ id: "info", name: "普通" }, { id: "warning", name: "重要" }, { id: "urgent", name: "紧急" }] }, { source: "status", label: "状态", kind: "select", choices: status("published", "draft", "archived") }, { source: "publishedAt", label: "发布时间", kind: "datetime" }, { source: "expiresAt", label: "过期时间", kind: "datetime" }],
+    ...forms([{ source: "title", label: "标题", required: true }, { source: "body", label: "正文", kind: "longtext", required: true }, { source: "level", label: "级别", kind: "select", choices: [{ id: "info", name: "普通" }, { id: "warning", name: "重要" }, { id: "urgent", name: "紧急" }] }, { source: "status", label: "状态", kind: "select", choices: status("published", "draft", "archived") }, { source: "publishedAt", label: "发布时间", kind: "datetime" }, { source: "expiresAt", label: "过期时间", kind: "datetime" }]),
   },
   postgraduate: {
     label: "考研信息",
     columns: columns(["title", "标题"], ["source_kind", "类型"], ["trust_level", "可信度"], ["school", "学校"], ["exam_year", "年份", "number"], ["status", "状态"]),
     statusChoices: status("published", "hidden", "archived", "all"), exportable: true, editable: true,
     filters: [{ source: "kind", label: "来源类型" }, { source: "trustLevel", label: "可信度" }],
-    form: [{ source: "title", label: "标题", required: true }, { source: "summary", label: "摘要", kind: "longtext" }, { source: "sourceURL", label: "来源链接", required: true }, { source: "sourceKind", label: "类型", required: true }, { source: "trustLevel", label: "可信度", required: true }, { source: "school", label: "学校" }, { source: "unit", label: "单位" }, { source: "major", label: "专业" }, { source: "examYear", label: "年份", kind: "number" }, { source: "status", label: "状态", kind: "select", choices: status("published", "hidden", "archived") }],
+    ...forms([{ source: "title", label: "标题", required: true }, { source: "summary", label: "摘要", kind: "longtext" }, { source: "sourceURL", label: "来源链接", required: true }, { source: "sourceKind", label: "类型", required: true }, { source: "trustLevel", label: "可信度", required: true }, { source: "school", label: "学校" }, { source: "unit", label: "单位" }, { source: "major", label: "专业" }, { source: "examYear", label: "年份", kind: "number" }, { source: "status", label: "状态", kind: "select", choices: status("published", "hidden", "archived") }]),
     actions: [
       { label: "隐藏", action: "setPostgraduateSourceStatus", tone: "danger", visible: (r) => r.status === "published", fixed: { status: "hidden" }, build: idParams },
       { label: "恢复", action: "setPostgraduateSourceStatus", visible: (r) => r.status !== "published", fixed: { status: "published" }, build: idParams },
@@ -154,31 +161,35 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
   courses: { ...catalog("课程", [["name", "课程"], ["unit", "单位"], ["category", "分类"], ["credit", "学分", "number"], ["rating_average", "评分", "number"], ["status", "状态"]], [{ source: "name", label: "课程名", required: true }, { source: "unit", label: "单位", required: true }, { source: "category", label: "分类", required: true }, { source: "credit", label: "学分", kind: "number" }, statusField()]), filters: [{ source: "category", label: "课程分类" }] },
   dishes: { ...catalog("菜品", [["name", "菜名"], ["location", "地点"], ["rating_average", "评分", "number"], ["rating_count", "人数", "number"], ["status", "状态"]], [{ source: "name", label: "菜名", required: true }, { source: "location", label: "地点", required: true }, statusField()]), filters: [{ source: "location", label: "地点" }] },
   ratings: {
-    label: "评分", columns: columns(["teacher.name", "教师"], ["dish.name", "菜品"], ["user.nickname", "用户"], ["stars", "星级", "number"], ["updated_at", "时间", "date"]), exportable: true,
+    label: "评分", columns: columns(["teacher.name", "教师"], ["dish.name", "菜品"], ["user.nickname", "用户"], ["stars", "星级", "number", true], ["updated_at", "时间", "date", true]), exportable: true, searchable: false,
     filters: [{ source: "teacherID", label: "教师 ID" }, { source: "dishID", label: "菜品 ID" }, { source: "userID", label: "用户 UUID" }, { source: "stars", label: "星级", kind: "select", choices: [1, 2, 3, 4, 5].map((id) => ({ id, name: `${id} 星` })) }],
-    actions: [{ label: "删除", action: "__deleteRating", tone: "danger" }],
+    actions: [{ label: "删除", action: "__deleteRating", tone: "danger", permissionAction: "delete" }],
+    defaultSort: { field: "updated_at", order: "DESC" },
   },
   admins: {
-    label: "管理员", columns: columns(["username", "账号"], ["display_name", "显示名"], ["role", "角色"], ["active", "启用", "boolean"], ["last_login_at", "上次登录", "date"]), editable: true, exportable: true,
-    form: [{ source: "username", label: "账号", required: true }, { source: "displayName", label: "显示名", required: true }, { source: "password", label: "密码", kind: "password" }, { source: "role", label: "角色", kind: "select", choices: [{ id: "viewer", name: "只读" }, { id: "operator", name: "运营" }, { id: "super_admin", name: "超级管理员" }], required: true }, { source: "active", label: "启用", kind: "boolean" }],
-    actions: [{ label: "停用", action: "disableAdmin", tone: "danger", visible: (r) => r.active === true, build: idParams }],
+    label: "管理员", columns: columns(["username", "账号", "text", true], ["display_name", "显示名", "text", true], ["role", "角色", "text", true], ["active", "启用", "boolean", true], ["last_login_at", "上次登录", "date", true]), editable: true, exportable: true,
+    createForm: [{ source: "username", label: "账号", required: true }, { source: "displayName", label: "显示名", required: true }, { source: "password", label: "密码", kind: "password", required: true }, { source: "role", label: "角色", kind: "select", choices: [{ id: "viewer", name: "只读" }, { id: "operator", name: "运营" }, { id: "super_admin", name: "超级管理员" }], required: true }, { source: "active", label: "启用", kind: "boolean" }],
+    editForm: [{ source: "username", label: "账号", required: true }, { source: "displayName", label: "显示名", required: true }, { source: "password", label: "新密码（留空不修改）", kind: "password" }, { source: "role", label: "角色", kind: "select", choices: [{ id: "viewer", name: "只读" }, { id: "operator", name: "运营" }, { id: "super_admin", name: "超级管理员" }], required: true }, { source: "active", label: "启用", kind: "boolean" }],
+    actions: [{ label: "停用", action: "disableAdmin", tone: "danger", permissionAction: "delete", visible: (r) => r.active === true, build: idParams }],
+    defaultSort: { field: "created_at", order: "DESC" },
   },
-  sessions: { label: "会话", columns: columns(["admin.display_name", "管理员"], ["is_current", "当前会话", "boolean"], ["last_seen_at", "最近活动", "date"], ["expires_at", "过期", "date"], ["revoked_at", "撤销", "date"]), exportable: true, filters: [{ source: "status", label: "状态", kind: "select", choices: [{ id: "all", name: "全部" }, { id: "active", name: "有效" }, { id: "revoked", name: "已撤销" }] }, { source: "adminID", label: "管理员 ID" }], actions: [{ label: "撤销", action: "revokeAdminSession", tone: "danger", visible: (r) => !r.revoked_at, build: idParams }] },
-  "audit-logs": { label: "审计日志", columns: columns(["admin.display_name", "管理员"], ["action", "动作"], ["target_type", "对象"], ["outcome", "结果"], ["duration_ms", "耗时(ms)", "number"], ["error_code", "错误码"], ["created_at", "时间", "date"]), exportable: true, filters: [{ source: "action", label: "动作" }, { source: "adminID", label: "管理员 ID" }] },
+  sessions: { label: "会话", columns: columns(["admin.display_name", "管理员"], ["is_current", "当前会话", "boolean"], ["last_seen_at", "最近活动", "date", true], ["expires_at", "过期", "date", true], ["revoked_at", "撤销", "date", true]), exportable: true, searchable: false, defaultSort: { field: "created_at", order: "DESC" }, filters: [{ source: "status", label: "状态", kind: "select", choices: [{ id: "all", name: "全部" }, { id: "active", name: "有效" }, { id: "revoked", name: "已撤销" }] }, { source: "adminID", label: "管理员 ID" }], actions: [{ label: "撤销", action: "revokeAdminSession", tone: "danger", permissionAction: "delete", visible: (r) => !r.revoked_at, build: idParams }] },
+  "audit-logs": { label: "审计日志", columns: columns(["admin.display_name", "管理员"], ["action", "动作", "text", true], ["target_type", "对象", "text", true], ["outcome", "结果", "text", true], ["duration_ms", "耗时(ms)", "number", true], ["error_code", "错误码", "text", true], ["created_at", "时间", "date", true]), exportable: true, searchable: false, defaultSort: { field: "created_at", order: "DESC" }, filters: [{ source: "action", label: "动作" }, { source: "adminID", label: "管理员 ID" }] },
   "semester-configs": {
     label: "学期配置", columns: columns(["campus_id", "学校"], ["semester_id", "学期"], ["semester_start_date", "开始日期", "date"], ["supported_weeks", "周数", "number"], ["graduate_timetable_term_code", "研究生代码"], ["is_active", "启用", "boolean"]), editable: true,
-    form: [{ source: "campusID", label: "Campus ID", required: true }, { source: "semesterID", label: "学期 ID", required: true }, { source: "semesterStartDate", label: "开始日期", kind: "date", required: true }, { source: "supportedWeeks", label: "周数", kind: "number", required: true }, { source: "graduateTimetableTermCode", label: "研究生学期代码", required: true }, { source: "calendarEvents", label: "校历事件 JSON", kind: "json", required: true }, { source: "isActive", label: "设为当前学期", kind: "boolean" }],
+    ...forms([{ source: "campusID", label: "Campus ID", required: true }, { source: "semesterID", label: "学期 ID", required: true }, { source: "semesterStartDate", label: "开始日期", kind: "date", required: true }, { source: "supportedWeeks", label: "周数", kind: "number", required: true }, { source: "graduateTimetableTermCode", label: "研究生学期代码", required: true }, { source: "calendarEvents", label: "校历事件 JSON", kind: "json", required: true }, { source: "isActive", label: "设为当前学期", kind: "boolean" }]), searchable: false,
   },
   "national-calendar": {
     label: "国家日历", columns: columns(["year", "年份", "number"], ["is_active", "启用", "boolean"], ["holidays", "节假日", "json"], ["solar_terms", "节气", "json"], ["updated_at", "更新", "date"]), editable: true,
-    form: [{ source: "year", label: "年份", kind: "number", required: true }, { source: "holidays", label: "节假日 JSON", kind: "json", required: true }, { source: "solarTerms", label: "节气 JSON", kind: "json", required: true }, { source: "isActive", label: "设为当前", kind: "boolean" }],
+    ...forms([{ source: "year", label: "年份", kind: "number", required: true }, { source: "holidays", label: "节假日 JSON", kind: "json", required: true }, { source: "solarTerms", label: "节气 JSON", kind: "json", required: true }, { source: "isActive", label: "设为当前", kind: "boolean" }]), searchable: false,
   },
 };
 
 function catalog(label: string, rawColumns: any[], form: FormFieldConfig[]): ResourceConfig {
   const entity = label === "教师" ? "Teacher" : label === "课程" ? "Course" : "Dish";
   return {
-    label, columns: columns(...rawColumns), form, editable: true, exportable: true,
+    label, columns: columns(...rawColumns.map(([source, columnLabel, kind = "text"]) => [source, columnLabel, kind, true])), createForm: form, editForm: form, editable: true, exportable: true,
+    defaultSort: { field: "rating_average", order: "DESC" },
     statusChoices: status("published", "hidden", "all"),
     actions: [
       { label: "隐藏", action: `set${entity}Status`, tone: "danger", visible: (r) => r.status !== "hidden", fixed: { status: "hidden" }, build: idParams },
@@ -190,7 +201,11 @@ function catalog(label: string, rawColumns: any[], form: FormFieldConfig[]): Res
 function statusField(): FormFieldConfig { return { source: "status", label: "状态", kind: "select", choices: status("published", "hidden"), required: true }; }
 
 function columns(...items: any[]): ColumnConfig[] {
-  return items.map(([source, label, kind = "text"]) => ({ source, label, kind }));
+  return items.map(([source, label, kind = "text", sortable = false]) => ({ source, label, kind, sortable }));
+}
+
+function forms(fields: FormFieldConfig[]) {
+  return { createForm: fields, editForm: fields };
 }
 
 function statusName(value: string) {

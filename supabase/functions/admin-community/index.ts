@@ -5,11 +5,15 @@ import {
   authenticateAdmin,
   HttpError,
   errorCodeFor,
+  exclusiveDateEndISO,
+  inclusiveDateStartISO,
   json,
   mapFunctionError,
   normalizeDate,
+  normalizeIdentifier,
   normalizeText,
   readJSON,
+  requireDeletedRecord,
   requirePost,
 } from "../_shared/admin-core.ts";
 
@@ -107,8 +111,14 @@ const actionRegistry = {
   setDishStatus: defineAction("setDishStatus", setDishStatus, { domain: "catalog-ratings", permission: "operator", mutating: true }),
   listTeacherRatings: defineAction("listTeacherRatings", listTeacherRatings, { domain: "catalog-ratings" }),
   listDishRatings: defineAction("listDishRatings", listDishRatings, { domain: "catalog-ratings" }),
-  deleteTeacherRating: defineAction("deleteTeacherRating", deleteTeacherRating, { domain: "catalog-ratings", permission: "operator", mutating: true }),
-  deleteDishRating: defineAction("deleteDishRating", deleteDishRating, { domain: "catalog-ratings", permission: "operator", mutating: true }),
+  deleteTeacherRating: defineAction("deleteTeacherRating", deleteTeacherRating, {
+    domain: "catalog-ratings", permission: "operator", mutating: true,
+    auditTarget: (params) => ({ type: "teacher_rating", id: ratingAuditID("teacher", params, "teacherID", "teacher_id") }),
+  }),
+  deleteDishRating: defineAction("deleteDishRating", deleteDishRating, {
+    domain: "catalog-ratings", permission: "operator", mutating: true,
+    auditTarget: (params) => ({ type: "dish_rating", id: ratingAuditID("dish", params, "dishID", "dish_id") }),
+  }),
   listSemesterRuntimeConfigs: defineAction("listSemesterRuntimeConfigs", listSemesterRuntimeConfigs, { domain: "campus-runtime" }),
   upsertSemesterRuntimeConfig: defineAction("upsertSemesterRuntimeConfig", upsertSemesterRuntimeConfig, { domain: "campus-runtime", permission: "operator", mutating: true }),
   listAdmins: defineAction("listAdmins", listAdmins, { domain: "admin", permission: "super_admin" }),
@@ -197,13 +207,12 @@ Deno.serve(async (request) => {
         errorCode: errorCodeFor(error),
       });
     }
-    return mapFunctionError(error);
+    return mapFunctionError(error, context?.requestId);
   }
 });
 
 async function overview(context: AdminContext, params: Record<string, unknown>) {
   const client = context.adminClient;
-  const today = startOfTodayISO();
   const now = new Date().toISOString();
   const days = analyticsDays(params);
   const timezone = analyticsTimezone(params);
@@ -227,16 +236,13 @@ async function overview(context: AdminContext, params: Record<string, unknown>) 
 
   const [
     profileTotal,
-    profileNew,
     profileComplete,
     profileMuted,
     postTotal,
-    postToday,
     postPublished,
     postHidden,
     postPendingReview,
     commentTotal,
-    commentToday,
     commentPublished,
     commentHidden,
     reportOpen,
@@ -252,16 +258,13 @@ async function overview(context: AdminContext, params: Record<string, unknown>) 
     analytics,
   ] = await Promise.all([
     countScopedRows("profiles", "community_campus_id"),
-    countScopedRows("profiles", "community_campus_id", (query) => query.gte("created_at", today)),
     countScopedRows("profiles", "community_campus_id", (query) => query.eq("is_profile_complete", true)),
     countScopedRows("profiles", "community_campus_id", (query) => query.gt("muted_until", now)),
     countScopedRows("posts", "campus_id"),
-    countScopedRows("posts", "campus_id", (query) => query.gte("created_at", today)),
     countScopedRows("posts", "campus_id", (query) => query.eq("status", "published")),
     countScopedRows("posts", "campus_id", (query) => query.eq("status", "hidden")),
     countScopedRows("posts", "campus_id", (query) => query.eq("status", "pending_review")),
     countScopedComments(),
-    countScopedComments((query) => query.gte("created_at", today)),
     countScopedComments((query) => query.eq("status", "published")),
     countScopedComments((query) => query.eq("status", "hidden")),
     countModerationReports(context, campusID, (query) => query.eq("status", "open")),
@@ -296,16 +299,13 @@ async function overview(context: AdminContext, params: Record<string, unknown>) 
   const summary = buildOverviewSummary({
     days,
     profileTotal,
-    profileNew,
     profileComplete,
     profileMuted,
     postTotal,
-    postToday,
     postPublished,
     postHidden,
     postPendingReview,
     commentTotal,
-    commentToday,
     commentPublished,
     commentHidden,
     reportOpen,
@@ -321,9 +321,9 @@ async function overview(context: AdminContext, params: Record<string, unknown>) 
   return {
     summary,
     cards: {
-      profiles: { total: profileTotal, today: profileNew, complete: profileComplete, muted: profileMuted },
-      posts: { total: postTotal, today: postToday, published: postPublished, hidden: postHidden, pendingReview: postPendingReview },
-      comments: { total: commentTotal, today: commentToday, published: commentPublished, hidden: commentHidden },
+      profiles: { total: profileTotal, today: summary.operations.newProfilesToday, complete: profileComplete, muted: profileMuted },
+      posts: { total: postTotal, today: summary.operations.postsToday, published: postPublished, hidden: postHidden, pendingReview: postPendingReview },
+      comments: { total: commentTotal, today: summary.operations.commentsToday, published: commentPublished, hidden: commentHidden },
       reports: { open: reportOpen, overdue: reportOverdue },
       feedback: { open: feedbackOpen, reviewed: feedbackReviewed, closed: feedbackClosed },
       announcements: { published: announcementPublished, draft: announcementDraft, archived: announcementArchived },
@@ -339,16 +339,13 @@ async function overview(context: AdminContext, params: Record<string, unknown>) 
 function buildOverviewSummary(input: {
   days: number;
   profileTotal: number;
-  profileNew: number;
   profileComplete: number;
   profileMuted: number;
   postTotal: number;
-  postToday: number;
   postPublished: number;
   postHidden: number;
   postPendingReview: number;
   commentTotal: number;
-  commentToday: number;
   commentPublished: number;
   commentHidden: number;
   reportOpen: number;
@@ -366,15 +363,18 @@ function buildOverviewSummary(input: {
   const topPosts = Array.isArray(input.analytics?.topPosts) ? input.analytics.topPosts : [];
   const teacherRatings = input.analytics?.teacherRatings ?? {};
   const topPost = topPosts[0] ?? null;
+  const latestDaily = [...daily]
+    .sort((left, right) => String(left?.bucket_date ?? "").localeCompare(String(right?.bucket_date ?? "")))
+    .at(-1) ?? {};
 
   return {
     operations: {
       totalProfiles: input.profileTotal,
       activeProfiles: input.profileComplete,
-      newProfilesToday: input.profileNew,
+      newProfilesToday: Number(latestDaily.profiles) || 0,
       mutedProfiles: input.profileMuted,
-      postsToday: input.postToday,
-      commentsToday: input.commentToday,
+      postsToday: Number(latestDaily.posts) || 0,
+      commentsToday: Number(latestDaily.comments) || 0,
       postsInRange: sumMetric(daily, "posts"),
       commentsInRange: sumMetric(daily, "comments"),
       profilesInRange: sumMetric(daily, "profiles"),
@@ -394,6 +394,7 @@ function buildOverviewSummary(input: {
     feedback: {
       open: input.feedbackOpen,
       reviewed: input.feedbackReviewed,
+      pending: input.feedbackOpen + input.feedbackReviewed,
       closed: input.feedbackClosed,
       closedInRange: moderation.closedFeedback ?? 0,
       overdue: overdueFeedbackCount(feedbackAging),
@@ -1726,9 +1727,14 @@ async function listFeedback(context: AdminContext, params: Record<string, unknow
   const { from, to, page, pageSize } = pagination(params);
   let query: any = context.adminClient
     .from("feedback_submissions")
-    .select("*", { count: "exact" })
-    .order("created_at", { ascending: false })
-    .range(from, to);
+    .select("*", { count: "exact" });
+
+  query = applySort(query, params, {
+    issue_type: "issue_type",
+    status: "status",
+    created_at: "created_at",
+  }, [{ field: "created_at", ascending: false }]);
+  query = query.range(from, to);
 
   const status = textParam(params, "status");
   if (status && status !== "all") {
@@ -2410,11 +2416,12 @@ async function listTeachers(context: AdminContext, params: Record<string, unknow
   const { from, to, page, pageSize } = pagination(params);
   let query: any = context.adminClient
     .from("teachers")
-    .select("*", { count: "exact" })
-    .order("rating_average", { ascending: false })
-    .order("rating_count", { ascending: false })
-    .order("name", { ascending: true })
-    .range(from, to);
+    .select("*", { count: "exact" });
+
+  query = applySort(query, params, {
+    name: "name", unit: "unit", rating_average: "rating_average", rating_count: "rating_count", status: "status",
+  }, [{ field: "rating_average", ascending: false }, { field: "rating_count", ascending: false }, { field: "name", ascending: true }]);
+  query = query.range(from, to);
 
   const status = textParam(params, "status");
   if (status && status !== "all") {
@@ -2436,7 +2443,7 @@ async function listTeachers(context: AdminContext, params: Record<string, unknow
 }
 
 async function upsertTeacher(context: AdminContext, params: Record<string, unknown>) {
-  const id = textParam(params, "id");
+  const id = identifierParam(params, "id");
   const name = requiredText(params, "name");
   const unit = requiredText(params, "unit");
   const status = textParam(params, "status") ?? "published";
@@ -2459,7 +2466,7 @@ async function upsertTeacher(context: AdminContext, params: Record<string, unkno
 }
 
 async function setTeacherStatus(context: AdminContext, params: Record<string, unknown>) {
-  const id = requiredText(params, "id");
+  const id = requiredIdentifier(params, "id");
   const status = requiredStatus(params, ["published", "hidden"]);
   const { data, error } = await context.adminClient
     .from("teachers")
@@ -2479,11 +2486,12 @@ async function listCourses(context: AdminContext, params: Record<string, unknown
   const { from, to, page, pageSize } = pagination(params);
   let query: any = context.adminClient
     .from("course_catalog")
-    .select("*", { count: "exact" })
-    .order("rating_average", { ascending: false })
-    .order("rating_count", { ascending: false })
-    .order("name", { ascending: true })
-    .range(from, to);
+    .select("*", { count: "exact" });
+
+  query = applySort(query, params, {
+    name: "name", unit: "unit", category: "category", credit: "credit", rating_average: "rating_average", status: "status",
+  }, [{ field: "rating_average", ascending: false }, { field: "rating_count", ascending: false }, { field: "name", ascending: true }]);
+  query = query.range(from, to);
 
   const status = textParam(params, "status");
   if (status && status !== "all") {
@@ -2510,7 +2518,7 @@ async function listCourses(context: AdminContext, params: Record<string, unknown
 }
 
 async function upsertCourse(context: AdminContext, params: Record<string, unknown>) {
-  const id = textParam(params, "id");
+  const id = identifierParam(params, "id");
   const name = requiredText(params, "name");
   const unit = requiredText(params, "unit");
   const category = textParam(params, "category") ?? "公选课";
@@ -2540,7 +2548,7 @@ async function upsertCourse(context: AdminContext, params: Record<string, unknow
 }
 
 async function setCourseStatus(context: AdminContext, params: Record<string, unknown>) {
-  const id = requiredText(params, "id");
+  const id = requiredIdentifier(params, "id");
   const status = requiredStatus(params, ["published", "hidden"]);
   const { data, error } = await context.adminClient
     .from("course_catalog")
@@ -2609,11 +2617,12 @@ async function listDishes(context: AdminContext, params: Record<string, unknown>
   const { from, to, page, pageSize } = pagination(params);
   let query: any = context.adminClient
     .from("dish_catalog")
-    .select("*", { count: "exact" })
-    .order("rating_average", { ascending: false })
-    .order("rating_count", { ascending: false })
-    .order("name", { ascending: true })
-    .range(from, to);
+    .select("*", { count: "exact" });
+
+  query = applySort(query, params, {
+    name: "name", location: "location", rating_average: "rating_average", rating_count: "rating_count", status: "status",
+  }, [{ field: "rating_average", ascending: false }, { field: "rating_count", ascending: false }, { field: "name", ascending: true }]);
+  query = query.range(from, to);
 
   const status = textParam(params, "status");
   if (status && status !== "all") {
@@ -2640,7 +2649,7 @@ async function listDishes(context: AdminContext, params: Record<string, unknown>
 }
 
 async function upsertDish(context: AdminContext, params: Record<string, unknown>) {
-  const id = textParam(params, "id");
+  const id = identifierParam(params, "id");
   const name = requiredText(params, "name");
   const location = requiredText(params, "location");
   const status = textParam(params, "status") ?? "published";
@@ -2663,7 +2672,7 @@ async function upsertDish(context: AdminContext, params: Record<string, unknown>
 }
 
 async function setDishStatus(context: AdminContext, params: Record<string, unknown>) {
-  const id = requiredText(params, "id");
+  const id = requiredIdentifier(params, "id");
   const status = requiredStatus(params, ["published", "hidden"]);
   const { data, error } = await context.adminClient
     .from("dish_catalog")
@@ -2683,11 +2692,14 @@ async function listTeacherRatings(context: AdminContext, params: Record<string, 
   const { from, to, page, pageSize } = pagination(params);
   let query: any = context.adminClient
     .from("teacher_ratings")
-    .select("*", { count: "exact" })
-    .order("created_at", { ascending: false })
-    .range(from, to);
+    .select("*", { count: "exact" });
 
-  const teacherID = textParam(params, "teacherID") ?? textParam(params, "teacher_id");
+  query = applySort(query, params, {
+    stars: "stars", created_at: "created_at", updated_at: "updated_at",
+  }, [{ field: "updated_at", ascending: false }]);
+  query = query.range(from, to);
+
+  const teacherID = identifierParam(params, "teacherID") ?? identifierParam(params, "teacher_id");
   if (teacherID) {
     query = query.eq("teacher_id", teacherID);
   }
@@ -2724,6 +2736,8 @@ async function listTeacherRatings(context: AdminContext, params: Record<string, 
   return {
     items: (data ?? []).map((item: any) => ({
       ...item,
+      id: `teacher:${item.teacher_id}:${item.user_id}`,
+      target: "teacher",
       teacher: teacherMap.get(String(item.teacher_id)) ?? null,
       user: profileMap.get(item.user_id) ?? null,
     })),
@@ -2737,11 +2751,14 @@ async function listDishRatings(context: AdminContext, params: Record<string, unk
   const { from, to, page, pageSize } = pagination(params);
   let query: any = context.adminClient
     .from("dish_ratings")
-    .select("*", { count: "exact" })
-    .order("created_at", { ascending: false })
-    .range(from, to);
+    .select("*", { count: "exact" });
 
-  const dishID = textParam(params, "dishID") ?? textParam(params, "dish_id");
+  query = applySort(query, params, {
+    stars: "stars", created_at: "created_at", updated_at: "updated_at",
+  }, [{ field: "updated_at", ascending: false }]);
+  query = query.range(from, to);
+
+  const dishID = identifierParam(params, "dishID") ?? identifierParam(params, "dish_id");
   if (dishID) {
     query = query.eq("dish_id", dishID);
   }
@@ -2778,6 +2795,8 @@ async function listDishRatings(context: AdminContext, params: Record<string, unk
   return {
     items: (data ?? []).map((item: any) => ({
       ...item,
+      id: `dish:${item.dish_id}:${item.user_id}`,
+      target: "dish",
       dish: dishMap.get(String(item.dish_id)) ?? null,
       user: profileMap.get(item.user_id) ?? null,
     })),
@@ -2788,44 +2807,53 @@ async function listDishRatings(context: AdminContext, params: Record<string, unk
 }
 
 async function deleteTeacherRating(context: AdminContext, params: Record<string, unknown>) {
-  const teacherID = requiredText(params, "teacherID", "teacher_id");
-  const userID = requiredText(params, "userID", "user_id");
-  const { error } = await context.adminClient
+  const teacherID = requiredIdentifier(params, "teacherID", "teacher_id");
+  const userID = requiredIdentifier(params, "userID", "user_id");
+  const { data, error } = await context.adminClient
     .from("teacher_ratings")
     .delete()
     .eq("teacher_id", teacherID)
-    .eq("user_id", userID);
+    .eq("user_id", userID)
+    .select("teacher_id, user_id, stars, created_at, updated_at")
+    .maybeSingle();
 
   if (error) {
     throw new HttpError(500, error.message);
   }
 
-  return { teacher_id: teacherID, user_id: userID };
+  const deleted = requireDeletedRecord(data, "该教师评分不存在或已被删除。");
+  return { ...deleted, id: `teacher:${teacherID}:${userID}`, target: "teacher" };
 }
 
 async function deleteDishRating(context: AdminContext, params: Record<string, unknown>) {
-  const dishID = requiredText(params, "dishID", "dish_id");
-  const userID = requiredText(params, "userID", "user_id");
-  const { error } = await context.adminClient
+  const dishID = requiredIdentifier(params, "dishID", "dish_id");
+  const userID = requiredIdentifier(params, "userID", "user_id");
+  const { data, error } = await context.adminClient
     .from("dish_ratings")
     .delete()
     .eq("dish_id", dishID)
-    .eq("user_id", userID);
+    .eq("user_id", userID)
+    .select("dish_id, user_id, stars, created_at, updated_at")
+    .maybeSingle();
 
   if (error) {
     throw new HttpError(500, error.message);
   }
 
-  return { dish_id: dishID, user_id: userID };
+  const deleted = requireDeletedRecord(data, "该菜品评分不存在或已被删除。");
+  return { ...deleted, id: `dish:${dishID}:${userID}`, target: "dish" };
 }
 
 async function listAdmins(context: AdminContext, params: Record<string, unknown>) {
   const { from, to, page, pageSize } = pagination(params);
   let query: any = context.adminClient
     .from("admin_accounts")
-    .select("id, username, display_name, role, active, last_login_at, created_at, updated_at", { count: "exact" })
-    .order("created_at", { ascending: false })
-    .range(from, to);
+    .select("id, username, display_name, role, active, last_login_at, created_at, updated_at", { count: "exact" });
+
+  query = applySort(query, params, {
+    username: "username", display_name: "display_name", role: "role", active: "active", last_login_at: "last_login_at", created_at: "created_at",
+  }, [{ field: "created_at", ascending: false }]);
+  query = query.range(from, to);
 
   const search = textParam(params, "search");
   if (search) {
@@ -2881,9 +2909,12 @@ async function listAdminSessions(context: AdminContext, params: Record<string, u
   const { from, to, page, pageSize } = pagination(params);
   let query: any = context.adminClient
     .from("admin_sessions")
-    .select("token_hash, admin_id, expires_at, last_seen_at, revoked_at, created_at", { count: "exact" })
-    .order("created_at", { ascending: false })
-    .range(from, to);
+    .select("token_hash, admin_id, expires_at, last_seen_at, revoked_at, created_at", { count: "exact" });
+
+  query = applySort(query, params, {
+    last_seen_at: "last_seen_at", expires_at: "expires_at", revoked_at: "revoked_at", created_at: "created_at",
+  }, [{ field: "created_at", ascending: false }]);
+  query = query.range(from, to);
 
   const status = textParam(params, "status");
   if (status === "active") query = query.is("revoked_at", null).gt("expires_at", new Date().toISOString());
@@ -3047,9 +3078,12 @@ async function listAuditLogs(context: AdminContext, params: Record<string, unkno
   const { from, to, page, pageSize } = pagination(params);
   let query: any = context.adminClient
     .from("admin_audit_logs")
-    .select("*", { count: "exact" })
-    .order("created_at", { ascending: false })
-    .range(from, to);
+    .select("*", { count: "exact" });
+
+  query = applySort(query, params, {
+    action: "action", target_type: "target_type", outcome: "outcome", duration_ms: "duration_ms", error_code: "error_code", created_at: "created_at",
+  }, [{ field: "created_at", ascending: false }]);
+  query = query.range(from, to);
 
   const adminID = textParam(params, "adminID") ?? textParam(params, "admin_id");
   if (adminID) {
@@ -3684,22 +3718,58 @@ function pagination(params: Record<string, unknown>) {
 }
 
 function applyDateFilters(query: any, params: Record<string, unknown>, column: string) {
-  const start = normalizeDate(params.start ?? params.startAt ?? params.start_at);
-  const end = normalizeDate(params.end ?? params.endAt ?? params.end_at);
+  const timezoneOffsetMinutes = clamp(numberParam(params, "timezoneOffsetMinutes") ?? 0, -840, 840);
+  const start = inclusiveDateStartISO(params.start ?? params.startAt ?? params.start_at, timezoneOffsetMinutes);
+  const endInput = params.end ?? params.endAt ?? params.end_at;
+  const end = exclusiveDateEndISO(endInput, timezoneOffsetMinutes);
 
   if (start) {
     query = query.gte(column, start);
   }
   if (end) {
-    query = query.lte(column, end);
+    query = query.lt(column, end);
   }
   return query;
+}
+
+function applySort(
+  query: any,
+  params: Record<string, unknown>,
+  allowed: Record<string, string>,
+  fallback: Array<{ field: string; ascending: boolean }>,
+) {
+  const requestedField = textParam(params, "sortField") ?? textParam(params, "sort_field");
+  if (!requestedField) {
+    return fallback.reduce((current, sort) => current.order(sort.field, { ascending: sort.ascending }), query);
+  }
+
+  const column = allowed[requestedField];
+  if (!column) {
+    throw new HttpError(400, `不支持按 ${requestedField} 排序。`);
+  }
+  const order = (textParam(params, "sortOrder") ?? textParam(params, "sort_order") ?? "ASC").toUpperCase();
+  if (order !== "ASC" && order !== "DESC") {
+    throw new HttpError(400, "排序方向必须是 ASC 或 DESC。");
+  }
+  return query.order(column, { ascending: order === "ASC" });
 }
 
 function requiredText(params: Record<string, unknown>, primary: string, fallback?: string) {
   const value = normalizeText(params[primary] ?? (fallback ? params[fallback] : null));
   if (!value) {
     throw new HttpError(400, `${primary} is required.`);
+  }
+  return value;
+}
+
+function identifierParam(params: Record<string, unknown>, key: string) {
+  return normalizeIdentifier(params[key]);
+}
+
+function requiredIdentifier(params: Record<string, unknown>, primary: string, fallback?: string) {
+  const value = normalizeIdentifier(params[primary] ?? (fallback ? params[fallback] : null));
+  if (!value) {
+    throw new HttpError(400, `缺少必填标识符：${primary}。`);
   }
   return value;
 }
@@ -3926,10 +3996,15 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
-function startOfTodayISO() {
-  const date = new Date();
-  date.setHours(0, 0, 0, 0);
-  return date.toISOString();
+function ratingAuditID(
+  target: "teacher" | "dish",
+  params: Record<string, unknown>,
+  primary: string,
+  fallback: string,
+) {
+  const targetID = identifierParam(params, primary) ?? identifierParam(params, fallback);
+  const userID = identifierParam(params, "userID") ?? identifierParam(params, "user_id");
+  return targetID && userID ? `${target}:${targetID}:${userID}` : targetID;
 }
 
 function inferTarget(action: string, params: Record<string, unknown>) {
@@ -3948,9 +4023,9 @@ function inferTarget(action: string, params: Record<string, unknown>) {
   if (action.includes("PostgraduateSource")) return { type: "postgraduate_source", id: textParam(params, "id") };
   if (action.includes("PostgraduateSuggestion")) return { type: "postgraduate_source_suggestion", id: textParam(params, "id") };
   if (action.includes("CatalogSuggestion")) return { type: "catalog_suggestion", id: textParam(params, "id") };
-  if (action.includes("Teacher")) return { type: "teacher", id: textParam(params, "id") ?? textParam(params, "teacherID") };
-  if (action.includes("Course")) return { type: "course", id: textParam(params, "id") ?? textParam(params, "courseID") };
-  if (action.includes("Dish")) return { type: "dish", id: textParam(params, "id") ?? textParam(params, "dishID") };
+  if (action.includes("Teacher")) return { type: "teacher", id: identifierParam(params, "id") ?? identifierParam(params, "teacherID") };
+  if (action.includes("Course")) return { type: "course", id: identifierParam(params, "id") ?? identifierParam(params, "courseID") };
+  if (action.includes("Dish")) return { type: "dish", id: identifierParam(params, "id") ?? identifierParam(params, "dishID") };
   if (action.includes("SemesterRuntimeConfig")) return { type: "semester_runtime_config", id: textParam(params, "id") ?? textParam(params, "semesterID") ?? textParam(params, "semester_id") };
   if (action.includes("Admin")) return { type: "admin", id: textParam(params, "id") };
   return { type: action, id: null };

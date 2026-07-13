@@ -9,9 +9,12 @@ Deno.test("viewer permissions are read-only and cannot export", () => {
 });
 
 Deno.test("operator can export operational data but not sensitive resources", () => {
+  const permissions = permissionsForRole("operator");
   assertEquals(roleCanExport("operator", "posts"), true);
   assertEquals(roleCanExport("operator", "profiles"), false);
   assertEquals(roleCanExport("operator", "feedback"), false);
+  assertEquals(permissions.find((item) => item.resource === "feedback")?.actions.includes("create"), false);
+  assertEquals(permissions.find((item) => item.resource === "ratings")?.actions.includes("delete"), true);
 });
 
 Deno.test("super admin receives system permissions and sensitive export", () => {

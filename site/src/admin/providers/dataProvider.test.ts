@@ -36,4 +36,23 @@ describe("admin data provider campus scope", () => {
     await dataProvider.globalSearch("测试");
     expect(mockedAction).toHaveBeenCalledWith("globalSearch", { query: "测试", resources: undefined, campusID: "campus-a" });
   });
+
+  it("preserves numeric rating identifiers when deleting", async () => {
+    mockedAction.mockResolvedValue({ data: { id: "teacher:341:user-1", teacher_id: 341, user_id: "user-1" }, meta: {} });
+    await dataProvider.delete("ratings", {
+      id: "teacher:341:user-1",
+      previousData: { id: "teacher:341:user-1", target: "teacher", teacher_id: 341, user_id: "user-1" },
+    });
+    expect(mockedAction).toHaveBeenCalledWith("deleteTeacherRating", { teacherID: 341, userID: "user-1" });
+  });
+
+  it("passes date-only filter boundaries without converting them in the browser", async () => {
+    mockedAction.mockResolvedValue({ data: { items: [], total: 0, page: 0, pageSize: 20 }, meta: {} });
+    await dataProvider.getList("feedback", {
+      pagination: { page: 1, perPage: 20 },
+      sort: { field: "created_at", order: "DESC" },
+      filter: { start: "2026-07-01", end: "2026-07-13" },
+    });
+    expect(mockedAction).toHaveBeenCalledWith("listFeedback", expect.objectContaining({ start: "2026-07-01", end: "2026-07-13" }));
+  });
 });

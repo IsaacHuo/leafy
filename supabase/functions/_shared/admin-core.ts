@@ -123,6 +123,7 @@ export function createAdminClient(): any {
 }
 
 export async function authenticateAdmin(request: Request): Promise<AdminContext | Response> {
+  const requestId = request.headers.get("x-request-id") || crypto.randomUUID();
   const token = bearerToken(request);
   if (!token) {
     return errorResponse(401, "unauthorized", "Missing admin session token.");
@@ -139,7 +140,8 @@ export async function authenticateAdmin(request: Request): Promise<AdminContext 
     .maybeSingle();
 
   if (sessionError) {
-    return errorResponse(500, "backend_unavailable", sessionError.message);
+    console.error(JSON.stringify({ event: "admin_session_lookup_failed", request_id: requestId, error: sessionError.message }));
+    return errorResponse(500, "backend_unavailable", "后台暂时不可用，请稍后重试。", { details: { request_id: requestId } });
   }
 
   if (!session || session.revoked_at || new Date(session.expires_at).getTime() <= Date.now()) {
@@ -153,7 +155,8 @@ export async function authenticateAdmin(request: Request): Promise<AdminContext 
     .maybeSingle();
 
   if (adminError) {
-    return errorResponse(500, "backend_unavailable", adminError.message);
+    console.error(JSON.stringify({ event: "admin_account_lookup_failed", request_id: requestId, error: adminError.message }));
+    return errorResponse(500, "backend_unavailable", "后台暂时不可用，请稍后重试。", { details: { request_id: requestId } });
   }
 
   if (!admin || !admin.active) {
@@ -170,7 +173,7 @@ export async function authenticateAdmin(request: Request): Promise<AdminContext 
     admin: admin as AdminAccount,
     tokenHash,
     sessionExpiresAt: session.expires_at,
-    requestId: request.headers.get("x-request-id") || crypto.randomUUID(),
+    requestId,
     startedAt: Date.now(),
     requestInfo,
   };
@@ -244,6 +247,24 @@ export function normalizeText(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+export function normalizeIdentifier(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (typeof value === "number" && Number.isFinite(value) && Number.isInteger(value)) {
+    return String(value);
+  }
+  return null;
+}
+
+export function requireDeletedRecord<T>(value: T | null | undefined, message: string): T {
+  if (value == null) {
+    throw new HttpError(404, message);
+  }
+  return value;
+}
+
 export function normalizeDate(value: unknown): string | null {
   const text = normalizeText(value);
   if (!text) {
@@ -258,8 +279,56 @@ export function normalizeDate(value: unknown): string | null {
   return date.toISOString();
 }
 
-export function mapFunctionError(error: unknown) {
+export function inclusiveDateStartISO(value: unknown, timezoneOffsetMinutes = 0): string | null {
+  const text = normalizeText(value);
+  if (!text) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return dateOnlyBoundaryISO(text, timezoneOffsetMinutes, 0);
+  }
+  return normalizeDate(text);
+}
+
+export function exclusiveDateEndISO(value: unknown, timezoneOffsetMinutes = 0): string | null {
+  const text = normalizeText(value);
+  if (!text) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return dateOnlyBoundaryISO(text, timezoneOffsetMinutes, 1);
+  }
+  const normalized = normalizeDate(text);
+  if (!normalized) return null;
+  return new Date(new Date(normalized).getTime() + 1).toISOString();
+}
+
+function dateOnlyBoundaryISO(text: string, timezoneOffsetMinutes: number, dayOffset: number) {
+  const [year, month, day] = text.split("-").map(Number);
+  const base = new Date(Date.UTC(year, month - 1, day));
+  if (
+    Number.isNaN(base.getTime()) ||
+    base.getUTCFullYear() !== year ||
+    base.getUTCMonth() !== month - 1 ||
+    base.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return new Date(base.getTime() + (dayOffset * 1440 + timezoneOffsetMinutes) * 60_000).toISOString();
+}
+
+export function mapFunctionError(error: unknown, requestId?: string) {
   if (error instanceof HttpError) {
+    if (error.status >= 500) {
+      console.error(JSON.stringify({
+        event: "admin_request_failed",
+        request_id: requestId ?? null,
+        code: error.code ?? statusToErrorCode(error.status),
+        error: error.message,
+      }));
+      return errorResponse(
+        error.status,
+        error.code ?? statusToErrorCode(error.status),
+        "后台暂时不可用，请稍后重试。",
+        { retryable: error.retryable, details: requestId ? { request_id: requestId } : undefined },
+      );
+    }
     return errorResponse(
       error.status,
       error.code ?? statusToErrorCode(error.status),
@@ -269,7 +338,10 @@ export function mapFunctionError(error: unknown) {
   }
 
   const message = error instanceof Error ? error.message : "Unknown admin error.";
-  return errorResponse(500, "internal_error", message);
+  console.error(JSON.stringify({ event: "admin_request_failed", request_id: requestId ?? null, code: "internal_error", error: message }));
+  return errorResponse(500, "internal_error", "后台发生未知错误，请稍后重试。", {
+    details: requestId ? { request_id: requestId } : undefined,
+  });
 }
 
 export function errorCodeFor(error: unknown): BackendErrorCode {

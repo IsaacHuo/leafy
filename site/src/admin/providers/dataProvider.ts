@@ -71,6 +71,7 @@ const providerImplementation = {
       pageSize: params.pagination?.perPage ?? 20,
       sortField: params.sort?.field,
       sortOrder: params.sort?.order,
+      timezoneOffsetMinutes: new Date().getTimezoneOffset(),
     }));
     return { data: response.data.items, total: response.data.total };
   },
