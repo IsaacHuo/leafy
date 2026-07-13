@@ -686,7 +686,7 @@ struct TimetableView: View {
         } label: {
             HStack(spacing: 10 * leafyControlScale) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 16 * leafyControlScale, weight: .semibold))
+                    .font(.system(size: 12 * leafyControlScale, weight: .semibold))
                     .foregroundStyle(AppTheme.accentEmphasis(for: themeColorPreference))
                     .frame(width: 22 * leafyControlScale)
 
