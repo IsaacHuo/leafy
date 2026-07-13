@@ -21,6 +21,14 @@ private struct CourseNotePreview: Identifiable {
     }
 }
 
+private enum TimetableQuickAccessAction: Equatable, Sendable {
+    case processTimetable
+    case shareTimetable
+    case emptyClassroom
+    case addSchedule
+    case exportTimetable
+}
+
 struct TimetableView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.leafyControlScale) private var leafyControlScale
@@ -47,6 +55,7 @@ struct TimetableView: View {
     @State private var isExportSheetPresented = false
     @State private var isTimetableProcessingPresented = false
     @State private var isQuickAccessPresented = false
+    @State private var pendingQuickAccessAction: TimetableQuickAccessAction?
     @State private var currentWeek: Int = SemesterConfig.currentWeek()
     @State private var scrollToWeek: Int? = SemesterConfig.currentWeek()
     @State private var isAwayFromCurrentSchedule = false
@@ -624,7 +633,6 @@ struct TimetableView: View {
         ) {
             quickAccessPopoverContent
                 .presentationCompactAdaptation(.popover)
-                .presentationBackground(.clear)
         }
         .accessibilityLabel("首页快捷入口")
     }
@@ -632,49 +640,93 @@ struct TimetableView: View {
     private var quickAccessPopoverContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             if isCustomCampus {
-                quickAccessPopoverButton("课表处理") {
-                    isTimetableProcessingPresented = true
-                }
+                quickAccessPopoverButton(
+                    "课表处理",
+                    systemImage: "slider.horizontal.3",
+                    action: .processTimetable
+                )
             } else {
-                quickAccessPopoverButton("共享课表") {
-                    appNavigation.openTimetableSharing()
-                }
+                quickAccessPopoverButton(
+                    "共享课表",
+                    systemImage: "person.2.fill",
+                    action: .shareTimetable
+                )
             }
 
             if !isCustomCampus {
-                quickAccessPopoverButton("空闲教室") {
-                    appNavigation.openAcademicRoute(.emptyClassroom)
-                }
+                quickAccessPopoverButton(
+                    "空闲教室",
+                    systemImage: "building.2.crop.circle",
+                    action: .emptyClassroom
+                )
             }
 
-            quickAccessPopoverButton("添加日程") {
-                presentFreeScheduleSheet()
-            }
+            quickAccessPopoverButton(
+                "添加日程",
+                systemImage: "calendar.badge.plus",
+                action: .addSchedule
+            )
 
-            quickAccessPopoverButton("导出课表") {
-                isExportSheetPresented = true
-            }
+            quickAccessPopoverButton(
+                "导出课表",
+                systemImage: "square.and.arrow.up",
+                action: .exportTimetable
+            )
         }
         .fixedSize(horizontal: true, vertical: true)
-        .leafyGlassSurface(
-            in: RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous)
-        )
-        .padding(5 * leafyControlScale)
     }
 
-    private func quickAccessPopoverButton(_ title: String, action: @escaping () -> Void) -> some View {
+    private func quickAccessPopoverButton(
+        _ title: String,
+        systemImage: String,
+        action: TimetableQuickAccessAction
+    ) -> some View {
         Button {
-            isQuickAccessPresented = false
-            action()
+            scheduleQuickAccessAction(action)
         } label: {
-            Text(title)
-                .font(.body)
-                .foregroundStyle(AppTheme.primaryText)
-                .padding(.horizontal, 18 * leafyControlScale)
-                .padding(.vertical, 12 * leafyControlScale)
-                .contentShape(Rectangle())
+            HStack(spacing: 10 * leafyControlScale) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 16 * leafyControlScale, weight: .semibold))
+                    .foregroundStyle(AppTheme.accentEmphasis(for: themeColorPreference))
+                    .frame(width: 22 * leafyControlScale)
+
+                Text(title)
+                    .font(.body)
+                    .foregroundStyle(AppTheme.primaryText)
+            }
+            .padding(.horizontal, 18 * leafyControlScale)
+            .padding(.vertical, 12 * leafyControlScale)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    private func scheduleQuickAccessAction(_ action: TimetableQuickAccessAction) {
+        pendingQuickAccessAction = action
+        isQuickAccessPresented = false
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(220))
+            guard pendingQuickAccessAction == action else { return }
+            pendingQuickAccessAction = nil
+            guard !isQuickAccessPresented else { return }
+            performQuickAccessAction(action)
+        }
+    }
+
+    private func performQuickAccessAction(_ action: TimetableQuickAccessAction) {
+        switch action {
+        case .processTimetable:
+            isTimetableProcessingPresented = true
+        case .shareTimetable:
+            appNavigation.openTimetableSharing()
+        case .emptyClassroom:
+            appNavigation.openAcademicRoute(.emptyClassroom)
+        case .addSchedule:
+            presentFreeScheduleSheet()
+        case .exportTimetable:
+            isExportSheetPresented = true
+        }
     }
 
     @ViewBuilder

@@ -174,8 +174,13 @@ nonisolated enum TimetableWeatherAdviceBuilder {
 
         let affectedItem = scheduleItems.first { overlaps(hour: hour, item: $0) }
         let target = affectedItem.map { "\($0.displayTitle)（\($0.timeText)）" } ?? "出门时段"
-        let title = isSnow(hour) ? "留意雨雪" : "记得带伞"
-        let detail = "\(target) 附近可能有\(hour.condition)，路上留点余量。"
+        let title = isSnow(hour) ? "注意雨雪天气" : "有降水可能"
+        let detail: String
+        if isSnow(hour) {
+            detail = "预计\(target)前后有\(hour.condition)，建议注意保暖和路面湿滑。"
+        } else {
+            detail = "预计\(target)前后有\(hour.condition)，建议随身携带雨具，并预留通行时间。"
+        }
 
         return TimetableWeatherSuggestion(
             id: "rain",
@@ -199,8 +204,8 @@ nonisolated enum TimetableWeatherAdviceBuilder {
             return TimetableWeatherSuggestion(
                 id: "cold",
                 systemImage: "thermometer.low",
-                title: "多穿一层",
-                detail: "\(target) 前后约 \(Int(coldest.temperature.rounded()))°，别被早晚温差偷袭。"
+                title: "注意保暖",
+                detail: "\(target)前后气温约为 \(Int(coldest.temperature.rounded()))°，建议适当增加衣物。"
             )
         }
 
@@ -209,8 +214,8 @@ nonisolated enum TimetableWeatherAdviceBuilder {
             return TimetableWeatherSuggestion(
                 id: "heat",
                 systemImage: "drop",
-                title: "补水避晒",
-                detail: "\(target) 前后约 \(Int(hottest.temperature.rounded()))°，带水会舒服很多。"
+                title: "注意防暑",
+                detail: "\(target)前后气温约为 \(Int(hottest.temperature.rounded()))°，建议及时补水，减少长时间户外停留。"
             )
         }
 
@@ -231,7 +236,7 @@ nonisolated enum TimetableWeatherAdviceBuilder {
             id: "uv",
             systemImage: "sun.max",
             title: "注意防晒",
-            detail: "\(target) 时段紫外线偏强，帽子或防晒会更稳。"
+            detail: "\(target)时段紫外线较强，建议采取遮阳或防晒措施。"
         )
     }
 
@@ -243,15 +248,15 @@ nonisolated enum TimetableWeatherAdviceBuilder {
                 id: "clear-empty",
                 systemImage: "sparkles",
                 title: "今天后续无课",
-                detail: "出门前看一眼天气就好，今天不用按课表赶路。"
+                detail: "今天没有后续课程安排，外出前可关注最新天气变化。"
             )
         }
 
         return TimetableWeatherSuggestion(
             id: "clear",
             systemImage: "checkmark.circle",
-            title: "天气平稳",
-            detail: "按课表出门就好，不需要额外准备。"
+            title: "天气总体平稳",
+            detail: "今天后续安排受天气影响较小，可按计划出行。"
         )
     }
 

@@ -228,7 +228,7 @@ final class TimetableWeatherAdviceTests: XCTestCase {
                 id: "clear-empty",
                 systemImage: "sparkles",
                 title: "今天后续无课",
-                detail: "出门前看一眼天气就好，今天不用按课表赶路。"
+                detail: "今天没有后续课程安排，外出前可关注最新天气变化。"
             )
         ])
     }
