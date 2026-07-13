@@ -1,40 +1,92 @@
 direction: down
 
-ios: iOS App {
-  school_identity: 已验证的教务身份
-  anonymous_auth: 匿名 Supabase 会话
-  repositories: 社区与共享课表仓储
+**: {
+  &leaf: true
+  style.fill: "#FFFFFF"
+  style.stroke: "#CBD5E1"
+  style.font-color: "#334155"
+  style.border-radius: 8
 }
 
-edge: Edge Functions {
-  bootstrap: community-bootstrap-user
-  community: 社区与业务函数
-  ai: Campus AI 能力与额度
+classes: {
+  untrusted: {
+    style.fill: "#F8FAFC"
+    style.stroke: "#64748B"
+    style.font-color: "#1E293B"
+    style.border-radius: 14
+    style.stroke-width: 2
+  }
+  guard: {
+    style.fill: "#F0F7FF"
+    style.stroke: "#4776B5"
+    style.font-color: "#173B68"
+    style.border-radius: 14
+    style.stroke-width: 2
+    style.shadow: true
+  }
+  protected: {
+    style.fill: "#ECF7F0"
+    style.stroke: "#397A5A"
+    style.font-color: "#173C2B"
+    style.border-radius: 14
+    style.stroke-width: 2
+  }
+  secret: {
+    style.fill: "#FFF8E8"
+    style.stroke: "#B7791F"
+    style.font-color: "#5F3B0B"
+    style.border-radius: 14
+    style.stroke-width: 2
+  }
 }
 
-database: PostgreSQL {
-  profiles: profiles / profile_auth_links
-  content: posts / comments / reactions
-  operations: notifications / announcements / feedback
-  ratings: teachers / courses / ratings
-  sharing: timetable snapshots / grants
+client: 01 · 非可信客户端 {
+  class: untrusted
+  grid-columns: 4
+  app: MyLeafy iOS
+  public_key: Publishable key
+  session: 用户 JWT
+  local: 本机教务数据
 }
 
-storage: Storage {
-  images: private community-images
-}
-
-policy: 安全边界 {
+gateway: 02 · 授权与业务边界 {
+  class: guard
+  grid-columns: 4
+  auth: Supabase Auth
   rls: Row Level Security
-  campus: campus_id 隔离
-  ownership: auth.uid() 与 profile 映射
+  functions: Edge Functions
+  policy: owner · profile · campus_id
 }
 
-ios.school_identity -> ios.anonymous_auth
-ios.anonymous_auth -> edge.bootstrap: JWT + edu_id
-edge.bootstrap -> database.profiles
-ios.repositories -> database: publishable key + RLS
-ios.repositories -> storage.images: signed URL
-edge -> database
-database -> policy
-storage -> policy
+data: 03 · 受保护业务数据 {
+  class: protected
+  grid-columns: 4
+  community: 社区与通知
+  sharing: 共享课表与授权
+  directory: 目录与评价
+  storage: 私有图片 Storage
+}
+
+server: 服务端专属能力 {
+  class: secret
+  grid-columns: 3
+  service_role: service_role
+  signing: 签名与代理 secret
+  audit: 管理权限与审计
+}
+
+client.app -> gateway.auth: 匿名 / 用户登录
+client.session -> gateway.rls: Data API 请求
+client.session -> gateway.functions: JWT + 受控参数
+gateway -> data: 校验通过后访问
+server -> gateway.functions: 仅服务端注入
+server -> data: 最小权限管理操作
+
+client.local -> data: 默认不上传学校密码与完整教务数据 {
+  style.stroke: "#BE5360"
+  style.stroke-dash: 6
+}
+client -> server: 禁止下发高权限密钥 {
+  style.stroke: "#BE5360"
+  style.stroke-dash: 6
+}

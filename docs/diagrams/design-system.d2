@@ -1,31 +1,84 @@
 direction: right
 
-foundation: Foundations {
-  color: 语义色与主题色
-  type: 系统字体与显示缩放
-  spacing: 8 / 12 / 16 / 20 / 24
-  radius: 12 / 16 / 24
+**: {
+  &leaf: true
+  style.fill: "#FFFFFF"
+  style.stroke: "#CBD5E1"
+  style.font-color: "#334155"
+  style.border-radius: 8
 }
 
-components: Components {
-  surfaces: Page / Card / Glass Surface
-  controls: Button / Chip / Icon Badge
+classes: {
+  foundation: {
+    style.fill: "#F8FAFC"
+    style.stroke: "#64748B"
+    style.font-color: "#1E293B"
+    style.border-radius: 14
+    style.stroke-width: 2
+  }
+  primitive: {
+    style.fill: "#F0F7FF"
+    style.stroke: "#4776B5"
+    style.font-color: "#173B68"
+    style.border-radius: 14
+    style.stroke-width: 2
+  }
+  pattern: {
+    style.fill: "#ECF7F0"
+    style.stroke: "#397A5A"
+    style.font-color: "#173C2B"
+    style.border-radius: 14
+    style.stroke-width: 2
+  }
+  gate: {
+    style.fill: "#FFF8E8"
+    style.stroke: "#B7791F"
+    style.font-color: "#5F3B0B"
+    style.border-radius: 14
+    style.stroke-width: 2
+  }
+}
+
+tokens: 01 · 基础令牌 {
+  class: foundation
+  grid-columns: 1
+  color: 语义色 / 主题色
+  type: 系统字体 / Dynamic Type
+  spacing: 8 · 12 · 16 · 20 · 24
+  radius: 12 · 16 · 24
+  motion: 时长 / 缓动 / Reduce Motion
+}
+
+components: 02 · 原生组件 {
+  class: primitive
+  grid-columns: 1
+  surface: Page / Card / Glass
+  control: Button / Chip / Badge
   navigation: Tab / Navigation / Sheet
-  feedback: Loading / Empty / Error / Alert
+  feedback: Loading / Empty / Error
+  content: List / Form / Toolbar
 }
 
-patterns: Product Patterns {
+patterns: 03 · 产品模式 {
+  class: pattern
+  grid-columns: 1
   timetable: 高密度课表
+  academic: 校园工具主页
   feed: 社区信息流
-  academic: 校园工具入口
-  profile: 系统设置式列表
+  artifact: AI Artifact 阅读页
+  settings: 系统设置式列表
 }
 
-quality: Quality Gates {
-  accessibility: Dynamic Type 与 VoiceOver
+quality: 04 · 质量门禁 {
+  class: gate
+  grid-columns: 1
+  states: 加载 / 空 / 错误 / 离线
+  accessibility: VoiceOver / 动态字体
   appearance: 浅色 / 深色 / 自定义主题
-  states: 完整页面状态
-  compatibility: iOS 17 基线 / iOS 26 增强
+  compatibility: iOS 17 基线 / 26 增强
+  review: 性能 / 隐私 / 一致性
 }
 
-foundation -> components -> patterns -> quality
+tokens -> components: 约束视觉与交互
+components -> patterns: 组合用户任务
+patterns -> quality: 逐页验收

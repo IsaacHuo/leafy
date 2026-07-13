@@ -1489,6 +1489,10 @@ final class PerformanceRefactorTests: XCTestCase {
         XCTAssertEqual(RootTab.allCases, [.leafy, .timetable, .community, .academics, .profile])
     }
 
+    func testAcademicRootTabUsesCampusProductName() {
+        XCTAssertEqual(RootTab.academics.title(language: .zhHans), "校园")
+    }
+
     func testCampusIdentityScopeKeySeparatesSchoolPortalAndCustomSupabase() {
         let undergraduate = CampusIdentity(
             campusID: .bjfu,

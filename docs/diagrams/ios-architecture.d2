@@ -1,64 +1,88 @@
 direction: down
 
+**: {
+  &leaf: true
+  style.fill: "#FFFFFF"
+  style.stroke: "#CBD5E1"
+  style.font-color: "#334155"
+  style.border-radius: 8
+}
+
 classes: {
-  layer: {
-    style.fill: "#F7FAF7"
-    style.stroke: "#789374"
-    style.border-radius: 16
+  ui: {
+    style.fill: "#F0F7FF"
+    style.stroke: "#4776B5"
+    style.font-color: "#173B68"
+    style.border-radius: 14
+    style.stroke-width: 2
+    style.shadow: true
   }
-  boundary: {
-    style.fill: "#F5F7FA"
-    style.stroke: "#6C7F95"
-    style.border-radius: 16
+  core: {
+    style.fill: "#ECF7F0"
+    style.stroke: "#397A5A"
+    style.font-color: "#173C2B"
+    style.border-radius: 14
+    style.stroke-width: 2
+  }
+  adapter: {
+    style.fill: "#F8FAFC"
+    style.stroke: "#64748B"
+    style.font-color: "#1E293B"
+    style.border-radius: 14
+    style.stroke-width: 2
   }
   external: {
-    style.fill: "#FFF8EA"
-    style.stroke: "#B68A3A"
-    style.border-radius: 16
+    style.fill: "#FFF8E8"
+    style.stroke: "#B7791F"
+    style.font-color: "#5F3B0B"
+    style.border-radius: 14
+    style.stroke-width: 2
   }
 }
 
-presentation: Presentation {
-  class: layer
+presentation: 表现层 · Presentation {
+  class: ui
+  grid-columns: 3
   views: SwiftUI Views
-  state: ViewModels 与页面状态
-  navigation: AppNavigationCoordinator
+  state: 页面状态 / ViewModel
+  navigation: Navigation Coordinator
 }
 
-application: Application {
-  class: layer
+application: 应用层 · Application {
+  class: core
+  grid-columns: 3
   usecases: 用例与协调器
-  repositories: 窄仓储协议
+  contracts: 窄服务 / 仓储协议
   projections: 展示投影与快照
 }
 
-domain: Domain {
-  class: layer
+domain: 领域层 · Domain {
+  class: core
+  grid-columns: 3
   models: 业务模型
   rules: 纯规则与计算
+  capability: 校园能力描述
 }
 
-infrastructure: Infrastructure {
-  class: boundary
-  school: SchoolNetworkManager
-  parser: SwiftSoup Parsers
+infrastructure: 基础设施 · Infrastructure {
+  class: adapter
+  grid-columns: 5
+  school: 教务网络
+  parser: HTML 解析
   local: SwiftData
-  community: Supabase Services
-  webview: WKWebView 课表兜底
+  business: Supabase
+  system: 系统服务
 }
 
-systems: 外部系统 {
+externals: 外部系统 {
   class: external
-  qz: 强智教务
+  grid-columns: 3
+  qz: 学校教务系统
   sb: Supabase
-  weather: WeatherKit
+  apple: WeatherKit / WidgetKit
 }
 
-presentation -> application
-application -> domain
-application -> infrastructure: 通过协议访问
-infrastructure.school -> systems.qz
-infrastructure.webview -> systems.qz
-infrastructure.community -> systems.sb
-infrastructure -> systems.weather
-
+presentation -> application: 用户意图
+application -> domain: 执行业务规则
+application -> infrastructure: 仅通过协议访问
+infrastructure -> externals: 适配外部能力

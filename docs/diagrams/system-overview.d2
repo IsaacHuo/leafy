@@ -1,55 +1,93 @@
 direction: right
 
+**: {
+  &leaf: true
+  style.fill: "#FFFFFF"
+  style.stroke: "#CBD5E1"
+  style.font-color: "#334155"
+  style.border-radius: 8
+}
+
 classes: {
-  client: {
-    style.fill: "#F2F8F1"
-    style.stroke: "#6E8F67"
-    style.border-radius: 14
+  person: {
+    shape: person
+    style.fill: "#F8FAFC"
+    style.stroke: "#64748B"
+    style.font-color: "#0F172A"
+    style.stroke-width: 2
   }
-  service: {
-    style.fill: "#F4F7FB"
-    style.stroke: "#6682A3"
+  owned: {
+    style.fill: "#ECF7F0"
+    style.stroke: "#397A5A"
+    style.font-color: "#173C2B"
     style.border-radius: 14
+    style.stroke-width: 2
+    style.shadow: true
   }
   external: {
-    style.fill: "#FFF8EA"
-    style.stroke: "#B68A3A"
+    style.fill: "#FFF8E8"
+    style.stroke: "#B7791F"
+    style.font-color: "#5F3B0B"
     style.border-radius: 14
+    style.stroke-width: 2
+  }
+  data: {
+    shape: cylinder
+    style.fill: "#EDF4FF"
+    style.stroke: "#4776B5"
+    style.font-color: "#173B68"
+    style.stroke-width: 2
   }
 }
 
-app: MyLeafy iOS App {
-  class: client
-  ui: SwiftUI 功能模块
-  local: SwiftData 本地数据
-  network: 教务与业务服务
+student: 学生 {class: person}
+operator: 运营人员 {class: person}
 
-  ui -> local: 读取与缓存
-  ui -> network: 发起请求
+myleafy: MyLeafy 系统边界 {
+  class: owned
+  direction: down
+
+  ios: MyLeafy iOS {
+    class: owned
+    scope: 课表 · 校园 · 社区 · AI
+  }
+
+  local: 设备本地数据 {
+    class: data
+  }
+
+  web: 官网与运营后台 {
+    class: owned
+    scope: 公开页面 · 分享 · 内容治理
+  }
+
+  ios -> local: 读写本地状态
 }
 
-school: 北京林业大学教务系统 {
+school: 学校教务系统 {
   class: external
-  login: 登录与会话
-  academic: 课表、成绩、考试、培养数据
+  scope: 身份 · 课表 · 成绩 · 考试
 }
 
-supabase: Supabase {
-  class: service
-  auth: Auth
-  data: PostgreSQL 与 RLS
-  edge: Edge Functions
-  storage: Storage
+supabase: Supabase 业务后端 {
+  class: external
+  scope: Auth · Database · Storage · Functions
 }
 
-admin: 运营后台 {
-  class: client
-  web: React-admin
-  proxy: Cloudflare Pages Functions
-  web -> proxy
+student -> myleafy.ios: 日常学习与校园任务
+operator -> myleafy.web: 受控运营
+myleafy.ios -> school: 授权访问教务数据
+myleafy.ios -> supabase: 用户会话 + RLS
+myleafy.web -> supabase: 管理代理 + 服务端授权
+
+legend: 图例 {
+  near: bottom-right
+  style.fill: "#FFFFFF"
+  style.stroke: "#CBD5E1"
+  style.font-color: "#475569"
+  style.border-radius: 10
+  grid-columns: 3
+  owned: MyLeafy 负责 {class: owned}
+  external: 外部依赖 {class: external}
+  data: 设备数据 {class: data}
 }
-
-app.network -> school: HTTPS / HTTP + Cookie
-app.network -> supabase: publishable key + user session
-admin.proxy -> supabase.edge: 管理会话 + 代理密钥
-

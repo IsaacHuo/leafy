@@ -1,31 +1,87 @@
 direction: down
 
-browser: 管理员浏览器 {
-  console: React-admin UI
-  cookie: HttpOnly 管理会话
+**: {
+  &leaf: true
+  style.fill: "#FFFFFF"
+  style.stroke: "#CBD5E1"
+  style.font-color: "#334155"
+  style.border-radius: 8
 }
 
-cloudflare: Cloudflare Pages Functions {
-  auth: login / me / logout
-  actions: actions / export
-  checks: Origin、CSRF、request ID
+classes: {
+  client: {
+    style.fill: "#F8FAFC"
+    style.stroke: "#64748B"
+    style.font-color: "#1E293B"
+    style.border-radius: 14
+    style.stroke-width: 2
+  }
+  proxy: {
+    style.fill: "#F0F7FF"
+    style.stroke: "#4776B5"
+    style.font-color: "#173B68"
+    style.border-radius: 14
+    style.stroke-width: 2
+    style.shadow: true
+  }
+  authorization: {
+    style.fill: "#FFF8E8"
+    style.stroke: "#B7791F"
+    style.font-color: "#5F3B0B"
+    style.border-radius: 14
+    style.stroke-width: 2
+  }
+  data: {
+    style.fill: "#ECF7F0"
+    style.stroke: "#397A5A"
+    style.font-color: "#173C2B"
+    style.border-radius: 14
+    style.stroke-width: 2
+  }
 }
 
-edge: Supabase Edge Functions {
-  session: 管理会话校验
+browser: 01 · 管理员浏览器 {
+  class: client
+  grid-columns: 3
+  ui: React-admin UI
+  cookie: HttpOnly Session
+  csrf: 固定 CSRF Header
+}
+
+cloudflare: 02 · Cloudflare Pages Functions {
+  class: proxy
+  grid-columns: 4
+  origin: Origin / Method
+  format: Content-Type / Size
+  session: Cookie 转换
+  trace: Request ID
+}
+
+edge: 03 · Supabase Edge Functions {
+  class: authorization
+  grid-columns: 4
+  auth: 会话有效性
   rbac: 角色与校园范围
-  validation: 参数与资源白名单
-  audit: 审计记录
+  validation: Action / 字段白名单
+  audit: 结果与审计
 }
 
-data: Supabase {
+database: 04 · 数据层 {
+  class: data
+  grid-columns: 3
   postgres: PostgreSQL
-  storage: Storage
+  storage: Private Storage
+  logs: Audit Log
 }
 
-browser.console -> cloudflare
-cloudflare -> browser.cookie: Set-Cookie
-browser.cookie -> cloudflare: 自动携带
-cloudflare -> edge: 代理密钥 + 管理 token
-edge -> data: 服务端权限
-edge.audit -> data.postgres
+browser -> cloudflare: ① 同域请求 + Cookie + CSRF
+cloudflare -> edge: ② 管理 token + 代理证明
+edge -> database: ③ 授权后的最小操作
+database -> edge: ④ 结果 / 冲突 / 拒绝
+edge -> cloudflare: ⑤ 状态码 + Request ID
+cloudflare -> browser: ⑥ 安全响应 / Set-Cookie
+
+browser -> database: 禁止浏览器以管理员身份直连 {
+  style.stroke: "#BE5360"
+  style.stroke-dash: 6
+}

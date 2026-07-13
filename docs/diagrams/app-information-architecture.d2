@@ -1,32 +1,96 @@
 direction: down
 
-root: MyLeafy {
-  grid-columns: 2
-  leafy: Leafy AI {
-    chat: 对话与本机学业上下文
-    artifacts: 报告、清单与导出
+**: {
+  &leaf: true
+  style.fill: "#FFFFFF"
+  style.stroke: "#CBD5E1"
+  style.font-color: "#334155"
+  style.border-radius: 8
+}
+
+classes: {
+  root: {
+    style.fill: "#173C2B"
+    style.stroke: "#173C2B"
+    style.font-color: "#FFFFFF"
+    style.border-radius: 16
+    style.stroke-width: 2
   }
-  timetable: 课表 {
-    week: 周课表与课程详情
-    scope: 时间范围与日程叠加
-    share: 分享图与 Widget
+  area: {
+    style.fill: "#F7FBF8"
+    style.stroke: "#8AB39A"
+    style.font-color: "#173C2B"
+    style.border-radius: 14
+    style.stroke-width: 2
+    style.shadow: true
   }
-  community: 社区 {
-    feed: 帖子、投票与互动
-    notices: 通知与公告
-    publish: 发布与个人内容
-  }
-  academics: 校园 {
-    cultivation: 教学培养
-    schedule: 时间日程
-    classrooms: 空闲教室
-    learning: 学习空间
-    more: 体育、职业、考研、评价等
-  }
-  profile: 我的 {
-    identity: 社区资料与邮箱绑定
-    sharing: 共享课表
-    settings: 外观、语言与数据设置
-    support: 支持与关于
+  global: {
+    style.fill: "#F0F7FF"
+    style.stroke: "#7699C6"
+    style.font-color: "#173B68"
+    style.border-radius: 12
   }
 }
+
+app: MyLeafy {
+  class: root
+}
+
+tabs: 核心任务区域 {
+  style.fill: "#FFFFFF"
+  style.stroke: "#D7E1DA"
+  style.border-radius: 18
+  grid-columns: 3
+
+  timetable: 课表 {
+    class: area
+    grid-columns: 1
+    week: 周课表 · 课程详情
+    schedule: 日程叠加 · 提醒
+    share: 分享图 · Widget
+  }
+
+  academics: 校园 {
+    class: area
+    grid-columns: 1
+    cultivate: 教学培养 · 成绩考试
+    time: 校历 · 倒计时
+    workspace: 教室 · 学习空间 · 扩展工具
+  }
+
+  community: 社区 {
+    class: area
+    grid-columns: 1
+    feed: 帖子 · 投票 · 互动
+    publish: 发布 · 个人内容
+    notice: 通知 · 公告
+  }
+
+  ai: Leafy AI {
+    class: area
+    grid-columns: 1
+    chat: 对话 · 本机上下文
+    research: 公开检索 · 来源
+    artifact: Artifact · 导出
+  }
+
+  profile: 我的 {
+    class: area
+    grid-columns: 1
+    identity: 社区资料 · 邮箱
+    sharing: 共享课表
+    settings: 外观 · 语言 · 数据
+  }
+}
+
+shared: 跨区域能力 {
+  class: global
+  grid-columns: 4
+  navigation: 深链与统一导航
+  state: 登录与校园状态
+  appearance: 主题与无障碍
+  recovery: 缓存与故障恢复
+}
+
+app -> tabs: 进入核心任务
+tabs -> shared: 共用应用能力

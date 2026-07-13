@@ -1,30 +1,98 @@
 direction: down
 
-start: 用户登录
-session: SchoolNetworkManager {
-  captcha: 获取验证码与临时 key
-  encode: 本地执行强智 encode
-  cookies: 显式同步 Cookie
-}
-request: 教务请求 {
-  direct: URLSession 直连
-  fallback: WKWebView 兜底
-}
-parse: SwiftSoup 解析 {
-  timetable: 课表
-  grades: 成绩与考试
-  cultivation: 教学计划与培养方案
-  classrooms: 空教室
-}
-persist: 本地与展示 {
-  swiftdata: SwiftData 缓存
-  projection: 投影与布局快照
-  view: SwiftUI 页面 / Widget
+**: {
+  &leaf: true
+  style.fill: "#FFFFFF"
+  style.stroke: "#CBD5E1"
+  style.font-color: "#334155"
+  style.border-radius: 8
 }
 
-start -> session.captcha -> session.encode -> session.cookies
-session.cookies -> request.direct
-request.direct -> parse
-request.direct -> request.fallback: 课表不可解析时
-request.fallback -> parse.timetable
-parse -> persist.swiftdata -> persist.projection -> persist.view
+classes: {
+  action: {
+    style.fill: "#F0F7FF"
+    style.stroke: "#4776B5"
+    style.font-color: "#173B68"
+    style.border-radius: 14
+    style.stroke-width: 2
+    style.shadow: true
+  }
+  boundary: {
+    style.fill: "#FFF8E8"
+    style.stroke: "#B7791F"
+    style.font-color: "#5F3B0B"
+    style.border-radius: 14
+    style.stroke-width: 2
+  }
+  success: {
+    style.fill: "#ECF7F0"
+    style.stroke: "#397A5A"
+    style.font-color: "#173C2B"
+    style.border-radius: 14
+    style.stroke-width: 2
+  }
+  recovery: {
+    style.fill: "#FFF1F2"
+    style.stroke: "#BE5360"
+    style.font-color: "#6F1D2A"
+    style.border-radius: 14
+    style.stroke-width: 2
+  }
+}
+
+login: 01 · 建立会话 {
+  class: action
+  grid-columns: 3
+  captcha: 验证码与临时 key
+  encode: 本地登录编码
+  cookie: Cookie 同步
+}
+
+school: 02 · 学校教务系统 {
+  class: boundary
+  grid-columns: 2
+  auth: 登录与中间页
+  pages: 课表 · 成绩 · 考试 · 培养
+}
+
+request: 03 · 获取并识别页面 {
+  class: action
+  grid-columns: 3
+  direct: URLSession 主链路
+  webview: WKWebView 特定兜底
+  classify: 登录页 / 空页 / 异常页
+}
+
+parse: 04 · 解析与建模 {
+  class: action
+  grid-columns: 3
+  html: SwiftSoup 解析
+  model: 领域模型
+  validation: 结构与字段校验
+}
+
+deliver: 05 · 本地交付 {
+  class: success
+  grid-columns: 3
+  cache: SwiftData / 快照
+  projection: 页面投影与布局
+  ui: SwiftUI / Widget
+}
+
+recovery: 故障分类与恢复 {
+  class: recovery
+  grid-columns: 3
+  network: 网络不可达 → 保留缓存
+  session: 会话失效 → 重新认证
+  structure: 页面变化 → 可诊断错误
+}
+
+login -> school: ① 用户授权登录
+school -> request: ② 返回授权页面
+request -> parse: ③ 仅传入已识别页面
+parse -> deliver: ④ 校验成功后更新缓存
+request -> recovery: 网络 / 会话 / 页面异常
+parse -> recovery: DOM 或字段不符合契约
+recovery -> deliver.cache: 失败时不覆盖最近成功数据 {
+  style.stroke-dash: 5
+}
