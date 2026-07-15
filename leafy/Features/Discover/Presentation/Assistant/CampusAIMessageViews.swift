@@ -19,13 +19,20 @@ extension CampusAIMessage {
 
 struct CampusAIMessageRow: View {
     @Environment(\.leafyThemeColorPreference) private var themeColorPreference
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    @State private var isProcessExpanded = false
+    @State private var copied = false
+    @State private var copyFeedbackSignal = 0
 
     let message: CampusAIMessage
     let actions: [CampusAIActionRecord]
     let isStreaming: Bool
+    let interactionsDisabled: Bool
     let executeAction: (CampusAIActionRecord) -> Void
     let cancelAction: (CampusAIActionRecord) -> Void
+    let edit: () -> Void
     let regenerate: () -> Void
+    let rewind: () -> Void
 
     private var isUser: Bool {
         message.roleRawValue == CampusAIMessageRole.user.rawValue
@@ -57,13 +64,22 @@ struct CampusAIMessageRow: View {
             Button(action: copyMessage) {
                 Label("复制", systemImage: "doc.on.doc")
             }
-            if !isUser && !isStreaming {
+            if isUser, !interactionsDisabled {
+                Button(action: edit) {
+                    Label("重新编辑", systemImage: "pencil")
+                }
+            }
+            if !isUser && !interactionsDisabled {
                 Button(action: regenerate) {
                     Label(regenerateTitle, systemImage: "arrow.clockwise")
+                }
+                Button(action: rewind) {
+                    Label("回到上一阶段", systemImage: "arrow.uturn.backward")
                 }
             }
         }
         .campusAIInAppBrowser()
+        .sensoryFeedback(.success, trigger: copyFeedbackSignal)
     }
 
     @ViewBuilder
@@ -81,11 +97,6 @@ struct CampusAIMessageRow: View {
                     in: RoundedRectangle(cornerRadius: 20, style: .continuous)
                 )
                 .multilineTextAlignment(.leading)
-        } else if answerText.isEmpty {
-            CampusAITypingDots()
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(AppTheme.softFill, in: Capsule())
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 if answerText.isEmpty {
@@ -97,8 +108,14 @@ struct CampusAIMessageRow: View {
                     CampusAIMessageMarkdown(markdown: message.text, isStreaming: isStreaming)
                 }
 
-                if let statusText = agentMetadata.statusText?.nonEmptyTrimmed, isStreaming {
-                    CampusAIAgentStatusPill(text: statusText)
+                if isStreaming || !agentMetadata.agentTrace.isEmpty {
+                    CampusAIAgentProgressView(
+                        steps: agentMetadata.agentTrace,
+                        statusText: agentMetadata.statusText,
+                        searchResults: agentMetadata.searchResults,
+                        isStreaming: isStreaming,
+                        isExpanded: $isProcessExpanded
+                    )
                 }
 
                 if !agentMetadata.citations.isEmpty {
@@ -106,6 +123,16 @@ struct CampusAIMessageRow: View {
                         citations: agentMetadata.citations,
                         deliverables: []
                     )
+                }
+
+                if !isStreaming,
+                   agentMetadata.citations.isEmpty,
+                   agentMetadata.agentTrace.contains(where: { step in
+                       ["official_search", "web_search", "read_web_page", "read_pdf"].contains(step.tool ?? "")
+                   }) {
+                    Label("未引用已验证来源", systemImage: "exclamationmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
                 }
 
                 if !agentMetadata.deliverables.isEmpty {
@@ -137,20 +164,29 @@ struct CampusAIMessageRow: View {
 
                 if !isStreaming {
                     HStack(spacing: 0) {
-                        Button(action: regenerate) {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(AppTheme.secondaryText)
-                                .frame(width: 32, height: 28)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 8)
-                        .accessibilityLabel(regenerateTitle)
+                        messageActionButton(
+                            systemName: copied ? "checkmark" : "doc.on.doc",
+                            accessibilityLabel: copied ? "已复制" : "复制回复",
+                            action: copyMessage
+                        )
+
+                        messageActionButton(
+                            systemName: "arrow.clockwise",
+                            accessibilityLabel: regenerateTitle,
+                            action: regenerate
+                        )
+                        .disabled(interactionsDisabled)
+
+                        messageActionButton(
+                            systemName: "arrow.uturn.backward",
+                            accessibilityLabel: "回到上一阶段",
+                            action: rewind
+                        )
+                        .disabled(interactionsDisabled)
 
                         Spacer(minLength: 0)
                     }
+                    .padding(.top, -6)
                     .padding(.leading, -6)
                 }
             }
@@ -165,6 +201,22 @@ struct CampusAIMessageRow: View {
         agentMetadata.artifactState == .failed ? "重试生成成品" : "重新生成"
     }
 
+    private func messageActionButton(
+        systemName: String,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(AppTheme.secondaryText)
+                .frame(width: 40, height: 38)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
     private func copyMessage() {
         #if os(iOS)
         UIPasteboard.general.string = message.text
@@ -172,6 +224,18 @@ struct CampusAIMessageRow: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(message.text, forType: .string)
         #endif
+        copied = true
+        copyFeedbackSignal += 1
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !accessibilityReduceMotion else {
+                copied = false
+                return
+            }
+            withAnimation(.easeOut(duration: 0.16)) {
+                copied = false
+            }
+        }
     }
 }
 
@@ -188,21 +252,141 @@ struct CampusAITypingRow: View {
     }
 }
 
-private struct CampusAIAgentStatusPill: View {
-    let text: String
+private struct CampusAIAgentProgressView: View {
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+
+    let steps: [CampusAIAgentTraceStep]
+    let statusText: String?
+    let searchResults: [CampusAISearchResultPreview]
+    let isStreaming: Bool
+    @Binding var isExpanded: Bool
 
     var body: some View {
-        HStack(spacing: 6) {
-            ProgressView()
-                .controlSize(.small)
-            Text(text)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(AppTheme.secondaryText)
-                .lineLimit(1)
+        Group {
+            if isStreaming {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(steps.suffix(4))) { step in
+                        stepRow(step)
+                    }
+                    if let statusText = statusText?.nonEmptyTrimmed {
+                        HStack(alignment: .center, spacing: 7) {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .frame(width: 14, height: 14, alignment: .center)
+                            Text(CampusAIAgentPresentation.sanitizedStatusText(statusText))
+                                .lineLimit(2)
+                        }
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    }
+                }
+                .animation(
+                    accessibilityReduceMotion ? nil : .easeOut(duration: 0.18),
+                    value: steps.map(\.id) + [statusText ?? ""]
+                )
+            } else if !steps.isEmpty || !searchResults.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    Button {
+                        isExpanded.toggle()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Label("已完成 \(steps.count) 步", systemImage: "checklist")
+                                .font(.caption.weight(.medium))
+
+                            Spacer(minLength: 8)
+
+                            Image(systemName: "chevron.down")
+                                .font(.caption.weight(.semibold))
+                                .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                        }
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    if isExpanded {
+                        VStack(alignment: .leading, spacing: 7) {
+                        ForEach(steps) { step in
+                            stepRow(step)
+                        }
+
+                            if !searchResults.isEmpty {
+                                searchResultList
+                                    .padding(.top, 3)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 8)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
+                .animation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.18), value: isExpanded)
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(AppTheme.softFill.opacity(0.72), in: Capsule())
+        .padding(.vertical, 8)
+        .background(AppTheme.softFill.opacity(0.55), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func stepRow(_ step: CampusAIAgentTraceStep) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
+            Image(systemName: step.status == "failed" ? "exclamationmark.circle" : "checkmark.circle")
+                .font(.caption2)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(step.title)
+                    .font(.caption)
+                if let detail = step.detail?.nonEmptyTrimmed {
+                    Text(detail)
+                        .font(.caption2)
+                        .lineLimit(2)
+                }
+            }
+        }
+        .foregroundStyle(step.status == "failed" ? AppTheme.warning : AppTheme.secondaryText)
+    }
+
+    private var searchResultList: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("找到的结果")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppTheme.secondaryText)
+
+            ForEach(searchResults) { result in
+                Button {
+                    openCampusAIExternalURL(result.url)
+                } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                        Image(systemName: "link")
+                            .font(.caption2.weight(.semibold))
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(result.title.nonEmptyTrimmed ?? result.url)
+                                .font(.caption)
+                                .lineLimit(2)
+                            if let siteName = result.siteName?.nonEmptyTrimmed {
+                                Text(siteName)
+                                    .font(.caption2)
+                                    .foregroundStyle(AppTheme.secondaryText)
+                                    .lineLimit(1)
+                            }
+                        }
+
+                        Spacer(minLength: 4)
+
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .foregroundStyle(AppTheme.primaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("在 Safari 中打开")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -316,9 +500,13 @@ private struct CampusAISourceAttachmentPillList: View {
     @ViewBuilder
     private func pill(_ item: PillItem) -> some View {
         if let url = URL(string: item.url), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
-            Link(destination: url) {
+            Button {
+                openCampusAIExternalURL(url.absoluteString)
+            } label: {
                 pillContent(item)
             }
+            .buttonStyle(.plain)
+            .accessibilityHint("在 Safari 中打开")
         } else {
             pillContent(item)
         }
@@ -367,6 +555,15 @@ private struct CampusAISourceAttachmentPillList: View {
         seen.insert(key)
         result.append(item)
     }
+}
+
+private func openCampusAIExternalURL(_ rawURL: String) {
+    guard let url = URL(string: rawURL), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return }
+    #if os(iOS)
+    UIApplication.shared.open(url)
+    #elseif os(macOS)
+    NSWorkspace.shared.open(url)
+    #endif
 }
 
 private struct CampusAIActionList: View {

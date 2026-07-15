@@ -121,8 +121,9 @@ MyLeafy 同时维护两个独立身份：
 
 ### 3.5 AI 与额度
 
-- 仓库保留托管 AI capability、entitlement 与业务函数，供后续能力评估和兼容使用。
-- 当前 iOS 运行时只开放自备 DeepSeek API Key 直连；订阅、托管额度和联网搜索未开放。
+- Leafy AI 默认通过 `campus-ai-assistant` 使用固定 Flash；免费额度为北京时间每日 10 次。
+- `com.isaachuo.leafy.ai.weekly.v2` 周订阅按 Apple 实际周期提供 120 次，同时北京时间每日最多 40 次；旧商品不再授予权益。
+- 自备 DeepSeek API Key 是可选直连模式，Pro 仅在该模式开放。
 - 自备 API Key 不存入 Supabase。
 - AI 请求日志应最小化，不长期保存完整个人学业上下文。
 
@@ -185,7 +186,7 @@ MyLeafy 同时维护两个独立身份：
 |---|---|
 | 社区初始化与 Feed | `community-bootstrap-user`、`community-feed` |
 | 校园服务 | `campus-request`、`campus-weather` |
-| Leafy AI（当前 App 未开放托管模式） | `campus-ai-assistant`、`campus-ai-entitlement` |
+| Leafy AI 免费与订阅服务 | `campus-ai-assistant`、`campus-ai-entitlement`、`app-store-server-notifications` |
 | 分享 | `share-preview` |
 | 管理认证 | `admin-login`、`admin-me`、`admin-logout` |
 | 管理业务 | `admin-community`、`admin-export`、公告相关函数 |

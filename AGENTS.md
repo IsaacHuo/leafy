@@ -20,7 +20,9 @@ Campus heatmap direction:
 - User-facing copy says “更新数据” and “上次更新”; avoid unfamiliar implementation terminology.
 
 Leafy AI direction:
-- BYOK is the only model mode. DeepSeek keys stay in the device Keychain and model requests go directly from iOS to DeepSeek.
+- Leafy AI defaults to the server-backed Flash service: free users receive 10 requests per Beijing day; the current weekly subscription receives 120 requests per Apple billing period with a 40-request Beijing daily cap.
+- BYOK is an optional fallback. DeepSeek keys stay in the device Keychain and model requests go directly from iOS to DeepSeek; Pro is available only in BYOK mode.
+- The only supported subscription product is `com.isaachuo.leafy.ai.weekly.v2`; legacy products grant no entitlement.
 - Web research uses the authenticated `campus-ai-tools` Supabase Tool Gateway. The gateway may receive search queries and signed result receipts, but never receives the model key or local campus context.
 - Prefer BJFU official CMS search, with DuckDuckGo Lite as a best-effort zero-key public search provider. Do not silently add paid search providers or random public SearXNG instances.
 - Keep research as a bounded single-tool agent loop. Web content is untrusted data, and only search-issued IDs/receipts may be read.

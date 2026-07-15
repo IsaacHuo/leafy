@@ -119,7 +119,7 @@ final class CampusAIAssistantTests: XCTestCase {
 
         var customSettings = CampusAIUserSettings.defaultValue
         customSettings.systemPrompt = "始终先问我一个澄清问题"
-        defaults.set(try JSONEncoder().encode(customSettings), forKey: "campusAI.userSettings.v3")
+        XCTAssertTrue(CampusAISettingsStore.save(customSettings, userDefaults: defaults))
 
         XCTAssertEqual(
             CampusAISettingsStore.load(userDefaults: defaults).systemPrompt,
@@ -304,7 +304,9 @@ final class CampusAIAssistantTests: XCTestCase {
         let initial = CampusAISettingsStore.load(userDefaults: defaults)
         XCTAssertEqual(initial.selectedProviderID, .deepSeek)
         XCTAssertEqual(initial.selectedProvider, CampusAIProviderCatalog.deepSeek)
-        XCTAssertEqual(initial.serviceMode, .ownAPIKey)
+        XCTAssertEqual(initial.selectedModelID, .flash)
+        XCTAssertEqual(initial.selectedModel, CampusAIModelCatalog.flash)
+        XCTAssertEqual(initial.serviceMode, .leafyManaged)
         XCTAssertEqual(initial.systemPrompt, CampusAISettingsStore.defaultSystemPrompt)
         XCTAssertTrue(initial.contextSettings.includesTimetable)
         XCTAssertTrue(initial.contextSettings.includesMedicalLedger)
@@ -315,16 +317,52 @@ final class CampusAIAssistantTests: XCTestCase {
         changed.systemPrompt = "请优先用列表回答"
         changed.contextSettings.includesMedicalLedger = false
         changed.webSearchEnabled = false
+        changed.selectedModelID = .pro
         CampusAISettingsStore.save(changed, userDefaults: defaults)
 
         let reloaded = CampusAISettingsStore.load(userDefaults: defaults)
         XCTAssertEqual(reloaded.systemPrompt, "请优先用列表回答")
         XCTAssertFalse(reloaded.contextSettings.includesMedicalLedger)
         XCTAssertFalse(reloaded.webSearchEnabled)
-        XCTAssertEqual(reloaded.serviceMode, .ownAPIKey)
+        XCTAssertEqual(reloaded.selectedModelID, .pro)
+        XCTAssertEqual(reloaded.selectedModel.modelIdentifier, "deepseek-v4-pro")
+        XCTAssertEqual(reloaded.serviceMode, .leafyManaged)
 
         let reset = CampusAISettingsStore.reset(userDefaults: defaults)
         XCTAssertEqual(reset, .defaultValue)
+    }
+
+    func testSettingsStorePersistsExplicitBYOKSelection() throws {
+        let suiteName = "CampusAIAssistantTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var settings = CampusAIUserSettings.defaultValue
+        settings.serviceMode = .ownAPIKey
+        settings.selectedModelID = .pro
+        XCTAssertTrue(CampusAISettingsStore.save(settings, userDefaults: defaults))
+
+        let reloaded = CampusAISettingsStore.load(userDefaults: defaults)
+        XCTAssertEqual(reloaded.serviceMode, .ownAPIKey)
+        XCTAssertEqual(reloaded.selectedModelID, .pro)
+    }
+
+    func testQuotaSnapshotDecodesLegacyAndExpandedPayloads() throws {
+        let legacy = try JSONDecoder().decode(
+            CampusAIQuotaSnapshot.self,
+            from: Data(#"{"plan_source":"free","limit":10,"used":3,"remaining":7,"reset_at":"2026-07-16T16:00:00.000Z","status":"free"}"#.utf8)
+        )
+        XCTAssertEqual(legacy.dailyLimit, 10)
+        XCTAssertEqual(legacy.dailyRemaining, 7)
+        XCTAssertNil(legacy.periodLimit)
+
+        let subscription = try JSONDecoder().decode(
+            CampusAIQuotaSnapshot.self,
+            from: Data(#"{"plan_source":"subscription","limit":120,"used":12,"remaining":28,"reset_at":"2026-07-22T00:00:00.000Z","status":"active","daily_limit":40,"daily_used":12,"daily_remaining":28,"daily_reset_at":"2026-07-16T16:00:00.000Z","period_limit":120,"period_used":12,"period_remaining":108,"period_reset_at":"2026-07-22T00:00:00.000Z"}"#.utf8)
+        )
+        XCTAssertEqual(subscription.dailyRemaining, 28)
+        XCTAssertEqual(subscription.periodRemaining, 108)
+        XCTAssertEqual(subscription.remaining, 28)
     }
 
     func testProviderCatalogDefaultsToDeepSeekV4Flash() {
@@ -340,6 +378,24 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertEqual(CampusAIProviderCatalog.deepSeek.apiKeyManagementURL.scheme, "https")
         XCTAssertEqual(CampusAIProviderCatalog.deepSeek.apiKeyManagementURL.host, "platform.deepseek.com")
         XCTAssertEqual(CampusAIProviderCatalog.deepSeek.apiKeyManagementURL.path, "/api_keys")
+    }
+
+    func testModelCatalogOffersOnlyFlashAndPro() {
+        XCTAssertEqual(CampusAIModelCatalog.all, [
+            .init(
+                id: .flash,
+                modelIdentifier: "deepseek-v4-flash",
+                shortDisplayName: "Flash",
+                fullDisplayName: "DeepSeek V4 Flash"
+            ),
+            .init(
+                id: .pro,
+                modelIdentifier: "deepseek-v4-pro",
+                shortDisplayName: "Pro",
+                fullDisplayName: "DeepSeek V4 Pro"
+            )
+        ])
+        XCTAssertEqual(CampusAIModelCatalog.defaultModel, CampusAIModelCatalog.flash)
     }
 
     func testSettingsStoreMigratesLegacyPromptAndContextOnly() throws {
@@ -367,12 +423,12 @@ final class CampusAIAssistantTests: XCTestCase {
 
         let settings = CampusAISettingsStore.load(userDefaults: defaults)
         XCTAssertEqual(settings.selectedProviderID, .deepSeek)
-        XCTAssertEqual(settings.serviceMode, .ownAPIKey)
+        XCTAssertEqual(settings.serviceMode, .leafyManaged)
         XCTAssertEqual(settings.systemPrompt, "旧版 Prompt")
         XCTAssertFalse(settings.contextSettings.includesMedicalLedger)
         XCTAssertTrue(settings.webSearchEnabled)
         XCTAssertNil(defaults.data(forKey: "campusAI.userSettings.v1"))
-        XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v3"))
+        XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v4"))
     }
 
     func testLegacyKeychainAccountsAreRemovedOnce() throws {
@@ -876,6 +932,92 @@ final class CampusAIAssistantTests: XCTestCase {
         )
     }
 
+    func testResearchPlannerInputExcludesLocalContextAndBoundsConversation() throws {
+        let longText = String(repeating: "上下文", count: 400)
+        let request = CampusAIRequest(
+            message: "2026 年工学院保研政策",
+            context: minimalAIContext(),
+            recentMessages: [
+                .init(role: .user, text: "第一轮"),
+                .init(role: .assistant, text: longText),
+                .init(role: .user, text: "第二轮"),
+                .init(role: .assistant, text: "第二轮回答"),
+                .init(role: .user, text: "2026 年工学院保研政策")
+            ],
+            localRetrieval: .empty(query: "不应进入规划输入")
+        )
+
+        let input = CampusAIResearchPlannerInput(request: request)
+        let encoded = try XCTUnwrap(String(data: JSONEncoder().encode(input), encoding: .utf8))
+
+        XCTAssertEqual(input.question, request.message)
+        XCTAssertEqual(input.recentMessages.count, 4)
+        XCTAssertLessThanOrEqual(input.recentMessages[1].text.count, 500)
+        XCTAssertFalse(encoded.contains("localRetrieval"))
+        XCTAssertFalse(encoded.contains("contextSettings"))
+        XCTAssertFalse(encoded.contains("不应进入规划输入"))
+    }
+
+    func testResearchQueryMustRemainAnchoredToOriginalQuestion() {
+        XCTAssertTrue(CampusAIResearchQueryRelevance.isAnchored(
+            query: "北京林业大学 工学院 2026 推免 工作方案",
+            to: "2026 年工学院保研政策"
+        ))
+        XCTAssertTrue(CampusAIResearchQueryRelevance.isAnchored(
+            query: "推荐免试 攻读研究生 工作方案",
+            to: "保研政策"
+        ))
+        XCTAssertFalse(CampusAIResearchQueryRelevance.isAnchored(
+            query: "师生健康与生命安全",
+            to: "2026 年工学院保研政策"
+        ))
+    }
+
+    func testResearchCitationPolicyOnlyKeepsURLsUsedByAnswer() {
+        let used = CampusAICitation(
+            id: "used",
+            title: "推免工作方案",
+            url: "https://jwc.bjfu.edu.cn/recommendation",
+            attachments: [
+                .init(title: "推免细则.docx", url: "https://jwc.bjfu.edu.cn/files/rules.docx", fileType: "docx")
+            ]
+        )
+        let noise = CampusAICitation(id: "noise", title: "师生健康", url: "https://www.bjfu.edu.cn/health")
+
+        let adopted = CampusAIResearchCitationPolicy.adopted(
+            from: [used, noise],
+            answer: "请查看[推免细则](https://jwc.bjfu.edu.cn/files/rules.docx)。"
+        )
+
+        XCTAssertEqual(adopted.map(\.id), ["used"])
+    }
+
+    func testTimelineMutationPlanSupportsEditAndLinearRewind() {
+        let ids = (0..<6).map { _ in UUID() }
+
+        XCTAssertEqual(
+            CampusAITimelineMutationPlan.removedMessageIDs(
+                orderedMessageIDs: ids,
+                targetID: ids[2],
+                includesTarget: false
+            ),
+            Array(ids[3...])
+        )
+        XCTAssertEqual(
+            CampusAITimelineMutationPlan.removedMessageIDs(
+                orderedMessageIDs: ids,
+                targetID: ids[2],
+                includesTarget: true
+            ),
+            Array(ids[2...])
+        )
+        XCTAssertTrue(CampusAITimelineMutationPlan.removedMessageIDs(
+            orderedMessageIDs: ids,
+            targetID: ids.last!,
+            includesTarget: false
+        ).isEmpty)
+    }
+
     func testChatCompletionsPayloadIncludesLocalRetrievalAndCapabilities() throws {
         let context = CampusAIContextBuilder.build(
             courses: [],
@@ -923,6 +1065,21 @@ final class CampusAIAssistantTests: XCTestCase {
         let payload = try CampusAIService.chatCompletionsPayload(for: request)
 
         XCTAssertEqual(payload.model, "custom-model-id")
+    }
+
+    func testChatCompletionsPayloadSupportsFlashAndProIdentifiers() throws {
+        for model in CampusAIModelCatalog.all {
+            let request = CampusAIRequest(
+                message: "测试模型",
+                context: minimalAIContext(),
+                recentMessages: [],
+                model: model.modelIdentifier
+            )
+            XCTAssertEqual(
+                try CampusAIService.chatCompletionsPayload(for: request).model,
+                model.modelIdentifier
+            )
+        }
     }
 
     func testCampusAIRequestDefaultsWebSearchOff() {
@@ -1924,11 +2081,11 @@ final class CampusAIAssistantTests: XCTestCase {
 
         let settings = CampusAISettingsStore.load(userDefaults: defaults)
 
-        XCTAssertEqual(settings.serviceMode, .ownAPIKey)
+        XCTAssertEqual(settings.serviceMode, .leafyManaged)
         XCTAssertTrue(settings.webSearchEnabled)
         XCTAssertEqual(settings.systemPrompt, "保留这个偏好")
         XCTAssertNil(defaults.data(forKey: "campusAI.userSettings.v2"))
-        XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v3"))
+        XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v4"))
     }
 
     func testCurrentSettingsPreserveDisabledWebResearch() throws {

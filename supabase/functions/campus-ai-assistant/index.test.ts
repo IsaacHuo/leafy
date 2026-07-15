@@ -22,6 +22,7 @@ import {
   parseDeepSeekAPIKeys,
   processDeepSeekSSEBlock,
   redactProviderError,
+  safeAgentSearchQuery,
   shouldRunManagedAgent,
   shouldSearchOfficialDocument,
   systemPrompt,
@@ -220,10 +221,31 @@ Deno.test("campus-ai-assistant builds DeepSeek tool planner payload", () => {
       JSON.stringify(tools).includes("action_plan"),
     "expected tool definitions",
   );
+  const plannerContent = String(
+    (payload.messages as Array<Record<string, unknown>>)[1].content,
+  );
   assert(
-    String((payload.messages as Array<Record<string, unknown>>)[1].content)
-      .includes("local_retrieval"),
-    "expected local retrieval in tool planner content",
+    plannerContent.includes("recent_messages") &&
+      !plannerContent.includes("local_retrieval") &&
+      !plannerContent.includes("context_settings"),
+    "tool planner should only receive the current question and bounded recent messages",
+  );
+});
+
+Deno.test("campus-ai-assistant preserves search intent anchors", () => {
+  assert(
+    safeAgentSearchQuery(
+      "2026 北京林业大学推荐免试工作方案",
+      "2026 年工学院保研政策",
+    ) === "2026 北京林业大学推荐免试工作方案",
+    "campus synonym should preserve the planner query",
+  );
+  assert(
+    safeAgentSearchQuery(
+      "师生健康与学位论文",
+      "2026 年工学院保研政策",
+    ) === "2026 年工学院保研政策",
+    "unrelated planner query should fall back to the user question",
   );
 });
 

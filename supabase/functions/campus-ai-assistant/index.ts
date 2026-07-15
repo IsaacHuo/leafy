@@ -199,6 +199,7 @@ type AgentCallbacks = {
   onAgentStep?: (step: AgentTraceStep) => void;
   onAgentTool?: (tool: AgentToolEvent) => void;
   onAgentCitation?: (citation: AgentCitation) => void;
+  onAgentSearchResults?: (results: AgentCitation[]) => void;
 };
 
 type DeepSeekUsage = {
@@ -243,8 +244,13 @@ export async function handler(request: Request): Promise<Response> {
     return json({ error: authResult.error }, authResult.status);
   }
 
-  if (deepSeekAPIKeys().length === 0) {
-    return json({ error: "AI 服务未配置 DeepSeek API Key。" }, 500);
+  const configuredDeepSeekKeys = deepSeekAPIKeys();
+  console.info(JSON.stringify({
+    event: "campus_ai_deepseek_key_count",
+    count: configuredDeepSeekKeys.length,
+  }));
+  if (configuredDeepSeekKeys.length !== 4) {
+    return json({ error: "AI 服务配置尚未完成。" }, 503);
   }
 
   const body = await readJSON<CampusAIRequest>(request);
@@ -254,7 +260,7 @@ export async function handler(request: Request): Promise<Response> {
   }
 
   if (body.service_mode !== "leafyManaged") {
-    return json({ error: "托管服务只接受 Leafy 托管模式请求。" }, 400);
+    return json({ error: "Leafy AI 服务请求模式无效。" }, 400);
   }
 
   const message = normalizeText(body.message);
@@ -294,9 +300,13 @@ export async function handler(request: Request): Promise<Response> {
   });
 
   if (!reservation.allowed) {
-    const status = reservation.error === "quota_exhausted" ? 402 : 429;
-    const error = reservation.error === "quota_exhausted"
-      ? "本月 Leafy AI 次数已用完。"
+    const isQuotaError = reservation.error === "daily_quota_exhausted" ||
+      reservation.error === "period_quota_exhausted";
+    const status = isQuotaError ? 402 : 429;
+    const error = reservation.error === "daily_quota_exhausted"
+      ? "今日次数已用完。"
+      : reservation.error === "period_quota_exhausted"
+      ? "本订阅周期次数已用完。"
       : "AI 助手请求太频繁了，稍后再试。";
     return json({ error, quota: reservation.quota }, status);
   }
@@ -347,6 +357,17 @@ export async function handler(request: Request): Promise<Response> {
         onAgentCitation(citation: AgentCitation) {
           citations.push(citation);
           enqueueSSE(controller, { type: "agent_citation", citation });
+        },
+        onAgentSearchResults(results: AgentCitation[]) {
+          enqueueSSE(controller, {
+            type: "agent_search_results",
+            results: results.map((result) => ({
+              id: result.id,
+              title: result.title,
+              url: result.url,
+              siteName: result.siteName,
+            })),
+          });
         },
       };
 
@@ -624,6 +645,7 @@ async function runAgentDeepSeek(
         try {
           const results = await webSearch(query, freshness, count, agentSignal);
           searchResults.push({ query, citations: results });
+          callbacks.onAgentSearchResults?.(results);
           for (const citation of results) emitCitation(citation);
           emitTool({
             name: "web.search",
@@ -678,6 +700,7 @@ async function runAgentDeepSeek(
           deliverables.push(result.deliverable);
           const resultCitations = citationsFromDeliverable(result.deliverable);
           searchResults.push({ query, citations: resultCitations });
+          callbacks.onAgentSearchResults?.(resultCitations);
           for (const citation of resultCitations) emitCitation(citation);
           emitTool({
             name: "official.document.search",
@@ -844,13 +867,12 @@ export function agentToolPlannerPayload(
         role: "user",
         content: safeJSONStringify({
           message,
-          context: body.context ?? {},
-          context_settings: body.context_settings ?? body.contextSettings ?? {},
-          capabilities: body.capabilities ?? {},
-          local_retrieval: localRetrievalFromBody(body),
-          recent_messages: recentMessagesFromBody(body).slice(
-            -maxRecentMessages,
-          ),
+          recent_messages: recentMessagesFromBody(body).slice(-4).map((
+            item,
+          ) => ({
+            role: item.role === "assistant" ? "assistant" : "user",
+            text: (normalizeText(item.text) ?? "").slice(0, 500),
+          })),
           available_tools: [
             "web.search",
             "official.document.search",
@@ -1077,8 +1099,10 @@ export function normalizeAgentToolCalls(
         if (!options.allowWebSearch || searchCount >= maxAgentSearchCalls) {
           break;
         }
-        const query = normalizeText(toolCall.arguments.query) ??
-          normalizeSearchQuery(options.message);
+        const query = safeAgentSearchQuery(
+          toolCall.arguments.query,
+          options.message,
+        );
         if (!query) break;
         searchCount += 1;
         normalized.push({
@@ -1103,8 +1127,10 @@ export function normalizeAgentToolCalls(
         ) {
           break;
         }
-        const query = normalizeText(toolCall.arguments.query) ??
-          normalizeSearchQuery(options.message);
+        const query = safeAgentSearchQuery(
+          toolCall.arguments.query,
+          options.message,
+        );
         if (!query) break;
         officialSearchCount += 1;
         normalized.push({
@@ -1223,6 +1249,51 @@ function normalizeSearchQuery(message: string) {
     ?.replace(/^(帮我|请|麻烦你)?(联网)?(搜索|查一下|查找)/, "")
     .slice(0, 160)
     .trim();
+}
+
+export function safeAgentSearchQuery(candidate: unknown, original: string) {
+  const originalQuery = normalizeSearchQuery(original) ??
+    normalizeText(original);
+  if (!originalQuery) return null;
+  const candidateQuery = normalizeText(candidate);
+  if (!candidateQuery) return originalQuery;
+
+  const originalYears = originalQuery.match(/(?:19|20)\d{2}/g) ?? [];
+  if (originalYears.some((year) => !candidateQuery.includes(year))) {
+    return originalQuery;
+  }
+
+  const originalAnchors = substantiveSearchAnchors(originalQuery);
+  if (originalAnchors.length === 0) return originalQuery;
+  const candidateAnchors = new Set(substantiveSearchAnchors(candidateQuery));
+  const preservesAnchor = originalAnchors.some((anchor) =>
+    candidateAnchors.has(anchor) ||
+    campusSearchSynonymMatch(anchor, candidateQuery)
+  );
+  return preservesAnchor ? candidateQuery.slice(0, 180) : originalQuery;
+}
+
+function substantiveSearchAnchors(value: string) {
+  const normalized = value.toLowerCase()
+    .replace(/[\p{P}\p{S}\s]+/gu, "")
+    .replace(/(?:19|20)\d{2}/g, "")
+    .replace(
+      /(?:北京林业大学|北林|官网|官方|最新|最近|搜索|查找|查一下|资料|网页|通知|政策|链接|来源|出处)/g,
+      "",
+    );
+  const anchors = new Set<string>();
+  for (const word of value.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []) {
+    anchors.add(word);
+  }
+  for (let index = 0; index + 1 < normalized.length; index += 1) {
+    anchors.add(normalized.slice(index, index + 2));
+  }
+  if (/(保研|推免|推荐免试|免试攻读)/.test(value)) anchors.add("推免");
+  return [...anchors];
+}
+
+function campusSearchSynonymMatch(anchor: string, candidate: string) {
+  return anchor === "推免" && /(保研|推免|推荐免试|免试攻读)/.test(candidate);
 }
 
 function normalizeFreshness(value: unknown) {

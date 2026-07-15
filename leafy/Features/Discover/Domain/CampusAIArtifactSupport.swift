@@ -215,6 +215,10 @@ nonisolated enum CampusAIDiagnostics {
     static func persistenceFailure(_ error: Error, operation: String) {
         logger.error("persistence=\(operation, privacy: .public) error=\(String(describing: type(of: error)), privacy: .public)")
     }
+
+    static func researchCounts(requestID: UUID, found: Int, read: Int, adopted: Int) {
+        logger.info("research request=\(requestID.uuidString, privacy: .public) found=\(found, privacy: .public) read=\(read, privacy: .public) adopted=\(adopted, privacy: .public)")
+    }
 }
 
 nonisolated private extension String {

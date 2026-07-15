@@ -5,7 +5,92 @@ import Supabase
 
 nonisolated enum CampusAIResearchIntent {
     static func shouldRun(_ request: CampusAIRequest) -> Bool {
-        request.webSearchEnabled && request.capabilities.webSearchEnabled
+        guard request.webSearchEnabled, request.capabilities.webSearchEnabled else { return false }
+
+        let message = normalized(request.message)
+        guard !message.isEmpty, !containsAny(message, explicitOfflinePhrases) else { return false }
+        if isLightweightConversation(message) || isLocalCampusDataRequest(message) {
+            return false
+        }
+        if requiresExternalResearch(message) {
+            return true
+        }
+
+        guard isContextualFollowUp(message) else { return false }
+        return request.recentMessages.reversed().first(where: { $0.role == .user }).map {
+            requiresExternalResearch(normalized($0.text))
+        } ?? false
+    }
+
+    private static let explicitOfflinePhrases = ["不用联网", "不要联网", "无需联网", "别搜索", "不要搜索"]
+    private static let explicitWebPhrases = ["联网", "上网", "网页", "官网", "官方链接", "在线搜索", "搜索一下", "搜一下", "查找来源", "给我来源", "给出链接", "核实一下"]
+    private static let freshnessPhrases = ["最新", "目前", "现在", "今天", "今年", "本学期", "截至", "近期", "刚发布", "实时"]
+    private static let externalTopics = [
+        "政策", "通知", "公告", "规定", "办法", "细则", "工作方案", "招生", "报名", "参赛", "比赛",
+        "保研", "推免", "推荐免试", "奖学金", "培养方案", "论文格式", "校历", "放假", "开放时间",
+        "联系电话", "办公地点", "办理流程", "申请条件", "天气", "新闻"
+    ]
+    private static let participationPhrases = ["怎么参加", "如何参加", "怎么报名", "如何报名", "报名方式", "报名时间", "参赛要求"]
+    private static let factSeekingPhrases = ["政策", "通知", "公告", "规定", "办法", "细则", "工作方案", "条件", "要求", "时间", "地点", "流程", "格式"]
+    private static let conceptualPhrases = ["什么是", "是什么意思", "解释一下", "介绍一下", "概念", "区别是什么"]
+    private static let localDataPhrases = ["我的课表", "我的课程", "我的成绩", "我的绩点", "我的考试", "我的日程", "我的倒计时", "帮我安排", "帮我提醒"]
+    private static let greetings: Set<String> = [
+        "你好", "您好", "嗨", "hi", "hello", "早上好", "下午好", "晚上好", "在吗", "谢谢", "感谢", "好的", "好", "收到", "再见"
+    ]
+
+    private static func requiresExternalResearch(_ message: String) -> Bool {
+        let explicitlyRequestsWeb = containsAny(message, explicitWebPhrases)
+        if explicitlyRequestsWeb {
+            return true
+        }
+
+        let hasFreshnessRequirement = containsAny(message, freshnessPhrases) || containsYear(message)
+        let hasExternalTopic = containsAny(message, externalTopics)
+        if hasFreshnessRequirement && hasExternalTopic {
+            return true
+        }
+        if containsAny(message, participationPhrases) && hasExternalTopic {
+            return true
+        }
+        if containsAny(message, conceptualPhrases) && !hasFreshnessRequirement {
+            return false
+        }
+        if hasExternalTopic && containsAny(message, factSeekingPhrases) {
+            return true
+        }
+
+        let asksForOfficialFact = containsAny(message, ["官方", "北林", "北京林业大学", "教务处", "研究生院"])
+            && containsAny(message, externalTopics + ["地址", "电话", "在哪里", "几点", "要求"])
+        return asksForOfficialFact
+    }
+
+    private static func isLightweightConversation(_ message: String) -> Bool {
+        if greetings.contains(message) { return true }
+        if message.count <= 8, containsAny(message, ["你好", "您好", "hello", "hi"]) { return true }
+        return containsAny(message, ["讲个笑话", "夸夸我", "陪我聊聊", "你是谁", "你能做什么"])
+    }
+
+    private static func isLocalCampusDataRequest(_ message: String) -> Bool {
+        containsAny(message, localDataPhrases) && !containsAny(message, explicitWebPhrases)
+    }
+
+    private static func isContextualFollowUp(_ message: String) -> Bool {
+        message.count <= 18 && containsAny(message, ["那", "那么", "这个", "它", "今年呢", "现在呢", "最新的呢"])
+    }
+
+    private static func containsYear(_ message: String) -> Bool {
+        message.range(of: #"(?:20)\d{2}年?"#, options: .regularExpression) != nil
+    }
+
+    private static func containsAny(_ message: String, _ phrases: [String]) -> Bool {
+        phrases.contains(where: message.contains)
+    }
+
+    private static func normalized(_ message: String) -> String {
+        message
+            .lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"[，。！？!?、\s]+"#, with: "", options: .regularExpression)
     }
 }
 
@@ -13,6 +98,7 @@ nonisolated enum CampusAIResearchAgentError: LocalizedError {
     case invalidToolCall
     case unknownResultID
     case duplicateToolCall
+    case irrelevantQuery
     case budgetExceeded
     case noPDFText
     case documentTooLarge
@@ -26,6 +112,8 @@ nonisolated enum CampusAIResearchAgentError: LocalizedError {
             return "AI 尝试读取一个不属于本次搜索的结果。"
         case .duplicateToolCall:
             return "相同的联网工具调用已执行过。"
+        case .irrelevantQuery:
+            return "搜索词偏离了用户原问题，请保留主题关键词后重新搜索。"
         case .budgetExceeded:
             return "本次联网研究已达到预算上限。"
         case .noPDFText:
@@ -110,7 +198,6 @@ nonisolated struct CampusAIResearchAgent {
                         case .askUser(let question):
                             continuation.yield(.done(CampusAIResponse(
                                 answer: question,
-                                citations: state.citations,
                                 agentTrace: state.trace
                             )))
                             continuation.finish()
@@ -214,6 +301,12 @@ nonisolated struct CampusAIResearchAgent {
             guard state.executedCalls.insert(deduplicationKey).inserted else {
                 return failedTool(call, error: CampusAIResearchAgentError.duplicateToolCall, state: &state, continuation: continuation)
             }
+            guard CampusAIResearchQueryRelevance.isAnchored(
+                query: arguments.query,
+                to: state.originalQuestion
+            ) else {
+                return failedTool(call, error: CampusAIResearchAgentError.irrelevantQuery, state: &state, continuation: continuation)
+            }
             state.searchCount += 1
             let official = name == "official_search"
             let title = official ? "搜索北林官方资料" : "搜索公开网页"
@@ -230,12 +323,8 @@ nonisolated struct CampusAIResearchAgent {
                     if result.fileType == "PDF" {
                         state.attachments[result.id] = result.asAttachment
                     }
-                    let citation = result.citation
-                    if !state.citations.contains(where: { $0.id == citation.id }) {
-                        state.citations.append(citation)
-                        continuation.yield(.agentCitation(citation))
-                    }
                 }
+                continuation.yield(.agentSearchResults(results.map(\.searchPreview)))
                 let step = state.appendTrace(title: title, detail: "找到 \(results.count) 条结果。", status: "completed", tool: name)
                 continuation.yield(.agentStep(step))
                 continuation.yield(.agentTool(.init(name: name, status: "completed", resultCount: results.count)))
@@ -263,10 +352,10 @@ nonisolated struct CampusAIResearchAgent {
                 var page = try await gateway.readPage(receipt: result.readReceipt)
                 page.text = state.consumeExtractedText(page.text)
                 for attachment in page.attachments { state.attachments[attachment.id] = attachment }
-                if let citationIndex = state.citations.firstIndex(where: { $0.id == result.id }) {
-                    state.citations[citationIndex].attachments = page.attachments.map(\.deliverableAttachment)
-                    continuation.yield(.agentCitation(state.citations[citationIndex]))
-                }
+                var citation = result.citation
+                citation.attachments = page.attachments.map(\.deliverableAttachment)
+                state.upsertCitation(citation)
+                continuation.yield(.agentCitation(citation))
                 state.readPages.append(page)
                 let step = state.appendTrace(title: "阅读网页", detail: page.title, status: "completed", tool: name)
                 continuation.yield(.agentStep(step))
@@ -296,6 +385,11 @@ nonisolated struct CampusAIResearchAgent {
                 var text = try CampusAIPDFTextExtractor.extract(data: data)
                 text = state.consumeExtractedText(text)
                 state.readPDFs.append(.init(attachment: attachment, text: text))
+                if let result = state.results[attachment.id] {
+                    let citation = result.citation
+                    state.upsertCitation(citation)
+                    continuation.yield(.agentCitation(citation))
+                }
                 let step = state.appendTrace(title: "读取 PDF", detail: attachment.title, status: "completed", tool: name)
                 continuation.yield(.agentStep(step))
                 continuation.yield(.agentTool(.init(name: name, status: "completed", resultCount: 1)))
@@ -357,8 +451,18 @@ nonisolated struct CampusAIResearchAgent {
         )
         for try await event in CampusAIService.invokeDirectStream(synthesisRequest, settings: settings) {
             if case .done(var response) = event {
-                response.citations = mergeCitations(response.citations, state.citations)
+                let candidateCitations = mergeCitations(response.citations, state.citations)
+                response.citations = CampusAIResearchCitationPolicy.adopted(
+                    from: candidateCitations,
+                    answer: response.answer
+                )
                 response.agentTrace = mergeTrace(response.agentTrace, state.trace)
+                CampusAIDiagnostics.researchCounts(
+                    requestID: originalRequest.requestID,
+                    found: state.results.count,
+                    read: state.readPages.count + state.readPDFs.count,
+                    adopted: response.citations.count
+                )
                 continuation.yield(.done(response))
             } else {
                 continuation.yield(event)
@@ -418,6 +522,7 @@ nonisolated struct CampusAIResearchAgent {
 
 nonisolated private struct CampusAIResearchState {
     let startedAt = Date()
+    let originalQuestion: String
     var turnCount = 0
     var searchCount = 0
     var webReadCount = 0
@@ -435,7 +540,10 @@ nonisolated private struct CampusAIResearchState {
     var messages: [CampusAIResearchMessage]
 
     init(request: CampusAIRequest) {
-        let requestJSON = (try? JSONEncoder().encode(request)).flatMap { String(data: $0, encoding: .utf8) } ?? request.message
+        originalQuestion = request.message
+        let plannerInput = CampusAIResearchPlannerInput(request: request)
+        let requestJSON = (try? JSONEncoder().encode(plannerInput))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? request.message
         messages = [
             .system(CampusAIResearchToolDefinition.systemPrompt),
             .user(requestJSON)
@@ -467,9 +575,18 @@ nonisolated private struct CampusAIResearchState {
         return step
     }
 
+    mutating func upsertCitation(_ citation: CampusAICitation) {
+        if let index = citations.firstIndex(where: { $0.url == citation.url }) {
+            citations[index] = citation
+        } else {
+            citations.append(citation)
+        }
+    }
+
     func synthesisContext(incomplete: Bool) -> String {
+        let readResultIDs = Set(readPages.map(\.id) + readPDFs.map(\.attachment.id))
         let payload = CampusAIResearchSynthesisPayload(
-            results: results.values.map(\.modelPayload),
+            results: results.values.filter { readResultIDs.contains($0.id) }.map(\.modelPayload),
             pages: readPages.map(\.untrustedPayload),
             pdfs: readPDFs.map(\.modelPayload),
             failures: failures,
@@ -478,6 +595,85 @@ nonisolated private struct CampusAIResearchState {
         )
         guard let data = try? JSONEncoder().encode(payload), let string = String(data: data, encoding: .utf8) else { return "{}" }
         return string
+    }
+}
+
+nonisolated struct CampusAIResearchPlannerInput: Encodable, Hashable {
+    let question: String
+    let recentMessages: [CampusAIChatMessage]
+
+    init(request: CampusAIRequest) {
+        question = String(request.message.prefix(1_000))
+        var recent = request.recentMessages
+        if recent.last?.role == .user,
+           recent.last?.text.trimmingCharacters(in: .whitespacesAndNewlines) == request.message.trimmingCharacters(in: .whitespacesAndNewlines) {
+            recent.removeLast()
+        }
+        recentMessages = recent.suffix(4).map {
+            CampusAIChatMessage(role: $0.role, text: String($0.text.prefix(500)))
+        }
+    }
+}
+
+nonisolated enum CampusAIResearchQueryRelevance {
+    private static let genericPhrases = ["北京林业大学", "北林官网", "北林"]
+    private static let stopConcepts: Set<String> = ["北京", "林业", "大学", "官网", "学校", "资料", "查询", "搜索"]
+    private static let recommendationSynonyms = ["保研", "推免", "推荐免试", "免试攻读"]
+
+    static func isAnchored(query: String, to question: String) -> Bool {
+        let queryConcepts = concepts(in: query)
+        let questionConcepts = concepts(in: question)
+        guard !queryConcepts.isEmpty, !questionConcepts.isEmpty else { return false }
+        return !queryConcepts.isDisjoint(with: questionConcepts)
+    }
+
+    static func concepts(in text: String) -> Set<String> {
+        var normalized = text.lowercased()
+        for phrase in genericPhrases {
+            normalized = normalized.replacingOccurrences(of: phrase.lowercased(), with: " ")
+        }
+        normalized = normalized.replacingOccurrences(
+            of: #"[^\p{L}\p{N}]+"#,
+            with: " ",
+            options: .regularExpression
+        )
+        var result = Set<String>()
+        for chunk in normalized.split(whereSeparator: \.isWhitespace).map(String.init) where chunk.count >= 2 {
+            result.insert(chunk)
+            let characters = Array(chunk)
+            if characters.count > 2, characters.contains(where: isHanCharacter) {
+                for index in 0..<(characters.count - 1) {
+                    result.insert(String(characters[index...index + 1]))
+                }
+            }
+        }
+        result.subtract(stopConcepts)
+        if recommendationSynonyms.contains(where: { normalized.contains($0) }) {
+            result.insert("__postgraduate_recommendation__")
+        }
+        return result
+    }
+
+    private static func isHanCharacter(_ character: Character) -> Bool {
+        character.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xF900...0xFAFF:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+}
+
+nonisolated enum CampusAIResearchCitationPolicy {
+    static func adopted(from candidates: [CampusAICitation], answer: String) -> [CampusAICitation] {
+        candidates.filter { citation in
+            answer.localizedCaseInsensitiveContains(citation.url) ||
+                citation.attachments.contains(where: {
+                    answer.localizedCaseInsensitiveContains($0.url)
+                })
+        }
     }
 }
 
@@ -735,6 +931,14 @@ nonisolated struct CampusAIToolSearchResult: Codable, Hashable {
             snippet: snippet,
             publishedAt: publishedAt,
             attachments: fileType == nil ? [] : [asAttachment.deliverableAttachment]
+        )
+    }
+    var searchPreview: CampusAISearchResultPreview {
+        .init(
+            id: id,
+            title: title,
+            url: url,
+            siteName: sourceKind == "bjfu_official" ? "北林官方" : displayHost
         )
     }
     var asAttachment: CampusAIToolAttachment { .init(id: id, title: title, url: url, fileType: "PDF", readReceipt: readReceipt) }

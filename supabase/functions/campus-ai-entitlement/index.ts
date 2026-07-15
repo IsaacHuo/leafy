@@ -73,6 +73,22 @@ export async function handler(request: Request): Promise<Response> {
     return json({ error: "订阅交易验证失败，请稍后重试。" }, 401);
   }
 
+  if (body.transaction_jws && !subscription) {
+    return json({ error: "该订阅商品已不再受支持。" }, 400);
+  }
+
+  if (!subscription) {
+    const snapshot = await quotaSnapshot(
+      adminClient,
+      authResult.userID,
+      appTransaction.appTransactionID,
+    );
+    if (!snapshot.ok) {
+      return json({ error: "额度状态同步失败，请稍后重试。" }, 500);
+    }
+    return json({ quota: snapshot.data });
+  }
+
   if (
     subscription?.appTransactionID &&
     subscription.appTransactionID !== appTransaction.appTransactionID
@@ -83,14 +99,14 @@ export async function handler(request: Request): Promise<Response> {
   const sync = await syncEntitlement(adminClient, {
     authUserID: authResult.userID,
     appTransactionID: appTransaction.appTransactionID,
-    productID: subscription?.productID ?? null,
-    originalTransactionID: subscription?.originalTransactionID ?? null,
-    transactionID: subscription?.transactionID ?? null,
-    environment: subscription?.environment ?? appTransaction.environment,
-    status: subscription?.status ?? "free",
-    currentPeriodStart: subscription?.currentPeriodStart ?? null,
-    currentPeriodEnd: subscription?.currentPeriodEnd ?? null,
-    signedAt: subscription?.signedAt ?? null,
+    productID: subscription.productID,
+    originalTransactionID: subscription.originalTransactionID,
+    transactionID: subscription.transactionID,
+    environment: subscription.environment ?? appTransaction.environment,
+    status: subscription.status,
+    currentPeriodStart: subscription.currentPeriodStart,
+    currentPeriodEnd: subscription.currentPeriodEnd,
+    signedAt: subscription.signedAt,
   });
 
   if (!sync.ok) {
@@ -134,6 +150,28 @@ async function syncEntitlement(adminClient: any, params: {
 
   if (error) {
     console.error("campus-ai-entitlement: sync failed", error.message);
+    return { ok: false as const };
+  }
+  return { ok: true as const, data };
+}
+
+async function quotaSnapshot(
+  adminClient: any,
+  authUserID: string,
+  appTransactionID: string,
+) {
+  const { data, error } = await adminClient.schema("private").rpc(
+    "campus_ai_quota_snapshot",
+    {
+      p_auth_user_id: authUserID,
+      p_app_transaction_id: appTransactionID,
+    },
+  );
+  if (error) {
+    console.error(
+      "campus-ai-entitlement: quota snapshot failed",
+      error.message,
+    );
     return { ok: false as const };
   }
   return { ok: true as const, data };

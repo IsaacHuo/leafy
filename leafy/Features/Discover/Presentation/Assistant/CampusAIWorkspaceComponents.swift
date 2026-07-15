@@ -3,6 +3,10 @@ import SwiftUI
 struct CampusAIChatTopBar: View {
     let openHistory: () -> Void
     let openSettings: () -> Void
+    let selectedModelID: CampusAIModelID
+    let allowsModelSelection: Bool
+    let isModelSelectionDisabled: Bool
+    let selectModel: (CampusAIModelID) -> Void
     let startNewConversation: () -> Void
 
     var body: some View {
@@ -20,6 +24,33 @@ struct CampusAIChatTopBar: View {
                         accessibilityLabel: "Leafy 设置",
                         action: openSettings
                     )
+
+                    if allowsModelSelection {
+                        Menu {
+                            ForEach(CampusAIModelCatalog.all) { model in
+                                Button {
+                                    selectModel(model.id)
+                                } label: {
+                                    if model.id == selectedModelID {
+                                        Label(model.shortDisplayName, systemImage: "checkmark")
+                                    } else {
+                                        Text(model.shortDisplayName)
+                                    }
+                                }
+                            }
+                        } label: {
+                            modelCapsuleLabel(
+                                CampusAIModelCatalog.model(for: selectedModelID).shortDisplayName,
+                                showsChevron: true
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isModelSelectionDisabled)
+                        .accessibilityLabel("模型：\(CampusAIModelCatalog.model(for: selectedModelID).shortDisplayName)")
+                    } else {
+                        modelCapsuleLabel("Flash", showsChevron: false)
+                            .accessibilityLabel("模型：Flash")
+                    }
                 }
             }
 
@@ -33,6 +64,22 @@ struct CampusAIChatTopBar: View {
         }
         .padding(.horizontal, LeafyRootChromeMetrics.horizontalInset)
         .padding(.bottom, LeafyRootChromeMetrics.contentSpacing)
+    }
+
+    private func modelCapsuleLabel(_ title: String, showsChevron: Bool) -> some View {
+        HStack(spacing: 5) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+            if showsChevron {
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.bold))
+            }
+        }
+        .foregroundStyle(AppTheme.accent)
+        .padding(.horizontal, 14)
+        .frame(height: LeafyRootChromeMetrics.controlDiameter)
+        .contentShape(Capsule())
+        .leafyGlassSurface(in: Capsule(), isInteractive: showsChevron)
     }
 }
 
@@ -139,7 +186,9 @@ struct CampusAIEmptyConversationPanel: View {
     @Environment(\.leafyThemeColorPreference) private var themeColorPreference
 
     let prompts: [String]
-    let hasAPIKey: Bool
+    let canUseService: Bool
+    let quotaText: String
+    let openSubscription: () -> Void
     let configureAPIKey: () -> Void
     let selectPrompt: (String) -> Void
 
@@ -158,7 +207,7 @@ struct CampusAIEmptyConversationPanel: View {
                     .frame(maxWidth: 380)
             }
 
-            if hasAPIKey {
+            if canUseService {
                 VStack(spacing: 0) {
                     ForEach(Array(prompts.enumerated()), id: \.element) { index, prompt in
                         Button {
@@ -189,6 +238,13 @@ struct CampusAIEmptyConversationPanel: View {
                 }
                 .background(AppTheme.softFill.opacity(0.72), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .frame(maxWidth: 520)
+
+                Button(action: openSubscription) {
+                    Text(quotaText)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(AppTheme.accent)
+                }
+                .buttonStyle(.plain)
             } else {
                 CampusAIMissingKeyPanel(configureAPIKey: configureAPIKey)
                     .frame(maxWidth: 520)
@@ -232,13 +288,20 @@ struct CampusAIComposerBar: View {
     let isFocused: FocusState<Bool>.Binding
     let isSending: Bool
     let canSend: Bool
-    let hasAPIKey: Bool
+    let canUseService: Bool
+    let isEditingMessage: Bool
     let configureAPIKey: () -> Void
+    let cancelEditing: () -> Void
     let submit: () -> Void
     let cancelStreaming: () -> Void
 
     var body: some View {
         VStack(spacing: 8) {
+            if isEditingMessage {
+                editingMessagePill
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+
             if outputMode == .artifact {
                 artifactModePill
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -251,6 +314,7 @@ struct CampusAIComposerBar: View {
         .padding(.horizontal, LeafyRootChromeMetrics.horizontalInset)
         .padding(.bottom, 8)
         .animation(accessibilityReduceMotion ? nil : .easeInOut(duration: 0.2), value: outputMode)
+        .animation(accessibilityReduceMotion ? nil : .easeInOut(duration: 0.2), value: isEditingMessage)
     }
 
     @ViewBuilder
@@ -273,7 +337,7 @@ struct CampusAIComposerBar: View {
 
     @ViewBuilder
     private var composerContent: some View {
-        if hasAPIKey {
+        if canUseService {
             HStack(alignment: .center, spacing: 2) {
                 Menu {
                     Button {
@@ -329,6 +393,37 @@ struct CampusAIComposerBar: View {
             .buttonStyle(.plain)
             .foregroundStyle(AppTheme.accent)
             .padding(.horizontal, 12)
+        }
+    }
+
+    @ViewBuilder
+    private var editingMessagePill: some View {
+        let pill = HStack(spacing: 8) {
+            Image(systemName: "pencil")
+            Text("正在编辑消息")
+                .font(.caption.weight(.medium))
+            Spacer(minLength: 8)
+            Button(action: cancelEditing) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("取消编辑消息")
+        }
+        .foregroundStyle(AppTheme.accent)
+        .padding(.leading, 14)
+        .padding(.trailing, 4)
+
+        if #available(iOS 26.0, *) {
+            pill.glassEffect(.regular.tint(AppTheme.accent.opacity(0.10)), in: .capsule)
+        } else {
+            pill
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay {
+                    Capsule().strokeBorder(AppTheme.accent.opacity(0.18), lineWidth: 0.5)
+                }
         }
     }
 

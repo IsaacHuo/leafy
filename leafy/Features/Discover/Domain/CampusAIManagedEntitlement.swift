@@ -32,7 +32,7 @@ nonisolated struct CampusAIAppTransactionPayload: Hashable {
 }
 
 nonisolated enum CampusAIManagedEntitlementClient {
-    static let weeklyProductID = "com.isaachuo.leafy.ai.weekly"
+    static let weeklyProductID = "com.isaachuo.leafy.ai.weekly.v2"
     private static let entitlementFunctionName = "campus-ai-entitlement"
 
     static func appTransactionPayload() async throws -> CampusAIAppTransactionPayload {
@@ -138,6 +138,35 @@ final class CampusAISubscriptionStore: ObservableObject {
     @Published private(set) var isPurchased = false
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
+    @Published private(set) var pendingMessage: String?
+    private var transactionUpdatesTask: Task<Void, Never>?
+
+    init() {
+        transactionUpdatesTask = Task { [weak self] in
+            for await result in Transaction.updates {
+                guard !Task.isCancelled else { return }
+                guard let transaction = try? result.payloadValue,
+                      transaction.productID == CampusAIManagedEntitlementClient.weeklyProductID
+                else { continue }
+                do {
+                    self?.quota = try await CampusAIManagedEntitlementClient.sync(
+                        transactionJWS: result.jwsRepresentation
+                    )
+                    self?.isPurchased = transaction.revocationDate == nil &&
+                        (transaction.expirationDate.map { $0 > Date() } ?? true)
+                    self?.errorMessage = nil
+                    self?.pendingMessage = nil
+                    await transaction.finish()
+                } catch {
+                    self?.errorMessage = "同步订阅额度失败：\(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    deinit {
+        transactionUpdatesTask?.cancel()
+    }
 
     var productID: String {
         product?.id ?? CampusAIManagedEntitlementClient.weeklyProductID
@@ -155,7 +184,7 @@ final class CampusAISubscriptionStore: ObservableObject {
     }
 
     var subscriptionQuotaText: String {
-        "50 次/\(billingPeriodText)"
+        "120 次/\(billingPeriodText)"
     }
 
     func refresh() async {
@@ -186,18 +215,19 @@ final class CampusAISubscriptionStore: ObservableObject {
             quota = try await CampusAIManagedEntitlementClient.sync(transactionJWS: transactionJWS)
         } catch {
             quota = nil
-            messages.append("同步 Leafy 托管额度失败：\(error.localizedDescription)")
+            messages.append("同步 Leafy AI 额度失败：\(error.localizedDescription)")
         }
 
         errorMessage = messages.isEmpty ? nil : messages.joined(separator: "\n\n")
     }
 
-    func purchase() async {
+    @discardableResult
+    func purchase() async -> Bool {
         guard let product else {
             errorMessage = CampusAIManagedEntitlementError
                 .productNotReturned(productID: CampusAIManagedEntitlementClient.weeklyProductID)
                 .localizedDescription
-            return
+            return false
         }
 
         isLoading = true
@@ -211,15 +241,23 @@ final class CampusAISubscriptionStore: ObservableObject {
                 isPurchased = true
                 await transaction.finish()
                 errorMessage = nil
+                pendingMessage = nil
+                return true
             case .pending:
-                errorMessage = CampusAIManagedEntitlementError.purchasePending.localizedDescription
+                pendingMessage = CampusAIManagedEntitlementError.purchasePending.localizedDescription
+                errorMessage = nil
+                return false
             case .userCancelled:
-                errorMessage = CampusAIManagedEntitlementError.purchaseCancelled.localizedDescription
+                errorMessage = nil
+                pendingMessage = nil
+                return false
             @unknown default:
                 errorMessage = CampusAIManagedEntitlementError.productUnavailable.localizedDescription
+                return false
             }
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -232,9 +270,15 @@ final class CampusAISubscriptionStore: ObservableObject {
             isPurchased = transactionJWS != nil
             quota = try await CampusAIManagedEntitlementClient.sync(transactionJWS: transactionJWS)
             errorMessage = nil
+            pendingMessage = nil
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func applyQuota(_ quota: CampusAIQuotaSnapshot) {
+        self.quota = quota
+        isPurchased = quota.planSource == "subscription" && quota.status == "active"
     }
 }
 

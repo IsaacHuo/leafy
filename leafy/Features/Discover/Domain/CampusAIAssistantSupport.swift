@@ -477,10 +477,58 @@ nonisolated struct CampusAIChatMessage: Codable, Hashable {
     let text: String
 }
 
+nonisolated enum CampusAITimelineMutationPlan {
+    static func removedMessageIDs(
+        orderedMessageIDs: [UUID],
+        targetID: UUID,
+        includesTarget: Bool
+    ) -> [UUID] {
+        guard let index = orderedMessageIDs.firstIndex(of: targetID) else { return [] }
+        let startIndex = includesTarget ? index : orderedMessageIDs.index(after: index)
+        guard startIndex < orderedMessageIDs.endIndex else { return [] }
+        return Array(orderedMessageIDs[startIndex...])
+    }
+}
+
 nonisolated enum CampusAIProviderID: String, Codable, CaseIterable, Hashable, Identifiable {
     case deepSeek = "deepseek"
 
     var id: String { rawValue }
+}
+
+nonisolated enum CampusAIModelID: String, Codable, CaseIterable, Hashable, Identifiable {
+    case flash
+    case pro
+
+    var id: String { rawValue }
+}
+
+nonisolated struct CampusAIModelDescriptor: Hashable, Identifiable {
+    let id: CampusAIModelID
+    let modelIdentifier: String
+    let shortDisplayName: String
+    let fullDisplayName: String
+}
+
+nonisolated enum CampusAIModelCatalog {
+    static let flash = CampusAIModelDescriptor(
+        id: .flash,
+        modelIdentifier: "deepseek-v4-flash",
+        shortDisplayName: "Flash",
+        fullDisplayName: "DeepSeek V4 Flash"
+    )
+    static let pro = CampusAIModelDescriptor(
+        id: .pro,
+        modelIdentifier: "deepseek-v4-pro",
+        shortDisplayName: "Pro",
+        fullDisplayName: "DeepSeek V4 Pro"
+    )
+    static let all = [flash, pro]
+    static let defaultModel = flash
+
+    static func model(for id: CampusAIModelID) -> CampusAIModelDescriptor {
+        all.first(where: { $0.id == id }) ?? defaultModel
+    }
 }
 
 nonisolated enum CampusAIServiceMode: String, Codable, CaseIterable, Hashable, Identifiable {
@@ -492,9 +540,9 @@ nonisolated enum CampusAIServiceMode: String, Codable, CaseIterable, Hashable, I
     var title: String {
         switch self {
         case .ownAPIKey:
-            return "使用已有 API Key"
+            return "自备 DeepSeek API Key"
         case .leafyManaged:
-            return "Leafy 托管服务"
+            return "Leafy AI 服务"
         }
     }
 
@@ -503,7 +551,7 @@ nonisolated enum CampusAIServiceMode: String, Codable, CaseIterable, Hashable, I
         case .ownAPIKey:
             return "DeepSeek Key"
         case .leafyManaged:
-            return "Leafy 托管"
+            return "Leafy AI"
         }
     }
 }
@@ -564,14 +612,16 @@ nonisolated struct CampusAIContextSettings: Codable, Hashable {
 nonisolated struct CampusAIUserSettings: Codable, Hashable {
     var serviceMode: CampusAIServiceMode
     var selectedProviderID: CampusAIProviderID
+    var selectedModelID: CampusAIModelID
     var systemPrompt: String
     var contextSettings: CampusAIContextSettings
     var webSearchEnabled: Bool
 
     static var defaultValue: CampusAIUserSettings {
         CampusAIUserSettings(
-            serviceMode: .ownAPIKey,
+            serviceMode: .leafyManaged,
             selectedProviderID: CampusAIProviderCatalog.defaultProvider.id,
+            selectedModelID: CampusAIModelCatalog.defaultModel.id,
             systemPrompt: CampusAISettingsStore.defaultSystemPrompt,
             contextSettings: .defaultValue,
             webSearchEnabled: true
@@ -579,14 +629,16 @@ nonisolated struct CampusAIUserSettings: Codable, Hashable {
     }
 
     init(
-        serviceMode: CampusAIServiceMode = .ownAPIKey,
+        serviceMode: CampusAIServiceMode = .leafyManaged,
         selectedProviderID: CampusAIProviderID = CampusAIProviderCatalog.defaultProvider.id,
+        selectedModelID: CampusAIModelID = CampusAIModelCatalog.defaultModel.id,
         systemPrompt: String,
         contextSettings: CampusAIContextSettings,
         webSearchEnabled: Bool = true
     ) {
-        self.serviceMode = .ownAPIKey
+        self.serviceMode = serviceMode
         self.selectedProviderID = selectedProviderID
+        self.selectedModelID = selectedModelID
         self.systemPrompt = systemPrompt
         self.contextSettings = contextSettings
         self.webSearchEnabled = webSearchEnabled
@@ -595,6 +647,7 @@ nonisolated struct CampusAIUserSettings: Codable, Hashable {
     enum CodingKeys: String, CodingKey {
         case serviceMode
         case selectedProviderID
+        case selectedModelID
         case systemPrompt
         case contextSettings
         case webSearchEnabled
@@ -602,10 +655,11 @@ nonisolated struct CampusAIUserSettings: Codable, Hashable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        _ = try container.decodeIfPresent(CampusAIServiceMode.self, forKey: .serviceMode)
-        serviceMode = .ownAPIKey
+        serviceMode = try container.decodeIfPresent(CampusAIServiceMode.self, forKey: .serviceMode) ?? .leafyManaged
         selectedProviderID = try container.decodeIfPresent(CampusAIProviderID.self, forKey: .selectedProviderID) ??
             CampusAIProviderCatalog.defaultProvider.id
+        selectedModelID = try container.decodeIfPresent(CampusAIModelID.self, forKey: .selectedModelID) ??
+            CampusAIModelCatalog.defaultModel.id
         systemPrompt = try container.decodeIfPresent(String.self, forKey: .systemPrompt) ??
             CampusAISettingsStore.defaultSystemPrompt
         contextSettings = try container.decodeIfPresent(CampusAIContextSettings.self, forKey: .contextSettings) ??
@@ -617,15 +671,17 @@ nonisolated struct CampusAIUserSettings: Codable, Hashable {
         CampusAIProviderCatalog.provider(for: selectedProviderID)
     }
 
+    var selectedModel: CampusAIModelDescriptor {
+        CampusAIModelCatalog.model(for: selectedModelID)
+    }
+
     var effectiveSystemPrompt: String {
         let trimmed = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? CampusAISettingsStore.defaultSystemPrompt : String(trimmed.prefix(3000))
     }
 
     var normalizedForLocalRuntime: CampusAIUserSettings {
-        var normalized = self
-        normalized.serviceMode = .ownAPIKey
-        return normalized
+        self
     }
 }
 
@@ -739,8 +795,9 @@ nonisolated enum CampusAISettingsStore {
     请用中文回答，默认简短直接，先给结论和下一步。可以围绕校园学习、生活安排和个人事项整理建议；信息不足时直接说缺什么，不要编造。
     """
 
-    private static let storageKey = "campusAI.userSettings.v3"
-    private static let previousStorageKey = "campusAI.userSettings.v2"
+    private static let storageKey = "campusAI.userSettings.v4"
+    private static let previousStorageKey = "campusAI.userSettings.v3"
+    private static let olderStorageKey = "campusAI.userSettings.v2"
     private static let legacyStorageKey = "campusAI.userSettings.v1"
 
     static func load(userDefaults: UserDefaults = .standard) -> CampusAIUserSettings {
@@ -755,10 +812,20 @@ nonisolated enum CampusAISettingsStore {
 
         if let data = userDefaults.data(forKey: previousStorageKey),
            var settings = try? JSONDecoder().decode(CampusAIUserSettings.self, from: data) {
-            settings.webSearchEnabled = true
-            let migrated = migrateDefaultPrompt(in: settings.normalizedForLocalRuntime)
+            settings.serviceMode = .leafyManaged
+            let migrated = migrateDefaultPrompt(in: settings)
             save(migrated, userDefaults: userDefaults)
             userDefaults.removeObject(forKey: previousStorageKey)
+            return migrated
+        }
+
+        if let data = userDefaults.data(forKey: olderStorageKey),
+           var settings = try? JSONDecoder().decode(CampusAIUserSettings.self, from: data) {
+            settings.serviceMode = .leafyManaged
+            settings.webSearchEnabled = true
+            let migrated = migrateDefaultPrompt(in: settings)
+            save(migrated, userDefaults: userDefaults)
+            userDefaults.removeObject(forKey: olderStorageKey)
             return migrated
         }
 
@@ -768,7 +835,7 @@ nonisolated enum CampusAISettingsStore {
             return .defaultValue
         }
         let migrated = migrateDefaultPrompt(in: CampusAIUserSettings(
-            serviceMode: .ownAPIKey,
+            serviceMode: .leafyManaged,
             systemPrompt: legacySettings.systemPrompt ?? defaultSystemPrompt,
             contextSettings: legacySettings.contextSettings ?? .defaultValue
         ))
@@ -780,7 +847,7 @@ nonisolated enum CampusAISettingsStore {
     @discardableResult
     static func save(_ settings: CampusAIUserSettings, userDefaults: UserDefaults = .standard) -> Bool {
         do {
-            let data = try JSONEncoder().encode(settings.normalizedForLocalRuntime)
+            let data = try JSONEncoder().encode(settings)
             userDefaults.set(data, forKey: storageKey)
             return true
         } catch {
@@ -792,6 +859,7 @@ nonisolated enum CampusAISettingsStore {
     static func reset(userDefaults: UserDefaults = .standard) -> CampusAIUserSettings {
         userDefaults.removeObject(forKey: storageKey)
         userDefaults.removeObject(forKey: previousStorageKey)
+        userDefaults.removeObject(forKey: olderStorageKey)
         userDefaults.removeObject(forKey: legacyStorageKey)
         return .defaultValue
     }
@@ -2326,9 +2394,71 @@ nonisolated struct CampusAIAgentToolEvent: Codable, Hashable {
     }
 }
 
+nonisolated struct CampusAISearchResultPreview: Identifiable, Codable, Hashable {
+    var id: String
+    var title: String
+    var url: String
+    var siteName: String?
+}
+
+nonisolated enum CampusAIAgentPresentation {
+    static func toolStatusText(_ tool: CampusAIAgentToolEvent) -> String {
+        let title = toolTitle(for: tool.name)
+
+        switch tool.status {
+        case "running":
+            return "\(title)正在调用"
+        case "completed":
+            if let resultCount = tool.resultCount, resultCount > 0 {
+                return "\(title)调用完成，找到 \(resultCount) 条结果"
+            }
+            return "\(title)调用完成"
+        case "failed":
+            return "\(title)调用失败，继续生成回答"
+        case "skipped":
+            return "\(title)已跳过"
+        default:
+            return title
+        }
+    }
+
+    static func sanitizedStatusText(_ text: String) -> String {
+        var result = text
+        let replacements = [
+            "official_search": "搜索工具",
+            "web_search": "搜索工具",
+            "read_web_page": "网页读取工具",
+            "read_pdf": "PDF 读取工具"
+        ]
+        for (internalName, displayName) in replacements {
+            result = result.replacingOccurrences(of: internalName, with: displayName)
+        }
+        result = result.replacingOccurrences(of: "搜索工具完成", with: "搜索工具调用完成")
+        return result
+    }
+
+    private static func toolTitle(for name: String) -> String {
+        switch name {
+        case "official_search", "web_search", "official.document.search":
+            return "搜索工具"
+        case "read_web_page":
+            return "网页读取工具"
+        case "read_pdf":
+            return "PDF 读取工具"
+        case "completion.plan":
+            return "整理工具"
+        case "delegate.subtask":
+            return "子任务"
+        default:
+            return "工具"
+        }
+    }
+}
+
 nonisolated struct CampusAIMessageAgentMetadata: Codable, Hashable {
     var statusText: String?
     var citations: [CampusAICitation]
+    var searchResults: [CampusAISearchResultPreview]
     var agentTrace: [CampusAIAgentTraceStep]
     var deliverables: [CampusAIDeliverable]
     var artifactState: CampusAIArtifactGenerationState
@@ -2340,6 +2470,8 @@ nonisolated struct CampusAIMessageAgentMetadata: Codable, Hashable {
         case statusText
         case statusTextSnake = "status_text"
         case citations
+        case searchResults
+        case searchResultsSnake = "search_results"
         case agentTrace
         case agentTraceSnake = "agent_trace"
         case deliverables
@@ -2352,6 +2484,7 @@ nonisolated struct CampusAIMessageAgentMetadata: Codable, Hashable {
     init(
         statusText: String? = nil,
         citations: [CampusAICitation] = [],
+        searchResults: [CampusAISearchResultPreview] = [],
         agentTrace: [CampusAIAgentTraceStep] = [],
         deliverables: [CampusAIDeliverable] = [],
         artifactState: CampusAIArtifactGenerationState = .none,
@@ -2359,6 +2492,7 @@ nonisolated struct CampusAIMessageAgentMetadata: Codable, Hashable {
     ) {
         self.statusText = statusText
         self.citations = citations
+        self.searchResults = searchResults
         self.agentTrace = agentTrace
         self.deliverables = deliverables
         self.artifactState = artifactState
@@ -2370,6 +2504,9 @@ nonisolated struct CampusAIMessageAgentMetadata: Codable, Hashable {
         statusText = try container.decodeIfPresent(String.self, forKey: .statusText)
             ?? container.decodeIfPresent(String.self, forKey: .statusTextSnake)
         citations = try container.decodeIfPresent([CampusAICitation].self, forKey: .citations) ?? []
+        searchResults = try container.decodeIfPresent([CampusAISearchResultPreview].self, forKey: .searchResults)
+            ?? container.decodeIfPresent([CampusAISearchResultPreview].self, forKey: .searchResultsSnake)
+            ?? []
         agentTrace = try container.decodeIfPresent([CampusAIAgentTraceStep].self, forKey: .agentTrace)
             ?? container.decodeIfPresent([CampusAIAgentTraceStep].self, forKey: .agentTraceSnake)
             ?? []
@@ -2385,6 +2522,7 @@ nonisolated struct CampusAIMessageAgentMetadata: Codable, Hashable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encodeIfPresent(statusText, forKey: .statusText)
         try container.encode(citations, forKey: .citations)
+        try container.encode(searchResults, forKey: .searchResults)
         try container.encode(agentTrace, forKey: .agentTrace)
         try container.encode(deliverables, forKey: .deliverables)
         try container.encode(artifactState, forKey: .artifactState)
@@ -2494,6 +2632,14 @@ nonisolated struct CampusAIQuotaSnapshot: Codable, Hashable {
     var remaining: Int
     var resetAt: String
     var status: String
+    var dailyLimit: Int
+    var dailyUsed: Int
+    var dailyRemaining: Int
+    var dailyResetAt: String
+    var periodLimit: Int?
+    var periodUsed: Int?
+    var periodRemaining: Int?
+    var periodResetAt: String?
 
     enum CodingKeys: String, CodingKey {
         case planSource = "plan_source"
@@ -2502,6 +2648,64 @@ nonisolated struct CampusAIQuotaSnapshot: Codable, Hashable {
         case remaining
         case resetAt = "reset_at"
         case status
+        case dailyLimit = "daily_limit"
+        case dailyUsed = "daily_used"
+        case dailyRemaining = "daily_remaining"
+        case dailyResetAt = "daily_reset_at"
+        case periodLimit = "period_limit"
+        case periodUsed = "period_used"
+        case periodRemaining = "period_remaining"
+        case periodResetAt = "period_reset_at"
+    }
+
+    init(
+        planSource: String,
+        limit: Int,
+        used: Int,
+        remaining: Int,
+        resetAt: String,
+        status: String,
+        dailyLimit: Int? = nil,
+        dailyUsed: Int? = nil,
+        dailyRemaining: Int? = nil,
+        dailyResetAt: String? = nil,
+        periodLimit: Int? = nil,
+        periodUsed: Int? = nil,
+        periodRemaining: Int? = nil,
+        periodResetAt: String? = nil
+    ) {
+        self.planSource = planSource
+        self.limit = limit
+        self.used = used
+        self.remaining = remaining
+        self.resetAt = resetAt
+        self.status = status
+        self.dailyLimit = dailyLimit ?? limit
+        self.dailyUsed = dailyUsed ?? used
+        self.dailyRemaining = dailyRemaining ?? remaining
+        self.dailyResetAt = dailyResetAt ?? resetAt
+        self.periodLimit = periodLimit
+        self.periodUsed = periodUsed
+        self.periodRemaining = periodRemaining
+        self.periodResetAt = periodResetAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        planSource = try container.decodeIfPresent(String.self, forKey: .planSource) ?? "free"
+        limit = try container.decodeIfPresent(Int.self, forKey: .limit) ?? 10
+        used = try container.decodeIfPresent(Int.self, forKey: .used) ?? 0
+        remaining = try container.decodeIfPresent(Int.self, forKey: .remaining) ?? max(limit - used, 0)
+        resetAt = try container.decodeIfPresent(String.self, forKey: .resetAt) ?? ""
+        status = try container.decodeIfPresent(String.self, forKey: .status) ?? planSource
+        dailyLimit = try container.decodeIfPresent(Int.self, forKey: .dailyLimit) ?? limit
+        dailyUsed = try container.decodeIfPresent(Int.self, forKey: .dailyUsed) ?? used
+        dailyRemaining = try container.decodeIfPresent(Int.self, forKey: .dailyRemaining) ?? remaining
+        dailyResetAt = try container.decodeIfPresent(String.self, forKey: .dailyResetAt) ?? resetAt
+        periodLimit = try container.decodeIfPresent(Int.self, forKey: .periodLimit)
+        periodUsed = try container.decodeIfPresent(Int.self, forKey: .periodUsed)
+        periodRemaining = try container.decodeIfPresent(Int.self, forKey: .periodRemaining)
+        periodResetAt = try container.decodeIfPresent(String.self, forKey: .periodResetAt)
     }
 
     var displayText: String {
@@ -3752,7 +3956,7 @@ nonisolated enum CampusAIServiceError: LocalizedError, Equatable {
         case .invalidBaseURL:
             return "Base URL 设置不正确，请使用 HTTPS 地址。"
         case .managedServiceUnavailable:
-            return "Leafy 托管服务暂时不可用，请稍后再试。"
+            return "Leafy AI 服务暂时不可用，请稍后再试。"
         case .quotaExhausted(let message):
             return message
         case .providerRejected(let message):
@@ -3907,6 +4111,7 @@ nonisolated enum CampusAIStreamEvent: Equatable {
     case agentStatus(String)
     case agentStep(CampusAIAgentTraceStep)
     case agentTool(CampusAIAgentToolEvent)
+    case agentSearchResults([CampusAISearchResultPreview])
     case agentCitation(CampusAICitation)
     case done(CampusAIResponse)
     case error(String)
@@ -4059,6 +4264,9 @@ nonisolated struct CampusAISSEParser {
         case "agent_citation":
             guard let citation = payload.citation else { return [] }
             return [.agentCitation(citation)]
+        case "agent_search_results":
+            guard let results = payload.results, !results.isEmpty else { return [] }
+            return [.agentSearchResults(results)]
         case "done":
             emittedDone = true
             let answer = payload.answer ?? accumulatedAnswer
@@ -4145,6 +4353,7 @@ nonisolated private struct CampusAIManagedStreamPayload: Decodable {
     let step: CampusAIAgentTraceStep?
     let tool: CampusAIAgentToolEvent?
     let citation: CampusAICitation?
+    let results: [CampusAISearchResultPreview]?
     let error: String?
     let quota: CampusAIQuotaSnapshot?
 
@@ -4164,6 +4373,7 @@ nonisolated private struct CampusAIManagedStreamPayload: Decodable {
         case step
         case tool
         case citation
+        case results
         case error
         case quota
     }
@@ -4284,7 +4494,7 @@ nonisolated struct CampusAIService {
                 accumulatedReasoning += text
             case .quota:
                 break
-            case .agentStatus, .agentStep, .agentTool, .agentCitation:
+            case .agentStatus, .agentStep, .agentTool, .agentSearchResults, .agentCitation:
                 break
             case .done(let response):
                 finalResponse = response
@@ -4324,7 +4534,9 @@ nonisolated struct CampusAIService {
             message: trimmed,
             context: context,
             recentMessages: recentMessages,
-            model: normalizedSettings.selectedProvider.modelIdentifier,
+            model: normalizedSettings.serviceMode == .leafyManaged
+                ? CampusAIModelCatalog.flash.modelIdentifier
+                : normalizedSettings.selectedModel.modelIdentifier,
             userSystemPrompt: normalizedSettings.effectiveSystemPrompt,
             contextSettings: normalizedSettings.contextSettings,
             agentMode: .auto,
@@ -4341,6 +4553,9 @@ nonisolated struct CampusAIService {
         settings: CampusAIUserSettings
     ) -> AsyncThrowingStream<CampusAIStreamEvent, Error> {
         let normalizedSettings = settings.normalizedForLocalRuntime
+        if normalizedSettings.serviceMode == .leafyManaged {
+            return invokeManagedStream(request, settings: normalizedSettings)
+        }
         if CampusAIResearchIntent.shouldRun(request) {
             return CampusAIResearchAgent.invokeStream(request, settings: normalizedSettings)
         }
@@ -4528,9 +4743,11 @@ nonisolated struct CampusAIService {
                     }
                     guard (200..<300).contains(httpResponse.statusCode) else {
                         let body = try await providerErrorBody(from: bytes)
-                        throw CampusAIServiceError.providerRejected(
-                            managedHTTPErrorMessage(statusCode: httpResponse.statusCode, body: body)
-                        )
+                        let message = managedHTTPErrorMessage(statusCode: httpResponse.statusCode, body: body)
+                        if httpResponse.statusCode == 402 {
+                            throw CampusAIServiceError.quotaExhausted(message)
+                        }
+                        throw CampusAIServiceError.providerRejected(message)
                     }
 
                     var parser = CampusAISSEParser()
@@ -5029,12 +5246,12 @@ nonisolated struct CampusAIService {
         if let data = trimmedBody.data(using: .utf8),
            let payload = try? JSONDecoder().decode(CampusAIManagedErrorPayload.self, from: data),
            let error = payload.error?.nonEmptyTrimmed {
-            return statusCode == 402 ? error : "Leafy 托管服务返回了 \(statusCode) 错误：\(error)"
+            return statusCode == 402 ? error : "Leafy AI 服务返回了 \(statusCode) 错误：\(error)"
         }
         if trimmedBody.isEmpty {
-            return "Leafy 托管服务返回了 \(statusCode) 错误。"
+            return "Leafy AI 服务返回了 \(statusCode) 错误。"
         }
-        return "Leafy 托管服务返回了 \(statusCode) 错误：\(trimmedBody)"
+        return "Leafy AI 服务返回了 \(statusCode) 错误：\(trimmedBody)"
     }
 }
 

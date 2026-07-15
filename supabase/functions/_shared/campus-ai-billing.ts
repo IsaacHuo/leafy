@@ -4,7 +4,7 @@ import {
   SignedDataVerifier,
 } from "npm:@apple/app-store-server-library@3.1.0";
 
-export const campusAIProductID = "com.isaachuo.leafy.ai.weekly";
+export const campusAIProductID = "com.isaachuo.leafy.ai.weekly.v2";
 
 export type VerifiedAppTransaction = {
   appTransactionID: string;
@@ -39,7 +39,9 @@ export async function verifyAppTransactionJWS(
 
   const payload = allowUnsignedTestData()
     ? decodeUnsignedJWSPayload<Record<string, unknown>>(trimmed)
-    : await appleVerifier().verifyAndDecodeAppTransaction(trimmed);
+    : await verifyWithAppleEnvironments((verifier) =>
+      verifier.verifyAndDecodeAppTransaction(trimmed)
+    );
 
   const appTransactionID = normalizeText(payload.appTransactionId);
   if (!appTransactionID) return null;
@@ -64,7 +66,9 @@ export async function verifySubscriptionTransactionJWS(
 
   const payload = allowUnsignedTestData()
     ? decodeUnsignedJWSPayload<Record<string, unknown>>(trimmed)
-    : await appleVerifier().verifyAndDecodeTransaction(trimmed);
+    : await verifyWithAppleEnvironments((verifier) =>
+      verifier.verifyAndDecodeTransaction(trimmed)
+    );
 
   return subscriptionFromTransactionPayload(payload as Record<string, unknown>);
 }
@@ -74,7 +78,9 @@ export async function verifyNotificationPayload(
 ): Promise<AppleNotificationResult> {
   const payload = allowUnsignedTestData()
     ? decodeUnsignedJWSPayload<Record<string, unknown>>(signedPayload)
-    : await appleVerifier().verifyAndDecodeNotification(signedPayload);
+    : await verifyWithAppleEnvironments((verifier) =>
+      verifier.verifyAndDecodeNotification(signedPayload)
+    );
 
   const data = objectValue(payload.data);
   const signedTransaction = normalizeText(data?.signedTransactionInfo);
@@ -165,9 +171,22 @@ function subscriptionFromNotification(
   }
 }
 
-function appleVerifier() {
+async function verifyWithAppleEnvironments<T>(
+  operation: (verifier: SignedDataVerifier) => Promise<T>,
+): Promise<T> {
+  let lastError: unknown;
+  for (const environment of appleVerificationEnvironments()) {
+    try {
+      return await operation(appleVerifier(environment));
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError ?? new Error("Apple transaction verification failed.");
+}
+
+function appleVerifier(environment: Environment) {
   const rootCertificates = appleRootCertificates();
-  const environment = appleEnvironment();
   const bundleID = envText("APP_STORE_BUNDLE_ID") ?? "com.isaachuo.leafy";
   const appAppleID = integerEnv("APP_STORE_APP_APPLE_ID");
   return new SignedDataVerifier(
@@ -177,6 +196,17 @@ function appleVerifier() {
     bundleID,
     appAppleID ?? undefined,
   );
+}
+
+function appleVerificationEnvironments(): Environment[] {
+  const primary = appleEnvironment();
+  if (primary === Environment.PRODUCTION) {
+    return [Environment.PRODUCTION, Environment.SANDBOX];
+  }
+  if (primary === Environment.SANDBOX) {
+    return [Environment.SANDBOX, Environment.PRODUCTION];
+  }
+  return [primary];
 }
 
 function appleRootCertificates(): Buffer[] {
@@ -221,7 +251,8 @@ function appleEnvironment(): Environment {
 }
 
 function allowUnsignedTestData() {
-  return envText("APP_STORE_SERVER_ALLOW_UNSIGNED_TEST_DATA") === "true";
+  return appleEnvironment() !== Environment.PRODUCTION &&
+    envText("APP_STORE_SERVER_ALLOW_UNSIGNED_TEST_DATA") === "true";
 }
 
 export function decodeUnsignedJWSPayload<T extends Record<string, unknown>>(

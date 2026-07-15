@@ -30,7 +30,7 @@ export const site = {
   supportEmail: "support@myleafy.space",
   operatorName: "MyLeafy Developer",
   operatorNote: "The public developer name is the one shown on the App Store product page.",
-  updatedAt: "June 24, 2026"
+  updatedAt: "July 15, 2026"
 };
 
 export const navItems = [
@@ -414,7 +414,8 @@ export const privacySections: Array<{
       "Shared timetable: sharing is created manually in the app. Published timetable data includes course name, teacher, location, week range, class period, semester, and publish time.",
       "Feedback: submitted feedback, optional contact information, device type, system version, app version, login state, and latest timetable sync time are used for support.",
       "Photos and files: MyLeafy reads selected photos only when you choose a community avatar, post image, or timetable background. On Mac, files are accessed through system open or save panels.",
-      "Location and calendar: location is used only for weather and commute suggestions. Calendar permission is used only when you export timetable or reminders."
+      "Location and calendar: location is used only for weather and commute suggestions. Calendar permission is used only when you export timetable or reminders.",
+      "Leafy AI: when you use free or subscription requests, your question and the local context you approve are sent through the Leafy AI service to DeepSeek. We process an Apple app transaction identifier, verified subscription transaction details, quota usage, reset times, and minimal request diagnostics to provide and protect the service. Your full question is not stored in quota records."
     ]
   },
   {
@@ -437,7 +438,8 @@ export const privacySections: Array<{
       "Beijing Forestry University Zhengfang academic system is used for school login and academic data lookup.",
       "Supabase is used for MyLeafy Community, including anonymous auth, database, private image storage, Edge Functions, notifications, feedback, ratings, shared timetables, and admin tools.",
       "Cloudflare is used for myleafy.space DNS, static hosting, and support@myleafy.space email routing.",
-      "Apple system capabilities are used for app distribution, photo and file selection, location, calendar, system sharing, notifications, and local storage."
+      "Apple system capabilities are used for app distribution, photo and file selection, location, calendar, system sharing, notifications, and local storage.",
+      "DeepSeek processes Leafy AI questions and approved context to generate responses. In self-provided API key mode, requests go directly from your device; the API key remains in the device Keychain."
     ]
   },
   {
@@ -461,7 +463,7 @@ export const privacySections: Array<{
       "Shared timetables are published by you. You can stop sharing or revoke a viewer at any time.",
       "Photo, file, location, and calendar permissions are controlled by you. Timetable, grades, academic tools, and community features can be used independently where permission is not needed.",
       "In a request, describe the data you want to access, correct, or delete. We may ask you to confirm identity through the signed-in app state or another reasonable method.",
-      "If MyLeafy later adds analytics, ads, payments, subscriptions, third-party login, or new data processors, this policy will be updated before launch."
+      "Leafy AI subscriptions are processed by Apple. You can view or manage renewal in your Apple account, restore verified purchases in the app, or continue with the daily free allowance without subscribing."
     ]
   },
   {

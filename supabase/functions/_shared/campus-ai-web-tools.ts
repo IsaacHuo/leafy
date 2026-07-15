@@ -99,9 +99,16 @@ export async function searchBJFUOfficial(
   }
   if (raw.length === 0) return [];
   const unique = deduplicateRawResults(raw)
-    .filter((item) => isBJFUOfficialURL(item.url))
-    .slice(0, limit);
-  return await Promise.all(unique.map(async (item) => {
+    .filter((item) => isBJFUOfficialURL(item.url));
+  const ranked = rankSearchResultsByRelevance(unique, normalizedQuery);
+  console.info(JSON.stringify({
+    event: "campus_ai_search_filtered",
+    provider: "bjfu_official",
+    raw_result_count: unique.length,
+    returned_result_count: Math.min(ranked.length, limit),
+  }));
+  const selected = ranked.slice(0, limit);
+  return await Promise.all(selected.map(async (item) => {
     const id = stableID("official", item.url);
     return {
       id,
@@ -153,10 +160,7 @@ export async function searchDuckDuckGoLite(
     );
   }
   const html = await boundedResponseText(response, maxHTMLBytes);
-  const parsed = parseDuckDuckGoLiteHTML(html, normalizedQuery).slice(
-    0,
-    boundedCount(count),
-  );
+  const parsed = parseDuckDuckGoLiteHTML(html, normalizedQuery);
   if (parsed.length === 0 && looksLikeChallenge(html)) {
     throw new CampusAIWebToolError(
       "provider_rate_limited",
@@ -173,29 +177,39 @@ export async function searchDuckDuckGoLite(
       true,
     );
   }
-  return await Promise.all(parsed.map(async (item) => {
-    const id = stableID("web", item.url);
-    return {
-      id,
-      title: item.title,
-      url: item.url,
-      display_host: new URL(item.url).hostname.toLowerCase(),
-      snippet: item.snippet,
-      source_kind: isBJFUOfficialURL(item.url)
-        ? "bjfu_official" as const
-        : "public_web" as const,
-      trust_score: isBJFUOfficialURL(item.url)
-        ? officialTrustScore(item.url)
-        : publicTrustScore(item.url),
-      read_receipt: await signReadReceipt({
-        user_id: userID,
-        result_id: id,
-        url: item.url,
-        expires_at: epochSeconds() + receiptLifetimeSeconds,
-        content_kind: attachmentFileType(item.url) ? "document" : "html",
-      }, signingSecret),
-    };
+  const limit = boundedCount(count);
+  const ranked = rankSearchResultsByRelevance(parsed, normalizedQuery);
+  console.info(JSON.stringify({
+    event: "campus_ai_search_filtered",
+    provider: "duckduckgo_lite",
+    raw_result_count: parsed.length,
+    returned_result_count: Math.min(ranked.length, limit),
   }));
+  return await Promise.all(
+    ranked.slice(0, limit).map(async (item) => {
+      const id = stableID("web", item.url);
+      return {
+        id,
+        title: item.title,
+        url: item.url,
+        display_host: new URL(item.url).hostname.toLowerCase(),
+        snippet: item.snippet,
+        source_kind: isBJFUOfficialURL(item.url)
+          ? "bjfu_official" as const
+          : "public_web" as const,
+        trust_score: isBJFUOfficialURL(item.url)
+          ? officialTrustScore(item.url)
+          : publicTrustScore(item.url),
+        read_receipt: await signReadReceipt({
+          user_id: userID,
+          result_id: id,
+          url: item.url,
+          expires_at: epochSeconds() + receiptLifetimeSeconds,
+          content_kind: attachmentFileType(item.url) ? "document" : "html",
+        }, signingSecret),
+      };
+    }),
+  );
 }
 
 export function parseBJFUSearchHTML(html: string) {
@@ -246,6 +260,39 @@ export function parseDuckDuckGoLiteHTML(html: string, query = "") {
     });
   }
   return deduplicateRawResults(results);
+}
+
+export function rankSearchResultsByRelevance<
+  T extends { title: string; url: string; snippet?: string },
+>(results: T[], query: string): T[] {
+  const queryConcepts = relevanceConcepts(query);
+  if (queryConcepts.size === 0) return results;
+  const compactQuery = relevanceText(query).replaceAll(" ", "");
+  return results
+    .map((result, index) => {
+      const titleConcepts = relevanceConcepts(result.title);
+      const snippetConcepts = relevanceConcepts(result.snippet ?? "");
+      let score = intersectionCount(queryConcepts, titleConcepts) * 6 +
+        intersectionCount(queryConcepts, snippetConcepts) * 2;
+      const compactTitle = relevanceText(result.title).replaceAll(" ", "");
+      const compactSnippet = relevanceText(result.snippet ?? "").replaceAll(
+        " ",
+        "",
+      );
+      if (compactQuery.length >= 4 && compactTitle.includes(compactQuery)) {
+        score += 24;
+      } else if (
+        compactQuery.length >= 4 && compactSnippet.includes(compactQuery)
+      ) {
+        score += 8;
+      }
+      const queryYears = query.match(/20\d{2}/g) ?? [];
+      if (queryYears.some((year) => result.title.includes(year))) score += 4;
+      return { result, index, score };
+    })
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map((candidate) => candidate.result);
 }
 
 export async function readWebPage(
@@ -817,6 +864,63 @@ function deduplicateRawResults<T extends { url: string }>(values: T[]) {
 
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+}
+
+function relevanceText(value: string) {
+  return value
+    .toLowerCase()
+    .replaceAll("北京林业大学", " ")
+    .replaceAll("北林官网", " ")
+    .replaceAll("北林", " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function relevanceConcepts(value: string) {
+  const normalized = relevanceText(value);
+  const concepts = new Set<string>();
+  for (
+    const chunk of normalized.split(" ").filter((item) => item.length >= 2)
+  ) {
+    concepts.add(chunk);
+    if (/\p{Script=Han}/u.test(chunk) && Array.from(chunk).length > 2) {
+      const characters = Array.from(chunk);
+      for (let index = 0; index < characters.length - 1; index += 1) {
+        concepts.add(characters[index] + characters[index + 1]);
+      }
+    }
+  }
+  for (
+    const generic of [
+      "北京",
+      "林业",
+      "大学",
+      "官网",
+      "学校",
+      "资料",
+      "查询",
+      "搜索",
+    ]
+  ) {
+    concepts.delete(generic);
+  }
+  if (
+    ["保研", "推免", "推荐免试", "免试攻读"].some((term) =>
+      normalized.includes(term)
+    )
+  ) {
+    concepts.add("__postgraduate_recommendation__");
+  }
+  return concepts;
+}
+
+function intersectionCount(left: Set<string>, right: Set<string>) {
+  let count = 0;
+  for (const value of left) {
+    if (right.has(value)) count += 1;
+  }
+  return count;
 }
 
 function normalizePageText(value: string) {

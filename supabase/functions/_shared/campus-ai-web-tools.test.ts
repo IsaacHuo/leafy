@@ -2,6 +2,7 @@ import {
   isSafePublicHTTPURL,
   parseBJFUSearchHTML,
   parseDuckDuckGoLiteHTML,
+  rankSearchResultsByRelevance,
   searchBJFUOfficial,
   searchDuckDuckGoLite,
   signReadReceipt,
@@ -45,6 +46,50 @@ Deno.test("campus ai web tools parse and normalize BJFU CMS results", () => {
     "expected official URL upgraded to HTTPS",
   );
   assert(results[0].snippet?.includes("正式工作方案"), "expected snippet");
+});
+
+Deno.test("campus ai search relevance keeps recommendation policy and drops screenshot noise", () => {
+  const ranked = rankSearchResultsByRelevance([
+    {
+      title: "携手同心，守护师生健康",
+      url: "https://www.bjfu.edu.cn/health",
+      snippet: "守护师生身体健康和生命安全",
+    },
+    {
+      title: "我校 3 篇学位论文获评优秀论文",
+      url: "https://graduate.bjfu.edu.cn/thesis",
+      snippet: "学位论文评选结果",
+    },
+    {
+      title: "北京林业大学推荐 2026 届优秀应届本科毕业生免试攻读研究生工作方案",
+      url: "https://jwc.bjfu.edu.cn/recommendation-2026",
+      snippet: "推免申请资格和综合成绩办法",
+    },
+    {
+      title: "北京林业大学章程",
+      url: "https://www.bjfu.edu.cn/charter",
+      snippet: "学校章程",
+    },
+  ], "2026 年工学院保研政策");
+
+  assert(ranked.length === 1, "expected only the recommendation policy result");
+  assert(
+    ranked[0].url.endsWith("recommendation-2026"),
+    "expected recommendation policy ranked first",
+  );
+});
+
+Deno.test("campus ai search relevance recognizes recommendation synonyms and stable ties", () => {
+  const ranked = rankSearchResultsByRelevance([
+    { title: "推免工作方案", url: "https://jwc.bjfu.edu.cn/1" },
+    { title: "推荐免试实施办法", url: "https://jwc.bjfu.edu.cn/2" },
+  ], "保研政策");
+
+  assert(ranked.length === 2, "expected recommendation synonyms to remain");
+  assert(
+    ranked[0].url.endsWith("/1"),
+    "expected stable ordering for equal scores",
+  );
 });
 
 Deno.test("campus ai web tools distinguish empty results from provider structure changes", async () => {
