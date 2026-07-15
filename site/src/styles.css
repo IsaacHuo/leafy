@@ -83,8 +83,9 @@ button {
   backface-visibility: hidden;
 }
 
-.hero-phone {
-  will-change: transform;
+.phone-screen {
+  inset: 2.5% 5.333333%;
+  border-radius: 11.5% / 5.3%;
 }
 
 button:focus-visible,
@@ -97,20 +98,6 @@ a:focus-visible {
 ::selection {
   color: #ffffff;
   background: #315f45;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .hero-phone {
-    transition: transform 500ms var(--ease-in-out);
-  }
-
-  .hero-phone-left:hover {
-    transform: translate3d(0, -8px, 0) rotate(-3deg);
-  }
-
-  .hero-phone-right:hover {
-    transform: translate3d(0, -8px, 0) rotate(2deg);
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

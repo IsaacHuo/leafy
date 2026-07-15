@@ -1,7 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import {
-  AppleLogo,
   ArrowRight,
   Buildings,
   CalendarBlank,
@@ -225,14 +224,7 @@ function Header({ activePath, navigate }: { activePath: string; navigate: (href:
           >
             Contact
           </a>
-          <a
-            href={site.appStoreUrl}
-            className="leafy-pressable inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-white shadow-[0_10px_28px_rgba(31,106,69,0.22)] transition-colors hover:bg-primary-strong"
-          >
-            <AppleLogo size={16} weight="fill" aria-hidden />
-            <span className="hidden sm:inline">App Store</span>
-            <span className="sm:hidden">Get</span>
-          </a>
+          <AppStoreBadge compact />
         </div>
       </div>
     </header>
@@ -255,7 +247,7 @@ function HomePage({ navigate }: { navigate: (href: string) => void }) {
               Timetable, academics, community, and the everyday tools built for BJFU students.
             </p>
             <div className="mt-9 flex flex-col gap-3 sm:flex-row">
-              <AppStoreButton />
+              <AppStoreBadge />
               <TapButton onClick={() => navigate("/features")} className={`${secondaryButtonClass} px-5 text-[15px] font-semibold`}>
                 Explore features
                 <ArrowRight size={17} weight="bold" aria-hidden />
@@ -305,10 +297,10 @@ function HomePage({ navigate }: { navigate: (href: string) => void }) {
             </div>
           </div>
           <div className="relative min-h-[590px] lg:order-2">
-            <div className="absolute left-[5%] top-0 z-10 w-[min(56vw,285px)] -rotate-[5deg]">
+            <div className="absolute left-[5%] top-0 z-10 w-[min(56vw,285px)]">
               <PhoneFrame image={appScreenshots[1].image} alt={appScreenshots[1].alt} />
             </div>
-            <div className="absolute bottom-0 right-[3%] w-[min(56vw,285px)] rotate-[4deg]">
+            <div className="absolute bottom-0 right-[3%] w-[min(56vw,285px)]">
               <PhoneFrame image={appScreenshots[2].image} alt={appScreenshots[2].alt} />
             </div>
           </div>
@@ -326,29 +318,53 @@ function HomePage({ navigate }: { navigate: (href: string) => void }) {
               <p className="mt-2 text-base text-white/70">Make the everyday parts of campus life simpler.</p>
             </div>
           </div>
-          <AppStoreButton light />
+          <AppStoreBadge />
         </ScrollReveal>
       </section>
     </>
   );
 }
 
-function AppStoreButton({ light = false }: { light?: boolean }) {
+function AppStoreBadge({ compact = false }: { compact?: boolean }) {
   return (
-    <TapButton
+    <a
       href={site.appStoreUrl}
-      className={`${light ? "border-white/15 bg-white text-primary-ink shadow-[0_16px_40px_rgba(0,0,0,0.18)] hover:bg-white/92" : primaryButtonClass} px-5 text-[15px] font-semibold`}
+      className={`app-store-badge inline-flex shrink-0 ${compact ? "h-10" : "h-12"}`}
+      aria-label="Download MyLeafy on the App Store"
     >
-      <AppleLogo size={20} weight="fill" aria-hidden />
-      View on the App Store
-    </TapButton>
+      <img
+        className="h-full w-auto max-w-none"
+        src="/media/download-on-the-app-store.svg"
+        alt="Download on the App Store"
+      />
+    </a>
   );
 }
 
-function PhoneFrame({ image, alt, className = "" }: { image: string; alt: string; className?: string }) {
+function PhoneFrame({
+  image,
+  alt,
+  className = "",
+  loading = "eager"
+}: {
+  image: string;
+  alt: string;
+  className?: string;
+  loading?: "eager" | "lazy";
+}) {
   return (
-    <div className={`phone-frame relative overflow-hidden rounded-[46px] border-[7px] border-[#111714] bg-[#111714] shadow-[0_35px_80px_rgba(15,42,26,0.2)] ${className}`}>
-      <img className="h-auto w-full rounded-[38px] bg-white" src={image} alt={alt} loading="eager" decoding="async" />
+    <div className={`phone-frame relative aspect-[1350/2760] ${className}`}>
+      <div className="phone-screen absolute overflow-hidden bg-black">
+        <img className="h-full w-full bg-white object-fill" src={image} alt={alt} loading={loading} decoding="async" />
+      </div>
+      <img
+        className="pointer-events-none absolute inset-0 h-full w-full max-w-none"
+        src="/media/iphone-17-pro-silver-portrait.png"
+        alt=""
+        aria-hidden
+        loading={loading}
+        decoding="async"
+      />
     </div>
   );
 }
@@ -356,10 +372,10 @@ function PhoneFrame({ image, alt, className = "" }: { image: string; alt: string
 function HeroPhones() {
   return (
     <div className="relative mx-auto min-h-[590px] w-full max-w-[650px] lg:min-h-[670px]" aria-label="MyLeafy app previews">
-      <div className="hero-phone hero-phone-left absolute left-[3%] top-[10%] z-10 w-[min(53vw,310px)] -rotate-[5deg]">
+      <div className="hero-phone absolute left-[3%] top-[10%] z-10 w-[min(53vw,310px)]">
         <PhoneFrame image={appScreenshots[0].image} alt={appScreenshots[0].alt} />
       </div>
-      <div className="hero-phone hero-phone-right absolute bottom-[1%] right-[2%] w-[min(53vw,310px)] rotate-[4deg]">
+      <div className="hero-phone absolute bottom-[1%] right-[2%] w-[min(53vw,310px)]">
         <PhoneFrame image={appScreenshots[1].image} alt={appScreenshots[1].alt} />
       </div>
     </div>
@@ -541,13 +557,12 @@ function FeatureImageShowcase() {
               key={shot.label}
               className="w-[min(82vw,340px)] shrink-0 snap-start overflow-hidden rounded-[28px] border border-black/[0.07] bg-white shadow-[0_18px_50px_rgba(16,32,24,0.07)]"
             >
-              <div className="aspect-[941/2048] bg-primary-wash">
-                <img
-                  className="h-full w-full object-contain"
-                  src={shot.image}
+              <div className="flex min-h-[600px] items-center justify-center bg-primary-wash px-6 py-8">
+                <PhoneFrame
+                  image={shot.image}
                   alt={shot.alt}
+                  className="w-[82%]"
                   loading={index < 2 ? "eager" : "lazy"}
-                  decoding="async"
                 />
               </div>
               <div className="p-6">
@@ -1027,7 +1042,10 @@ function Footer({ navigate }: { navigate: (href: string) => void }) {
       </div>
       <div className="border-t border-black/10 px-4 py-4 md:px-6">
         <div className="mx-auto flex max-w-7xl flex-col gap-2 text-xs font-medium text-text/60 md:flex-row md:items-center md:justify-between">
-          <span>Last updated: {site.updatedAt}</span>
+          <div className="grid gap-1">
+            <span>Last updated: {site.updatedAt}</span>
+            <span>Apple, the Apple logo, App Store, and iPhone are trademarks of Apple Inc., registered in the U.S. and other countries and regions.</span>
+          </div>
           <div className="flex flex-wrap gap-x-5 gap-y-2">
             <a
               className="inline-flex items-center gap-2 hover:text-primary-ink"
