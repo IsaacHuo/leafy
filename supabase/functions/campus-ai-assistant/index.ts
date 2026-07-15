@@ -2902,9 +2902,13 @@ function makeAdminClient() {
 }
 
 export function deepSeekAPIKeys() {
+  const configuredKeys = Deno.env.get("DEEPSEEK_API_KEYS");
+  if (configuredKeys?.trim()) {
+    return Array.from(new Set(parseDeepSeekAPIKeys(configuredKeys)));
+  }
+
   const keys: string[] = [];
   appendDeepSeekAPIKeys(keys, Deno.env.get("DEEPSEEK_API_KEY"));
-  appendDeepSeekAPIKeys(keys, Deno.env.get("DEEPSEEK_API_KEYS"));
   for (let index = 1; index <= 10; index += 1) {
     appendDeepSeekAPIKeys(keys, Deno.env.get(`DEEPSEEK_API_KEY_${index}`));
   }

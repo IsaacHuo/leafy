@@ -180,6 +180,12 @@ async function verifyWithAppleEnvironments<T>(
       return await operation(appleVerifier(environment));
     } catch (error) {
       lastError = error;
+      console.warn(JSON.stringify({
+        event: "app_store_jws_verification_attempt_failed",
+        environment,
+        error_name: error instanceof Error ? error.name : "UnknownError",
+        error_message: error instanceof Error ? error.message : String(error),
+      }));
     }
   }
   throw lastError ?? new Error("Apple transaction verification failed.");

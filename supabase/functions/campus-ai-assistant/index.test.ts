@@ -633,7 +633,7 @@ Deno.test("campus-ai-assistant parses planner usage from provider response", () 
   assert(parsed.usage.total_tokens === 14, "expected usage to parse");
 });
 
-Deno.test("campus-ai-assistant supports multiple DeepSeek API key secret formats", () => {
+Deno.test("campus-ai-assistant prefers the managed DeepSeek API key list", () => {
   const envKeys = [
     "DEEPSEEK_API_KEY",
     "DEEPSEEK_API_KEYS",
@@ -653,13 +653,20 @@ Deno.test("campus-ai-assistant supports multiple DeepSeek API key secret formats
 
     assert(
       JSON.stringify(deepSeekAPIKeys()) ===
-        JSON.stringify(["sk-primary", "sk-a", "sk-b", "sk-c"]),
-      "expected ordered unique DeepSeek keys",
+        JSON.stringify(["sk-a", "sk-b"]),
+      "expected the managed list to ignore legacy key secrets",
     );
     assert(
       JSON.stringify(parseDeepSeekAPIKeys("sk-1, sk-2\nsk-3; sk-4")) ===
         JSON.stringify(["sk-1", "sk-2", "sk-3", "sk-4"]),
       "expected delimiter parsing",
+    );
+
+    Deno.env.delete("DEEPSEEK_API_KEYS");
+    assert(
+      JSON.stringify(deepSeekAPIKeys()) ===
+        JSON.stringify(["sk-primary", "sk-c", "sk-b"]),
+      "expected legacy key secrets to remain available as a fallback",
     );
   } finally {
     for (const key of envKeys) {

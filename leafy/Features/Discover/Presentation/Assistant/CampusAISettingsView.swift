@@ -16,6 +16,14 @@ struct CampusAISettingsView: View {
         NavigationStack {
             Form {
                 Section {
+                    Picker("使用方式", selection: $settings.serviceMode) {
+                        Text("Leafy AI 额度")
+                            .tag(CampusAIServiceMode.leafyManaged)
+                        Text("自备 API Key")
+                            .tag(CampusAIServiceMode.ownAPIKey)
+                    }
+                    .pickerStyle(.segmented)
+
                     NavigationLink {
                         CampusAISubscriptionView(store: subscriptionStore) {}
                     } label: {
@@ -23,13 +31,10 @@ struct CampusAISettingsView: View {
                             systemImage: "sparkles",
                             title: "Leafy AI 额度",
                             detail: quotaDetail,
-                            status: subscriptionStore.isPurchased ? "已订阅" : "查看订阅"
+                            status: settings.serviceMode == .leafyManaged
+                                ? "使用中"
+                                : (subscriptionStore.isPurchased ? "已订阅" : "可切换")
                         )
-                    }
-                    if settings.serviceMode == .ownAPIKey {
-                        Button("改回 Leafy AI 免费额度") {
-                            settings.serviceMode = .leafyManaged
-                        }
                     }
 
                     NavigationLink {
@@ -41,7 +46,7 @@ struct CampusAISettingsView: View {
                             systemImage: "key.fill",
                             title: "自备 DeepSeek API Key",
                             detail: "备选方式 · 可使用 Flash 或 Pro",
-                            status: settings.serviceMode == .ownAPIKey ? "使用中" : (hasAPIKey ? "已配置" : "可选")
+                            status: apiKeyStatus
                         )
                     }
 
@@ -51,7 +56,7 @@ struct CampusAISettingsView: View {
                 } header: {
                     Text("AI 服务")
                 } footer: {
-                    Text("默认先使用每日免费额度，订阅后可获得更多次数。自备 Key 是可选方式，密钥只保存在本机 Keychain。")
+                    Text(serviceModeDescription)
                 }
 
                 Section {
@@ -149,6 +154,24 @@ struct CampusAISettingsView: View {
         return "今日剩余 \(quota.dailyRemaining)/\(quota.dailyLimit)"
     }
 
+    private var apiKeyStatus: String {
+        if settings.serviceMode == .ownAPIKey {
+            return hasAPIKey ? "使用中" : "需配置"
+        }
+        return hasAPIKey ? "已配置" : "未配置"
+    }
+
+    private var serviceModeDescription: String {
+        switch settings.serviceMode {
+        case .leafyManaged:
+            return "当前使用免费或订阅额度，模型固定为 Flash。自备 Key 是可选方式。"
+        case .ownAPIKey:
+            return hasAPIKey
+                ? "当前使用本机保存的 DeepSeek API Key，不消耗免费或订阅额度，可使用 Flash 或 Pro。"
+                : "请先配置 DeepSeek API Key；保存后即可使用 Flash 或 Pro。"
+        }
+    }
+
     private var enabledContextScopeCount: Int {
         [
             settings.contextSettings.includesTimetable,
@@ -240,7 +263,7 @@ struct CampusAIAPIKeySetupView: View {
             } header: {
                 Text("API Key")
             } footer: {
-                Text("API Key 只保存在当前设备的 Keychain，输入框不会回显已保存的值。保存后会明确切换到自备 Key；清除后可在设置中改回 Leafy AI 免费额度。")
+                Text("API Key 只保存在当前设备的 Keychain，输入框不会回显已保存的值。保存后会切换到自备 Key；清除后自动改回 Leafy AI 免费额度。")
             }
 
             Section("数据说明") {
@@ -285,6 +308,11 @@ struct CampusAIAPIKeySetupView: View {
     private func clearAPIKey() {
         do {
             try CampusAIKeychainStore.delete(providerID: provider.id)
+            settings.serviceMode = .leafyManaged
+            guard CampusAISettingsStore.save(settings) else {
+                operationAlert = .failure("API Key 已清除，但服务设置写入失败，请重试。")
+                return
+            }
             apiKeyDraft = ""
             refreshAPIKeyState()
             onAPIKeyChanged()
