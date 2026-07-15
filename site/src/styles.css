@@ -1,17 +1,18 @@
-@import url("https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600;700&display=swap");
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  color: #18201a;
-  background: #fcfaf1;
-  font-family: Lora, Georgia, "Times New Roman", serif;
+  color: #102018;
+  background: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, "Helvetica Neue", Arial, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 * {
@@ -27,9 +28,7 @@ body {
   min-height: 100dvh;
   margin: 0;
   overflow-x: hidden;
-  background:
-    radial-gradient(circle at 50% -10%, rgba(216, 204, 143, 0.28), transparent 42rem),
-    #fcfaf1;
+  background: #ffffff;
 }
 
 body::before {
@@ -69,6 +68,26 @@ button {
   cursor: pointer;
 }
 
+.leafy-pressable {
+  transform: translate3d(0, 0, 0);
+  transition: transform 160ms var(--ease-out), background-color 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
+  will-change: transform;
+}
+
+.leafy-pressable:active {
+  transform: translate3d(0, 0, 0) scale(0.97) !important;
+}
+
+.phone-frame {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+.phone-screen {
+  inset: 2.5% 5.333333%;
+  border-radius: 11.5% / 5.3%;
+}
+
 button:focus-visible,
 a:focus-visible {
   outline: 2px solid #4e8261;
@@ -81,12 +100,6 @@ a:focus-visible {
   background: #315f45;
 }
 
-.leafy-dither canvas {
-  display: block;
-  width: 100% !important;
-  height: 100% !important;
-}
-
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -95,5 +108,9 @@ a:focus-visible {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .leafy-pressable:active {
+    transform: scale(0.99) !important;
   }
 }

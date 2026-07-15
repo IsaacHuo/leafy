@@ -1,6 +1,8 @@
 import React, { PropsWithChildren } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 
+const easeOut = [0.23, 1, 0.32, 1] as const;
+
 export function StaggerReveal({ children, className }: PropsWithChildren<{ className?: string }>) {
   const shouldReduceMotion = useReducedMotion();
 
@@ -17,7 +19,7 @@ export function StaggerReveal({ children, className }: PropsWithChildren<{ class
         hidden: {},
         visible: {
           transition: {
-            staggerChildren: 0.1
+            staggerChildren: 0.055
           }
         }
       }}
@@ -25,17 +27,32 @@ export function StaggerReveal({ children, className }: PropsWithChildren<{ class
       {React.Children.map(children, (child) => (
         <motion.div
           variants={{
-            hidden: { opacity: 0, y: 16 },
+            hidden: { opacity: 0, transform: "translate3d(0, 12px, 0)" },
             visible: {
               opacity: 1,
-              y: 0,
-              transition: { duration: 0.72, ease: [0.16, 1, 0.3, 1] }
+              transform: "translate3d(0, 0, 0)",
+              transition: { duration: 0.52, ease: easeOut }
             }
           }}
         >
           {child}
         </motion.div>
       ))}
+    </motion.div>
+  );
+}
+
+export function ScrollReveal({ children, className }: PropsWithChildren<{ className?: string }>) {
+  const shouldReduceMotion = useReducedMotion();
+
+  return (
+    <motion.div
+      className={className}
+      initial={shouldReduceMotion ? undefined : { opacity: 0, transform: "translate3d(0, 8px, 0)" }}
+      animate={{ opacity: 1, transform: "translate3d(0, 0, 0)" }}
+      transition={{ duration: shouldReduceMotion ? 0.2 : 0.46, ease: easeOut }}
+    >
+      {children}
     </motion.div>
   );
 }
@@ -110,16 +127,16 @@ export function TapButton({
   disabled?: boolean;
 }>) {
   const shouldReduceMotion = useReducedMotion();
-  const classes = `inline-flex min-h-11 items-center justify-center gap-2 rounded-md px-4 text-center text-sm font-medium transition-[background-color,border-color,color,transform,box-shadow] duration-200 disabled:cursor-progress disabled:opacity-70 ${className ?? ""}`;
+  const classes = `leafy-pressable inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 text-center text-sm font-medium transition-[background-color,border-color,color,box-shadow] duration-200 disabled:cursor-progress disabled:opacity-70 ${className ?? ""}`;
 
   if (href) {
     return (
       <motion.a
         href={href}
         className={classes}
-        whileHover={shouldReduceMotion ? undefined : { y: -1 }}
-        whileTap={shouldReduceMotion ? undefined : { scale: 0.98, y: 1 }}
-        transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+        whileHover={shouldReduceMotion ? undefined : { transform: "translate3d(0, -1px, 0)" }}
+        whileTap={shouldReduceMotion ? undefined : { transform: "translate3d(0, 0, 0) scale(0.97)" }}
+        transition={{ duration: 0.16, ease: easeOut }}
       >
         {children}
       </motion.a>
@@ -132,9 +149,9 @@ export function TapButton({
       onClick={onClick}
       disabled={disabled}
       className={classes}
-      whileHover={shouldReduceMotion ? undefined : { y: -1 }}
-      whileTap={shouldReduceMotion ? undefined : { scale: 0.98, y: 1 }}
-      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+      whileHover={shouldReduceMotion ? undefined : { transform: "translate3d(0, -1px, 0)" }}
+      whileTap={shouldReduceMotion ? undefined : { transform: "translate3d(0, 0, 0) scale(0.97)" }}
+      transition={{ duration: 0.16, ease: easeOut }}
     >
       {children}
     </motion.button>
