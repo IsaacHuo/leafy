@@ -125,29 +125,29 @@ export const appScreenshots = [
     label: "Timetable",
     title: "Timetable",
     body: "Current week, today's classes, class details, and reminders are the first layer.",
-    image: "/media/leafy-shot-timetable.png",
-    alt: "MyLeafy timetable screen"
+    image: "/media/app-timetable.webp",
+    alt: "MyLeafy weekly timetable on iPhone 17 Pro"
   },
   {
     label: "Community",
     title: "Community",
     body: "Feed, categories, trending posts, notices, and notifications stay in a separate tab.",
-    image: "/media/leafy-shot-community.png",
-    alt: "MyLeafy community screen"
+    image: "/media/app-community.webp",
+    alt: "MyLeafy campus community on iPhone 17 Pro"
   },
   {
     label: "Academics",
     title: "Academics",
     body: "Grades, exams, classrooms, calendar, academic plans, and ratings are grouped together.",
-    image: "/media/leafy-shot-academics.png",
-    alt: "MyLeafy academics screen"
+    image: "/media/app-academics.webp",
+    alt: "MyLeafy academic tools on iPhone 17 Pro"
   },
   {
-    label: "Profile",
-    title: "Profile",
-    body: "Shared timetables, theme, cache sync, support, and privacy controls are in Profile.",
-    image: "/media/leafy-shot-profile.png",
-    alt: "MyLeafy profile screen"
+    label: "Leafy AI",
+    title: "Leafy AI",
+    body: "Campus questions can be answered with structured information and source context.",
+    image: "/media/app-ai-policy.webp",
+    alt: "MyLeafy AI policy answer on iPhone 17 Pro"
   }
 ];
 
@@ -156,50 +156,78 @@ export const featureShowcases = [
     label: "Timetable",
     title: "Weekly timetable",
     body: "Open MyLeafy and see the week at a glance, with classes arranged around the real rhythm of the school day.",
-    image: "/media/feature-calendar.jpg",
-    alt: "Weekly timetable in MyLeafy"
+    image: "/media/app-timetable.webp",
+    alt: "Weekly timetable in MyLeafy on iPhone 17 Pro"
   },
   {
-    label: "Themes",
-    title: "Custom timetable colors",
-    body: "Pick a theme color and keep course blocks clear, calm, and easy to scan.",
-    image: "/media/feature-color.jpg",
-    alt: "Custom timetable colors in MyLeafy"
+    label: "Academics",
+    title: "Academic tools",
+    body: "Grades, honors, study plans, training programs, and other academic records stay in one organized area.",
+    image: "/media/app-academics.webp",
+    alt: "Academic tools in MyLeafy on iPhone 17 Pro"
   },
   {
     label: "Community",
     title: "Campus community",
     body: "Browse campus posts, search discussions, follow notices, and join everyday conversations.",
-    image: "/media/feature-community.jpg",
-    alt: "MyLeafy campus community"
+    image: "/media/app-community.webp",
+    alt: "MyLeafy campus community on iPhone 17 Pro"
   },
   {
     label: "Grades",
     title: "Grades overview",
     body: "Review GPA, weighted average, credits, risk courses, and term results in one place.",
-    image: "/media/feature-grades.jpg",
-    alt: "Grades overview in MyLeafy"
+    image: "/media/app-grades.webp",
+    alt: "Grades overview in MyLeafy on iPhone 17 Pro"
   },
   {
-    label: "Credits",
-    title: "Credit progress",
-    body: "Track graduation credit requirements and category progress against the current study plan.",
-    image: "/media/feature-credits.jpg",
-    alt: "Credit progress in MyLeafy"
+    label: "Calendar",
+    title: "Academic calendar",
+    body: "Understand the current teaching week, term rhythm, and upcoming holidays without counting dates manually.",
+    image: "/media/app-calendar.webp",
+    alt: "Academic calendar in MyLeafy on iPhone 17 Pro"
   },
   {
-    label: "Assessment",
-    title: "Quality score estimate",
-    body: "Estimate comprehensive quality score with academic records, activity material, and local inputs.",
-    image: "/media/feature-quality-score.jpg",
-    alt: "Quality score estimate in MyLeafy"
+    label: "Study space",
+    title: "Study materials",
+    body: "Import files from WeChat or QQ, organize study materials, and keep coursework close to campus tools.",
+    image: "/media/app-study-space.webp",
+    alt: "Study space in MyLeafy on iPhone 17 Pro"
   },
   {
-    label: "Sharing",
-    title: "Shared timetable",
-    body: "Publish a read-only timetable and share it with a seven-day invite code.",
-    image: "/media/feature-share-timetable.jpg",
-    alt: "Shared timetable in MyLeafy"
+    label: "Classrooms",
+    title: "Classroom availability",
+    body: "Check free classrooms by date, room, or period and keep useful rooms in a short favorites list.",
+    image: "/media/app-classroom.webp",
+    alt: "Classroom availability in MyLeafy on iPhone 17 Pro"
+  },
+  {
+    label: "Campus",
+    title: "Venue information",
+    body: "Find opening rules and practical details for sports venues across the east and west campuses.",
+    image: "/media/app-venues.webp",
+    alt: "Campus venue information in MyLeafy on iPhone 17 Pro"
+  },
+  {
+    label: "Campus policy",
+    title: "Health policy",
+    body: "Turn dense campus notices into readable, structured information while keeping the original source available.",
+    image: "/media/app-health-policy.webp",
+    alt: "Campus health policy in MyLeafy on iPhone 17 Pro"
+  },
+  {
+    label: "Ratings",
+    title: "Teacher ratings",
+    body: "Browse lightweight teacher and course ratings with clear filtering and concise summaries.",
+    image: "/media/app-ratings.webp",
+    alt: "Teacher ratings in MyLeafy on iPhone 17 Pro"
+  },
+  {
+    label: "Leafy AI",
+    title: "Campus answers",
+    body: "Ask a campus question and receive a structured answer with the relevant policy context.",
+    image: "/media/app-ai-policy.webp",
+    alt: "Leafy AI campus answer on iPhone 17 Pro"
   }
 ];
 

@@ -6,11 +6,11 @@ const config: Config = {
     extend: {
       colors: {
         primary: {
-          DEFAULT: "#4E8261",
-          strong: "#315F45",
-          ink: "#244B37",
-          wash: "#EAF3EC",
-          soft: "#F6FAF6"
+          DEFAULT: "#1F6A45",
+          strong: "#155638",
+          ink: "#164A32",
+          wash: "#EAF5EC",
+          soft: "#F5FAF6"
         },
         secondary: {
           DEFAULT: "#D8CC8F",
@@ -40,23 +40,23 @@ const config: Config = {
         danger: "#B42318",
         info: "#4F8F67",
         surface: "#FFFFFF",
-        "surface-high": "#F8F5EA",
-        "surface-low": "#ECE5CC",
-        text: "#18201A",
+        "surface-high": "#F4F8F4",
+        "surface-low": "#E7F2E9",
+        text: "#102018",
         paper: {
-          DEFAULT: "#FCFAF1",
-          muted: "#F4EFD9"
+          DEFAULT: "#FFFFFF",
+          muted: "#F4F8F4"
         }
       },
       boxShadow: {
-        soft: "0 10px 30px rgba(24, 32, 26, 0.08)",
-        lift: "0 24px 70px rgba(24, 32, 26, 0.10)",
-        primary: "0 18px 46px rgba(78, 130, 97, 0.22)",
+        soft: "0 10px 30px rgba(16, 32, 24, 0.07)",
+        lift: "0 24px 70px rgba(16, 32, 24, 0.11)",
+        primary: "0 18px 46px rgba(31, 106, 69, 0.22)",
         line: "inset 0 0 0 1px rgba(23, 23, 23, 0.08)"
       },
       fontFamily: {
-        sans: ["Lora", "Georgia", "\"Times New Roman\"", "serif"],
-        display: ["Lora", "Georgia", "\"Times New Roman\"", "serif"],
+        sans: ["-apple-system", "BlinkMacSystemFont", "SF Pro Text", "Inter", "Helvetica Neue", "Arial", "sans-serif"],
+        display: ["-apple-system", "BlinkMacSystemFont", "SF Pro Display", "Inter", "Helvetica Neue", "Arial", "sans-serif"],
         mono: ["SFMono-Regular", "Consolas", "\"Liberation Mono\"", "monospace"]
       }
     }

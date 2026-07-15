@@ -1,20 +1,26 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { ImageDithering } from "@paper-design/shaders-react";
 import {
+  AppleLogo,
   ArrowRight,
+  Buildings,
   CalendarBlank,
   ChatsCircle,
   CheckCircle,
+  CloudCheck,
+  Database,
   DeviceMobile,
   EnvelopeSimple,
+  GraduationCap,
   House,
   Lifebuoy,
   LockKey,
-  ShieldCheck
+  ShieldCheck,
+  Sparkle
 } from "@phosphor-icons/react";
 import {
   appStoreLinks,
+  appScreenshots,
   capabilityStats,
   featureShowcases,
   featureBands,
@@ -23,7 +29,6 @@ import {
   navItems,
   privacySections,
   privacySummaryCards,
-  productCards,
   resourceLinks,
   site,
   supportChecklist,
@@ -32,7 +37,7 @@ import {
 } from "./content";
 import type { IconComponent } from "./types";
 import { CopyEmailButton } from "./components/CopyEmailButton";
-import { StaggerReveal, TapButton } from "./components/MotionBits";
+import { ScrollReveal, StaggerReveal, TapButton } from "./components/MotionBits";
 
 const AdminConsole = lazy(() => import("./admin/AdminConsole"));
 
@@ -47,11 +52,10 @@ const pageTitles: Record<string, string> = {
 };
 
 const primaryButtonClass = "border border-primary bg-primary text-white shadow-primary hover:bg-primary-strong";
-const secondaryButtonClass = "border border-black/10 bg-white/90 text-text shadow-soft hover:border-black/25 hover:bg-white";
-const panelClass = "rounded-lg border border-black/10 bg-white/90 p-6 shadow-[0_18px_50px_rgba(24,32,26,0.06)] backdrop-blur";
-const featuredPanelClass = "rounded-lg border border-primary/20 bg-primary-wash/80 p-6 shadow-[0_18px_50px_rgba(78,130,97,0.08)]";
-const ruleStackClass = "overflow-hidden rounded-lg border border-black/10 bg-white/90 shadow-[0_18px_50px_rgba(24,32,26,0.05)] backdrop-blur";
-const heroBackgroundImage = "/media/leafy-hero-leaves.png";
+const secondaryButtonClass = "border border-black/10 bg-white text-text shadow-soft hover:border-black/20 hover:bg-primary-soft";
+const panelClass = "rounded-[24px] border border-black/[0.08] bg-white p-6 shadow-[0_18px_50px_rgba(16,32,24,0.055)]";
+const featuredPanelClass = "rounded-[24px] border border-primary/15 bg-primary-wash p-6 shadow-[0_18px_50px_rgba(31,106,69,0.07)]";
+const ruleStackClass = "overflow-hidden rounded-[24px] border border-black/[0.08] bg-white shadow-[0_18px_50px_rgba(16,32,24,0.05)]";
 
 function normalizedPath(pathname: string) {
   if (pathname === "/") {
@@ -158,7 +162,7 @@ export default function App() {
     <div className="min-h-[100dvh] bg-paper text-text">
       <Header activePath={activePath} navigate={navigate} />
       <main>
-        {activePath === "/" && <HomePage />}
+        {activePath === "/" && <HomePage navigate={navigate} />}
         {activePath === "/features" && <FeaturesPage navigate={navigate} />}
         {activePath === "/support" && <SupportPage />}
         {activePath === "/privacy" && <PrivacyPage />}
@@ -174,22 +178,22 @@ function Header({ activePath, navigate }: { activePath: string; navigate: (href:
   const isHome = activePath === "/";
 
   return (
-    <header className={`${isHome ? "absolute border-transparent bg-transparent" : "sticky border-black/10 bg-paper/90 backdrop-blur-2xl"} top-0 z-40 w-full border-b`}>
-      <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3 md:px-6">
+    <header className={`${isHome ? "absolute" : "sticky border-b border-black/[0.06] bg-white/85 backdrop-blur-2xl"} top-0 z-40 w-full`}>
+      <div className={`${isHome ? "mt-3 rounded-[22px] border border-white/70 bg-white/72 shadow-[0_12px_40px_rgba(16,32,24,0.08)] backdrop-blur-2xl md:mt-5" : ""} mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3 md:px-5`}>
         <a
           href="/"
           onClick={(event) => {
             event.preventDefault();
             navigate("/");
           }}
-          className="flex min-w-fit items-center gap-3"
+          className="leafy-pressable flex min-w-fit items-center gap-3 rounded-xl"
           aria-label="MyLeafy home"
         >
-          <img className="h-9 w-9 rounded-lg border border-black/10 shadow-soft" src="/app-icon.png" alt="MyLeafy app icon" />
-          <strong className={`text-2xl font-bold leading-none ${isHome ? "text-black" : "text-text"}`}>MyLeafy</strong>
+          <img className="h-9 w-9 rounded-[10px] border border-black/[0.06] shadow-soft" src="/app-icon.png" alt="MyLeafy app icon" />
+          <strong className="text-xl font-semibold leading-none tracking-[-0.02em] text-text">MyLeafy</strong>
         </a>
 
-        <nav className="leafy-scrollbar-none order-3 flex w-full min-w-0 gap-1 overflow-x-auto md:order-none md:ml-7 md:w-auto md:flex-1 md:items-center">
+        <nav className="leafy-scrollbar-none order-3 flex w-full min-w-0 gap-1 overflow-x-auto md:order-none md:ml-8 md:w-auto md:flex-1 md:items-center md:justify-center">
           {navItems.map((item) => {
             const route = routeFromHref(item.href).split("#")[0];
             const isActive = route === "/" ? activePath === "/" : activePath === route;
@@ -202,14 +206,10 @@ function Header({ activePath, navigate }: { activePath: string; navigate: (href:
                   event.preventDefault();
                   navigate(item.href);
                 }}
-                className={`whitespace-nowrap rounded-lg px-3 py-2 text-[15px] font-semibold transition-colors ${
-                  isHome
-                    ? isActive
-                      ? "bg-black/10 text-black"
-                      : "text-black/75 hover:bg-black/10 hover:text-black"
-                    : isActive
-                      ? "bg-primary-wash text-primary-ink"
-                      : "text-text/60 hover:bg-white/70 hover:text-text"
+                className={`leafy-pressable whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
+                  isActive
+                    ? "bg-primary-wash text-primary-ink"
+                    : "text-text/60 hover:bg-primary-soft hover:text-text"
                 }`}
               >
                 {item.label}
@@ -221,44 +221,238 @@ function Header({ activePath, navigate }: { activePath: string; navigate: (href:
         <div className="ml-auto flex items-center gap-2">
           <a
             href={`mailto:${site.supportEmail}`}
-            className={`hidden rounded-lg px-3 py-2 text-base font-semibold transition-colors sm:inline-flex ${
-              isHome ? "text-black/75 hover:bg-black/10 hover:text-black" : "text-text/60 hover:bg-white/70 hover:text-text"
-            }`}
+            className="leafy-pressable hidden rounded-xl px-3 py-2 text-sm font-medium text-text/60 transition-colors hover:bg-primary-soft hover:text-text sm:inline-flex"
           >
             Contact
           </a>
-          <button
-            type="button"
-            onClick={() => navigate("/support")}
-            className={`inline-flex min-h-10 items-center justify-center rounded-lg border px-5 text-base font-semibold transition-colors ${
-              isHome
-                ? "border-black/15 bg-black/10 text-black shadow-none hover:bg-black/15"
-                : "border-primary bg-primary text-white shadow-primary hover:bg-primary-strong"
-            }`}
+          <a
+            href={site.appStoreUrl}
+            className="leafy-pressable inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-white shadow-[0_10px_28px_rgba(31,106,69,0.22)] transition-colors hover:bg-primary-strong"
           >
-            Support
-          </button>
+            <AppleLogo size={16} weight="fill" aria-hidden />
+            <span className="hidden sm:inline">App Store</span>
+            <span className="sm:hidden">Get</span>
+          </a>
         </div>
       </div>
     </header>
   );
 }
 
-function HomePage() {
+function HomePage({ navigate }: { navigate: (href: string) => void }) {
   return (
-    <section className="relative isolate flex min-h-[100dvh] items-center overflow-hidden border-b border-black/10 bg-[#d8e8cc]">
-      <HomeBackground />
-      <div className="mx-auto w-full max-w-7xl px-4 py-16 md:px-6">
-        <StaggerReveal className="max-w-3xl">
-          <p className="mb-5 text-sm font-semibold uppercase tracking-normal text-black/80">
-            BJFU campus tool
-          </p>
-          <h1 className="text-6xl font-semibold leading-none tracking-normal text-black md:text-8xl lg:text-9xl">MyLeafy</h1>
-          <p className="mt-7 max-w-[680px] text-lg font-normal leading-relaxed text-black/80 md:text-2xl">
-            A campus timetable and student tools app for Beijing Forestry University.
-          </p>
-        </StaggerReveal>
+    <>
+      <section className="relative isolate min-h-[880px] overflow-hidden bg-white pt-28 md:min-h-[min(960px,100svh)] md:pt-36">
+        <div className="absolute -right-40 top-8 -z-10 h-[620px] w-[620px] rounded-[44%_56%_64%_36%/52%_40%_60%_48%] bg-primary-wash opacity-90" aria-hidden />
+        <div className="absolute bottom-10 left-[42%] -z-10 h-72 w-72 rounded-[64%_36%_42%_58%/42%_58%_42%_58%] bg-[#f3f8e9]" aria-hidden />
+
+        <div className="mx-auto grid w-full max-w-7xl items-center gap-16 px-4 pb-20 md:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:gap-8 lg:pb-24">
+          <StaggerReveal className="relative z-10 max-w-2xl">
+            <h1 className="text-[clamp(3.7rem,7vw,6.8rem)] font-semibold leading-[0.92] tracking-[-0.065em] text-text">
+              Campus life,<br />in one place.
+            </h1>
+            <p className="mt-7 max-w-[620px] text-lg leading-relaxed text-text/64 md:text-xl">
+              Timetable, academics, community, and the everyday tools built for BJFU students.
+            </p>
+            <div className="mt-9 flex flex-col gap-3 sm:flex-row">
+              <AppStoreButton />
+              <TapButton onClick={() => navigate("/features")} className={`${secondaryButtonClass} px-5 text-[15px] font-semibold`}>
+                Explore features
+                <ArrowRight size={17} weight="bold" aria-hidden />
+              </TapButton>
+            </div>
+          </StaggerReveal>
+
+          <HeroPhones />
+        </div>
+      </section>
+
+      <ProofRail />
+
+      <section className="overflow-hidden bg-white px-4 py-24 md:px-6 md:py-36">
+        <ScrollReveal className="mx-auto grid max-w-7xl items-center gap-14 lg:grid-cols-[0.9fr_1.1fr] lg:gap-24">
+          <div className="relative mx-auto w-full max-w-[500px]">
+            <div className="absolute inset-[12%_-8%_5%_-8%] -z-10 rounded-[50%_50%_42%_58%/52%_44%_56%_48%] bg-primary-wash" aria-hidden />
+            <PhoneFrame image={appScreenshots[0].image} alt={appScreenshots[0].alt} className="mx-auto w-[min(68vw,330px)]" />
+          </div>
+          <div className="max-w-xl">
+            <span className="mb-7 grid h-12 w-12 place-items-center rounded-2xl bg-primary-wash text-primary-ink">
+              <CalendarBlank size={24} weight="bold" aria-hidden />
+            </span>
+            <h2 className="text-4xl font-semibold leading-[1.04] tracking-[-0.045em] text-text md:text-6xl">Your timetable, beautifully simple.</h2>
+            <p className="mt-6 text-lg leading-relaxed text-text/64">
+              Open MyLeafy and see the week at a glance. Classes, rooms, reminders, and exam information stay close to the schedule you check every day.
+            </p>
+            <FeatureList items={["A clear week built around the school day", "Course details and reminders in context", "Calendar export when you need it elsewhere"]} />
+          </div>
+        </ScrollReveal>
+      </section>
+
+      <section className="border-y border-black/[0.05] bg-primary-soft px-4 py-24 md:px-6 md:py-36">
+        <ScrollReveal className="mx-auto grid max-w-7xl items-center gap-16 lg:grid-cols-[0.92fr_1.08fr] lg:gap-24">
+          <div className="max-w-xl lg:order-1">
+            <span className="mb-7 grid h-12 w-12 place-items-center rounded-2xl bg-white text-primary-ink shadow-soft">
+              <ChatsCircle size={24} weight="bold" aria-hidden />
+            </span>
+            <h2 className="text-4xl font-semibold leading-[1.04] tracking-[-0.045em] text-text md:text-6xl">More than a timetable.</h2>
+            <p className="mt-6 text-lg leading-relaxed text-text/64">
+              Academic tools and campus conversations have their own clear spaces, so checking grades never feels mixed up with browsing community posts.
+            </p>
+            <div className="mt-10 grid gap-0 border-y border-black/[0.08]">
+              <StoryRow icon={GraduationCap} title="Academics" body="Grades, exams, credits, study plans, and classroom lookup." />
+              <StoryRow icon={ChatsCircle} title="Community" body="Posts, notices, discussions, bookmarks, and notifications." />
+              <StoryRow icon={Sparkle} title="Personal" body="Themes, reminders, notes, sharing, and everyday preferences." />
+            </div>
+          </div>
+          <div className="relative min-h-[590px] lg:order-2">
+            <div className="absolute left-[5%] top-0 z-10 w-[min(56vw,285px)] -rotate-[5deg]">
+              <PhoneFrame image={appScreenshots[1].image} alt={appScreenshots[1].alt} />
+            </div>
+            <div className="absolute bottom-0 right-[3%] w-[min(56vw,285px)] rotate-[4deg]">
+              <PhoneFrame image={appScreenshots[2].image} alt={appScreenshots[2].alt} />
+            </div>
+          </div>
+        </ScrollReveal>
+      </section>
+
+      <HomeDataTrust />
+
+      <section className="bg-primary px-4 py-16 text-white md:px-6 md:py-20">
+        <ScrollReveal className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-8 md:flex-row md:items-center">
+          <div className="flex items-center gap-5">
+            <img className="h-20 w-20 rounded-[22px] border border-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.2)]" src="/app-icon.png" alt="MyLeafy app icon" />
+            <div>
+              <h2 className="text-3xl font-semibold tracking-[-0.035em] md:text-4xl">All set. Let’s get started.</h2>
+              <p className="mt-2 text-base text-white/70">Make the everyday parts of campus life simpler.</p>
+            </div>
+          </div>
+          <AppStoreButton light />
+        </ScrollReveal>
+      </section>
+    </>
+  );
+}
+
+function AppStoreButton({ light = false }: { light?: boolean }) {
+  return (
+    <TapButton
+      href={site.appStoreUrl}
+      className={`${light ? "border-white/15 bg-white text-primary-ink shadow-[0_16px_40px_rgba(0,0,0,0.18)] hover:bg-white/92" : primaryButtonClass} px-5 text-[15px] font-semibold`}
+    >
+      <AppleLogo size={20} weight="fill" aria-hidden />
+      View on the App Store
+    </TapButton>
+  );
+}
+
+function PhoneFrame({ image, alt, className = "" }: { image: string; alt: string; className?: string }) {
+  return (
+    <div className={`phone-frame relative overflow-hidden rounded-[46px] border-[7px] border-[#111714] bg-[#111714] shadow-[0_35px_80px_rgba(15,42,26,0.2)] ${className}`}>
+      <img className="h-auto w-full rounded-[38px] bg-white" src={image} alt={alt} loading="eager" decoding="async" />
+    </div>
+  );
+}
+
+function HeroPhones() {
+  return (
+    <div className="relative mx-auto min-h-[590px] w-full max-w-[650px] lg:min-h-[670px]" aria-label="MyLeafy app previews">
+      <div className="hero-phone hero-phone-left absolute left-[3%] top-[10%] z-10 w-[min(53vw,310px)] -rotate-[5deg]">
+        <PhoneFrame image={appScreenshots[0].image} alt={appScreenshots[0].alt} />
       </div>
+      <div className="hero-phone hero-phone-right absolute bottom-[1%] right-[2%] w-[min(53vw,310px)] rotate-[4deg]">
+        <PhoneFrame image={appScreenshots[1].image} alt={appScreenshots[1].alt} />
+      </div>
+    </div>
+  );
+}
+
+function ProofRail() {
+  const items = [
+    { icon: Buildings, title: "BJFU", body: "Made for Beijing Forestry University." },
+    { icon: CalendarBlank, title: "Timetable first", body: "The week you need, at a glance." },
+    { icon: ShieldCheck, title: "Privacy by design", body: "Clear boundaries and local control." },
+    { icon: DeviceMobile, title: "Built for iPhone", body: "Native, focused, and familiar." }
+  ];
+
+  return (
+    <section className="border-y border-black/[0.05] bg-primary-soft px-4 md:px-6">
+      <div className="mx-auto grid max-w-7xl divide-y divide-black/[0.07] md:grid-cols-4 md:divide-x md:divide-y-0">
+        {items.map((item) => {
+          const Icon = item.icon;
+          return (
+            <div key={item.title} className="px-1 py-7 md:px-7 md:py-9 first:md:pl-0 last:md:pr-0">
+              <Icon size={25} weight="bold" className="text-primary-ink" aria-hidden />
+              <p className="mt-5 text-base font-semibold tracking-[-0.015em] text-text">{item.title}</p>
+              <p className="mt-2 text-sm leading-relaxed text-text/58">{item.body}</p>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function FeatureList({ items }: { items: string[] }) {
+  return (
+    <div className="mt-8 grid gap-4">
+      {items.map((item) => (
+        <div key={item} className="flex items-start gap-3 text-[15px] leading-relaxed text-text/72">
+          <CheckCircle className="mt-0.5 shrink-0 text-primary" size={19} weight="fill" aria-hidden />
+          <span>{item}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StoryRow({ icon: Icon, title, body }: { icon: IconComponent; title: string; body: string }) {
+  return (
+    <div className="grid grid-cols-[44px_1fr] gap-4 border-b border-black/[0.08] py-5 last:border-b-0">
+      <span className="grid h-10 w-10 place-items-center rounded-xl bg-white text-primary-ink shadow-soft">
+        <Icon size={20} weight="bold" aria-hidden />
+      </span>
+      <div>
+        <h3 className="text-base font-semibold text-text">{title}</h3>
+        <p className="mt-1 text-sm leading-relaxed text-text/58">{body}</p>
+      </div>
+    </div>
+  );
+}
+
+function HomeDataTrust() {
+  const items = [
+    { icon: Buildings, title: "School data", body: "Timetable and academics come from the official school system." },
+    { icon: Database, title: "Local cache", body: "Recent information stays on your device for reliable everyday access." },
+    { icon: CloudCheck, title: "Community service", body: "Community content is separate from your school login session." }
+  ];
+
+  return (
+    <section className="bg-white px-4 py-24 md:px-6 md:py-32">
+      <ScrollReveal className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[0.72fr_1.28fr] lg:gap-20">
+        <div>
+          <span className="grid h-12 w-12 place-items-center rounded-2xl bg-primary-wash text-primary-ink">
+            <LockKey size={24} weight="bold" aria-hidden />
+          </span>
+          <h2 className="mt-7 max-w-lg text-4xl font-semibold leading-[1.04] tracking-[-0.045em] text-text md:text-5xl">Your data, protected by design.</h2>
+          <p className="mt-6 max-w-lg text-base leading-relaxed text-text/62">
+            MyLeafy keeps school data, device storage, and community services understandable and separate.
+          </p>
+        </div>
+        <div className="border-y border-black/[0.08]">
+          {items.map((item) => {
+            const Icon = item.icon;
+            return (
+              <div key={item.title} className="grid gap-4 border-b border-black/[0.08] py-6 last:border-b-0 sm:grid-cols-[52px_0.42fr_1fr] sm:items-center">
+                <span className="grid h-11 w-11 place-items-center rounded-xl bg-primary-wash text-primary-ink">
+                  <Icon size={21} weight="bold" aria-hidden />
+                </span>
+                <h3 className="text-base font-semibold text-text">{item.title}</h3>
+                <p className="text-sm leading-relaxed text-text/58">{item.body}</p>
+              </div>
+            );
+          })}
+        </div>
+      </ScrollReveal>
     </section>
   );
 }
@@ -271,16 +465,11 @@ function FeaturesPage({ navigate }: { navigate: (href: string) => void }) {
       <SectionShell
         id="product"
         eyebrow="Product"
-        title="Built around campus routines"
+        title="Built around the rhythm of campus life"
       >
-        <div className="grid gap-4 lg:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-2">
           {featureBands.map((item) => (
             <FeatureBandCard key={item.label} item={item} />
-          ))}
-        </div>
-        <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {productCards.map((feature, index) => (
-            <ProductCard key={feature.label} feature={feature} featured={index === 0} />
           ))}
         </div>
       </SectionShell>
@@ -316,37 +505,6 @@ function FeaturesPage({ navigate }: { navigate: (href: string) => void }) {
   );
 }
 
-function HomeBackground() {
-  return (
-    <div className="absolute inset-0 -z-10 bg-[#d7eacb]" aria-hidden>
-      <img
-        className="h-full w-full object-cover"
-        src={heroBackgroundImage}
-        alt=""
-        loading="eager"
-        decoding="async"
-      />
-      <ImageDithering
-        className="leafy-dither absolute inset-0 h-full w-full"
-        image={heroBackgroundImage}
-        colorBack="#253622"
-        colorFront="#cce3b7"
-        colorHighlight="#f2e79a"
-        originalColors={false}
-        inverted={false}
-        type="8x8"
-        size={2.4}
-        colorSteps={3}
-        fit="cover"
-        minPixelRatio={1}
-        maxPixelCount={1600000}
-        width="100%"
-        height="100%"
-      />
-    </div>
-  );
-}
-
 function CapabilityRail() {
   return (
     <section className="border-b border-black/10 bg-white/80 py-3 backdrop-blur">
@@ -367,23 +525,23 @@ function CapabilityRail() {
 
 function FeatureImageShowcase() {
   return (
-    <section id="screens" className="scroll-mt-24 border-y border-black/10 bg-white/70">
+    <section id="screens" className="scroll-mt-24 border-y border-black/[0.06] bg-primary-soft">
       <div className="mx-auto max-w-7xl px-4 py-16 md:px-6 md:py-24">
-        <div className="mx-auto mb-12 max-w-4xl text-center">
-          <p className="text-sm font-semibold uppercase text-primary-ink">Features</p>
-          <h2 className="mt-4 text-4xl font-semibold leading-tight tracking-normal text-text md:text-6xl">What MyLeafy covers</h2>
-          <p className="mx-auto mt-5 max-w-[720px] text-base leading-relaxed text-text/70">
+        <div className="mb-12 max-w-4xl">
+          <p className="text-sm font-semibold text-primary-ink">Inside the app</p>
+          <h2 className="mt-4 text-4xl font-semibold leading-tight tracking-[-0.045em] text-text md:text-6xl">One focused place for campus routines.</h2>
+          <p className="mt-5 max-w-[720px] text-base leading-relaxed text-text/64">
             Timetable, community, grades, credits, assessment, and timetable sharing.
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="leafy-scrollbar-none -mx-4 flex snap-x snap-mandatory gap-5 overflow-x-auto px-4 pb-5 md:-mx-6 md:px-6">
           {featureShowcases.map((shot, index) => (
             <article
               key={shot.label}
-              className="overflow-hidden rounded-lg border border-black/10 bg-paper/90 shadow-soft"
+              className="w-[min(82vw,340px)] shrink-0 snap-start overflow-hidden rounded-[28px] border border-black/[0.07] bg-white shadow-[0_18px_50px_rgba(16,32,24,0.07)]"
             >
-              <div className="aspect-[1284/2778] bg-[#d9edcc]">
+              <div className="aspect-[941/2048] bg-primary-wash">
                 <img
                   className="h-full w-full object-contain"
                   src={shot.image}
@@ -392,10 +550,10 @@ function FeatureImageShowcase() {
                   decoding="async"
                 />
               </div>
-              <div className="p-5">
-                <p className="text-xs font-semibold uppercase text-primary-ink">{shot.label}</p>
-                <h3 className="mt-2 text-2xl font-semibold leading-tight text-text">{shot.title}</h3>
-                <p className="mt-3 text-sm font-normal leading-relaxed text-text/70">{shot.body}</p>
+              <div className="p-6">
+                <p className="text-xs font-semibold text-primary-ink">{shot.label}</p>
+                <h3 className="mt-2 text-2xl font-semibold leading-tight tracking-[-0.025em] text-text">{shot.title}</h3>
+                <p className="mt-3 text-sm font-normal leading-relaxed text-text/62">{shot.body}</p>
               </div>
             </article>
           ))}
@@ -418,41 +576,15 @@ function FeatureBandCard({
   const Icon = item.icon;
 
   return (
-    <article className="rounded-lg border border-black/10 bg-white/90 p-6 shadow-soft">
+    <article className="rounded-[24px] border border-black/[0.07] bg-white p-7 shadow-[0_18px_50px_rgba(16,32,24,0.055)]">
       <div className="mb-7 flex items-center justify-between gap-3">
-        <span className="grid h-11 w-11 place-items-center rounded-lg border border-primary/20 bg-primary-wash text-primary-ink">
+        <span className="grid h-11 w-11 place-items-center rounded-2xl bg-primary-wash text-primary-ink">
           <Icon size={23} weight="bold" aria-hidden />
         </span>
-        <span className="rounded-lg border border-black/10 bg-paper px-3 py-1 text-xs font-semibold text-text/60">{item.label}</span>
+        <span className="text-xs font-semibold text-primary-ink">{item.label}</span>
       </div>
-      <h3 className="text-xl font-semibold leading-tight text-text">{item.title}</h3>
-      <p className="mt-4 text-sm font-normal leading-relaxed text-text/70">{item.body}</p>
-    </article>
-  );
-}
-
-function ProductCard({
-  feature,
-  featured = false
-}: {
-  feature: (typeof productCards)[number];
-  featured?: boolean;
-}) {
-  const Icon = feature.icon;
-
-  return (
-    <article className={`${featured ? "border-primary/25 bg-primary-wash/80" : "border-black/10 bg-white/90"} flex min-h-72 flex-col justify-between rounded-lg border p-6 shadow-soft`}>
-      <div>
-        <div className="mb-8 flex items-center justify-between gap-3">
-          <div className="grid h-11 w-11 place-items-center rounded-lg border border-black/10 bg-white text-primary-ink">
-            <Icon size={23} weight="bold" aria-hidden />
-          </div>
-          <span className="rounded-lg border border-black/10 bg-white px-3 py-1 text-xs font-medium text-text/60">{feature.detail}</span>
-        </div>
-        <p className="text-sm font-medium text-text/60">{feature.label}</p>
-        <h3 className="mt-3 max-w-xl text-2xl font-semibold leading-tight text-text">{feature.title}</h3>
-      </div>
-      <p className="mt-8 max-w-[68ch] text-sm font-normal leading-relaxed text-text/70">{feature.body}</p>
+      <h3 className="text-xl font-semibold leading-tight tracking-[-0.02em] text-text">{item.title}</h3>
+      <p className="mt-4 text-sm font-normal leading-relaxed text-text/62">{item.body}</p>
     </article>
   );
 }
@@ -728,21 +860,18 @@ function PageHero({
   children?: ReactNode;
 }) {
   return (
-    <section className="relative isolate overflow-hidden border-b border-black/10 bg-paper">
-      <div className="absolute inset-0 -z-10 opacity-20" aria-hidden>
-        <img className="h-full w-full object-cover" src={heroBackgroundImage} alt="" loading="lazy" decoding="async" />
-      </div>
-      <div className="absolute inset-0 -z-10 bg-[linear-gradient(180deg,rgba(252,250,241,0.90),rgba(252,250,241,0.98))]" aria-hidden />
-      <div className="mx-auto grid max-w-7xl gap-10 px-4 py-16 md:px-6 lg:grid-cols-[0.52fr_1.48fr] lg:py-24">
+    <section className="relative isolate overflow-hidden border-b border-black/[0.06] bg-primary-soft">
+      <div className="absolute -right-24 -top-40 -z-10 h-[520px] w-[520px] rounded-full bg-primary-wash" aria-hidden />
+      <div className="mx-auto grid max-w-7xl gap-10 px-4 py-16 md:px-6 lg:grid-cols-[0.42fr_1.58fr] lg:py-24">
         <div>
-          <div className="inline-grid h-12 w-12 place-items-center rounded-lg border border-primary/20 bg-primary-wash text-primary-ink shadow-soft">
+          <div className="inline-grid h-12 w-12 place-items-center rounded-2xl border border-primary/10 bg-white text-primary-ink shadow-soft">
             <Icon size={24} weight="bold" aria-hidden />
           </div>
         </div>
         <div>
-          <p className="text-sm font-semibold uppercase text-primary-ink">{label}</p>
-          <h1 className="mt-4 text-5xl font-semibold leading-none tracking-normal text-text md:text-7xl">{title}</h1>
-          <p className="mt-6 max-w-[76ch] text-lg font-normal leading-relaxed text-text/70">{body}</p>
+          <p className="text-sm font-semibold text-primary-ink">{label}</p>
+          <h1 className="mt-4 text-5xl font-semibold leading-none tracking-[-0.05em] text-text md:text-7xl">{title}</h1>
+          <p className="mt-6 max-w-[76ch] text-lg font-normal leading-relaxed text-text/64">{body}</p>
           {children}
         </div>
       </div>
