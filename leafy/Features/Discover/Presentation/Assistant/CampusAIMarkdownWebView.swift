@@ -21,7 +21,7 @@ struct CampusAIMarkdownWebView: View {
     @State private var didFailRendering = false
 
     init(markdown: String, mode: Mode = .compact) {
-        self.markdown = markdown
+        self.markdown = CampusAIMarkdownNormalizer.normalize(markdown)
         self.mode = mode
     }
 

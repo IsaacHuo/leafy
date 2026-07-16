@@ -90,18 +90,8 @@ nonisolated enum CampusAIArtifactExportFormat: String, CaseIterable, Identifiabl
 }
 
 nonisolated enum CampusAIArtifactIntentResolver {
-    private static let artifactIntentPhrases = [
-        "计划", "规划", "方案", "报告", "清单", "表格", "流程图", "路线图", "复习表",
-        "学习安排", "时间安排", "执行步骤", "行动项", "备忘录", "总结文档", "整理成文档",
-        "生成文档", "做成表格", "做成清单", "给我一份", "输出一份"
-    ]
-
-    static func shouldGenerateArtifact(message: String, mode: CampusAIOutputMode) -> Bool {
-        if mode == .artifact { return true }
-        let normalized = message
-            .lowercased()
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return artifactIntentPhrases.contains { normalized.contains($0) }
+    static func shouldGenerateArtifact(message _: String, mode: CampusAIOutputMode) -> Bool {
+        mode == .artifact
     }
 }
 
@@ -153,9 +143,9 @@ nonisolated enum CampusAICompletionPlanError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
-            return "成品整理结果无法解析，请重试。"
+            return "卡片整理结果无法解析，请重试。"
         case .artifactMissing:
-            return "这次没有生成成品内容，请重试。"
+            return "这次没有生成卡片内容，请重试。"
         }
     }
 }

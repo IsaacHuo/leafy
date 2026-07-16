@@ -124,14 +124,14 @@ struct CampusAISettingsView: View {
                 persistSettings()
             }
             .confirmationDialog(
-                "清空全部对话与成品？",
+                "清空全部对话与卡片？",
                 isPresented: $isClearHistoryConfirmationPresented,
                 titleVisibility: .visible
             ) {
                 Button("清空全部历史记录", role: .destructive, action: clearHistory)
                 Button("取消", role: .cancel) {}
             } message: {
-                Text("这会删除当前设备上的 Leafy 对话、动作记录与成品缓存，且无法撤销。")
+                Text("这会删除当前设备上的 Leafy 对话、动作记录与卡片缓存，且无法撤销。")
             }
         }
         .presentationDetents([.large])

@@ -39,7 +39,7 @@ final class CampusAIChatSession {
     }
 
     func update(statusText: String) {
-        if statusText.contains("成品") {
+        if statusText.contains("卡片") {
             stage = .assemblingArtifact
         } else if statusText.contains("动作") || statusText.contains("规划") {
             stage = .planningActions

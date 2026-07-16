@@ -174,6 +174,35 @@ final class CampusAIAssistantTests: XCTestCase {
         )
     }
 
+    func testResponseDocumentNormalizesNumericRangesAndRepairsStrictTables() {
+        let document = CampusAIResponseDocument(
+            markdown: """
+            温度 23~~34°C，风力 1~~2 级，保留 ~~删除线~~。
+
+            ｜ 项目 ｜ 结果 ｜
+            ｜ 温度 ｜ 23~~34°C ｜
+            """
+        )
+
+        XCTAssertEqual(
+            document.blocks,
+            [
+                .paragraph("温度 23–34°C，风力 1–2 级，保留 ~~删除线~~。"),
+                .table(headers: ["项目", "结果"], rows: [["温度", "23–34°C"]])
+            ]
+        )
+    }
+
+    func testMarkdownNormalizerRemovesSourceLinksButPreservesOrdinaryLinks() {
+        let markdown = "天气晴朗。[天气来源](https://weather.example.com/today)\n请打开[报名页面](https://apply.example.com)。"
+        let normalized = CampusAIMarkdownNormalizer.normalize(
+            markdown,
+            removingCitationURLs: ["https://weather.example.com/today"]
+        )
+
+        XCTAssertEqual(normalized, "天气晴朗。\n请打开[报名页面](https://apply.example.com)。")
+    }
+
     func testActionPresentationHidesCancelledAndCollapsesCompletedByDefault() {
         XCTAssertTrue(CampusAIActionPresentationPolicy.isVisible(.pending))
         XCTAssertTrue(CampusAIActionPresentationPolicy.isVisible(.completed))
@@ -973,7 +1002,7 @@ final class CampusAIAssistantTests: XCTestCase {
         ))
     }
 
-    func testResearchCitationPolicyOnlyKeepsURLsUsedByAnswer() {
+    func testResearchCitationPolicyKeepsReadSourcesWithoutInlineURLs() {
         let used = CampusAICitation(
             id: "used",
             title: "推免工作方案",
@@ -989,7 +1018,7 @@ final class CampusAIAssistantTests: XCTestCase {
             answer: "请查看[推免细则](https://jwc.bjfu.edu.cn/files/rules.docx)。"
         )
 
-        XCTAssertEqual(adopted.map(\.id), ["used"])
+        XCTAssertEqual(adopted.map(\.id), ["used", "noise"])
     }
 
     func testTimelineMutationPlanSupportsEditAndLinearRewind() {
@@ -1172,19 +1201,16 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertTrue(ids.contains("web.search"))
         XCTAssertTrue(ids.contains("local.retrieval"))
         XCTAssertTrue(ids.contains("action.plan"))
-        XCTAssertEqual(CampusAIToolRegistry.descriptor(for: .createCountdown)?.title, "创建重要日期")
+        XCTAssertEqual(CampusAIToolRegistry.descriptor(for: .createSchedule)?.title, "添加日程")
         XCTAssertEqual(CampusAIToolRegistry.descriptor(forToolName: "web.search")?.systemImageName, "network")
 
         let supportedActions = CampusAIToolRegistry.supportedActions()
-        XCTAssertEqual(supportedActions.count, 3)
+        XCTAssertEqual(supportedActions.count, 2)
         XCTAssertTrue(supportedActions.contains { action in
             action.kind == CampusAIActionKind.openAcademicRoute.rawValue &&
                 (action.allowedValues["route"] ?? []).contains("examSchedule")
         })
-        XCTAssertTrue(supportedActions.contains { action in
-            action.kind == CampusAIActionKind.createTimetableReminder.rawValue &&
-                (action.allowedValues["period"] ?? []).contains("1")
-        })
+        XCTAssertTrue(supportedActions.contains { $0.kind == CampusAIActionKind.createSchedule.rawValue })
     }
 
     func testLocalKnowledgeIndexFindsLearningAndExamResultsWithinBudget() throws {
@@ -1278,7 +1304,7 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertFalse(CampusAIService.shouldRunDirectAgent(disabledRequest))
     }
 
-    func testActionPlannerFallbackCreatesScheduleRouteCard() {
+    func testActionPlannerFallbackCreatesPendingScheduleDraft() {
         let request = CampusAIRequest(
             message: "我要新建一个日程",
             context: minimalAIContext(),
@@ -1292,10 +1318,29 @@ final class CampusAIAssistantTests: XCTestCase {
         )
 
         XCTAssertEqual(actions.count, 1)
-        XCTAssertEqual(actions.first?.kind, .openAcademicRoute)
-        XCTAssertEqual(actions.first?.payload.route, "customCountdowns")
-        XCTAssertEqual(actions.first?.title, "打开自定日程")
-        XCTAssertEqual(actions.first?.detail, "前往自定日程继续创建或管理日程。")
+        XCTAssertEqual(actions.first?.kind, .createSchedule)
+        XCTAssertNil(actions.first?.payload.route)
+        XCTAssertNil(actions.first?.payload.startsAt)
+        XCTAssertEqual(actions.first?.title, "添加日程")
+        XCTAssertEqual(actions.first?.detail, "确认日期、时间和日程信息后保存。")
+    }
+
+    func testActionPlannerFallbackParsesTomorrowMorningTen() throws {
+        let request = CampusAIRequest(
+            message: "帮我设置一个明天早上十点的日程",
+            context: minimalAIContext(),
+            recentMessages: [],
+            webSearchEnabled: false
+        )
+
+        let draft = try XCTUnwrap(CampusAIService.fallbackActionDrafts(for: request).first)
+        let parsed = try XCTUnwrap(CampusAIActionValidation.scheduleStartDate(for: draft))
+        let components = Calendar.current.dateComponents([.day, .hour, .minute], from: parsed)
+
+        XCTAssertEqual(draft.kind, .createSchedule)
+        XCTAssertEqual(components.hour, 10)
+        XCTAssertEqual(components.minute, 0)
+        XCTAssertTrue(Calendar.current.isDateInTomorrow(parsed))
     }
 
     func testActionPlannerFallbackRoutesExamRequestsToExamSchedule() {
@@ -1347,7 +1392,7 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertTrue(prompt.contains("本地文件路径"))
         XCTAssertTrue(prompt.contains("不提供诊断"))
         XCTAssertTrue(prompt.contains("中文 Markdown"))
-        XCTAssertTrue(CampusAIService.actionPlannerSystemPrompt().contains("普通日程、事项、待办、提醒、重要日期或自定日程管理用 customCountdowns"))
+        XCTAssertTrue(CampusAIService.actionPlannerSystemPrompt().contains("新建、添加、设置日程或提醒时生成 createSchedule"))
         XCTAssertTrue(CampusAIService.actionPlannerSystemPrompt().contains("考试、考场、考试时间、考试安排"))
         XCTAssertTrue(prompt.contains("请顺便给生活建议"))
     }
@@ -1763,12 +1808,29 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertNil(CampusAIActionValidation.validate(invalidReminder))
     }
 
+    func testActionValidationAcceptsIncompleteUnifiedScheduleDraft() {
+        let draft = CampusAIActionDraft(
+            kind: .createSchedule,
+            title: "",
+            payload: CampusAIActionPayload(location: "  图书馆  ", minutesBefore: -5)
+        )
+
+        let validated = CampusAIActionValidation.validate(draft)
+
+        XCTAssertEqual(validated?.title, "添加日程")
+        XCTAssertEqual(validated?.payload.location, "图书馆")
+        XCTAssertEqual(validated?.payload.minutesBefore, 0)
+        XCTAssertNil(validated?.payload.startsAt)
+    }
+
     func testActionPayloadDecodesSnakeCaseFields() throws {
         let data = Data(
             """
             {
               "countdown_title": "期末考试",
               "target_date": "2026-07-01",
+              "starts_at": "2026-07-16T10:00:00+08:00",
+              "ends_at": "2026-07-16T11:00:00+08:00",
               "day_of_week": 3,
               "end_period": 6,
               "minutes_before": 10
@@ -1780,6 +1842,8 @@ final class CampusAIAssistantTests: XCTestCase {
 
         XCTAssertEqual(payload.countdownTitle, "期末考试")
         XCTAssertEqual(payload.targetDate, "2026-07-01")
+        XCTAssertEqual(payload.startsAt, "2026-07-16T10:00:00+08:00")
+        XCTAssertEqual(payload.endsAt, "2026-07-16T11:00:00+08:00")
         XCTAssertEqual(payload.dayOfWeek, 3)
         XCTAssertEqual(payload.endPeriod, 6)
         XCTAssertEqual(payload.minutesBefore, 10)
@@ -2009,7 +2073,8 @@ final class CampusAIAssistantTests: XCTestCase {
             context: context,
             recentMessages: [],
             capabilities: CampusAICapabilitySet(serviceMode: .ownAPIKey, webSearchEnabled: false),
-            localRetrieval: CampusAILocalKnowledgeIndex.search(query: "学习任务 资料包", context: context)
+            localRetrieval: CampusAILocalKnowledgeIndex.search(query: "学习任务 资料包", context: context),
+            outputMode: .artifact
         )
 
         let deliverable = try XCTUnwrap(CampusAILocalArtifactBuilder.deliverables(for: request, answer: "已整理 <任务>。").first)
@@ -2026,7 +2091,8 @@ final class CampusAIAssistantTests: XCTestCase {
             context: context,
             recentMessages: [],
             capabilities: CampusAICapabilitySet(serviceMode: .ownAPIKey, webSearchEnabled: false),
-            localRetrieval: CampusAILocalKnowledgeIndex.search(query: "学习任务 资料包", context: context)
+            localRetrieval: CampusAILocalKnowledgeIndex.search(query: "学习任务 资料包", context: context),
+            outputMode: .artifact
         )
         XCTAssertEqual(
             CampusAILocalArtifactBuilder.deliverables(for: defaultRequest, answer: "已整理。").first?.formats,
@@ -2099,8 +2165,8 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertFalse(CampusAISettingsStore.load(userDefaults: defaults).webSearchEnabled)
     }
 
-    func testArtifactIntentSupportsAutomaticAndForcedModes() {
-        XCTAssertTrue(CampusAIArtifactIntentResolver.shouldGenerateArtifact(
+    func testArtifactIntentRequiresExplicitCardMode() {
+        XCTAssertFalse(CampusAIArtifactIntentResolver.shouldGenerateArtifact(
             message: "帮我做一份期末复习计划",
             mode: .automatic
         ))
@@ -2112,6 +2178,12 @@ final class CampusAIAssistantTests: XCTestCase {
             message: "明天有什么课？",
             mode: .automatic
         ))
+    }
+
+    func testNewConversationPolicyRequiresExistingMessagesAndIdleState() {
+        XCTAssertFalse(CampusAINewConversationPolicy.canStartNewConversation(messageCount: 0, isSending: false))
+        XCTAssertFalse(CampusAINewConversationPolicy.canStartNewConversation(messageCount: 2, isSending: true))
+        XCTAssertTrue(CampusAINewConversationPolicy.canStartNewConversation(messageCount: 2, isSending: false))
     }
 
     func testCampusAIRequestOutputModeDefaultsAndDecodesOldPayload() throws {

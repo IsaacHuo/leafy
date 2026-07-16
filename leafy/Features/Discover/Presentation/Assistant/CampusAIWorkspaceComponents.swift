@@ -6,6 +6,7 @@ struct CampusAIChatTopBar: View {
     let selectedModelID: CampusAIModelID
     let allowsModelSelection: Bool
     let isModelSelectionDisabled: Bool
+    let isNewConversationDisabled: Bool
     let selectModel: (CampusAIModelID) -> Void
     let startNewConversation: () -> Void
 
@@ -61,6 +62,9 @@ struct CampusAIChatTopBar: View {
                 accessibilityLabel: "新建对话",
                 action: startNewConversation
             )
+            .disabled(isNewConversationDisabled)
+            .opacity(isNewConversationDisabled ? 0.42 : 1)
+            .accessibilityHint(isNewConversationDisabled ? "当前无法新建对话" : "创建一个空白对话")
         }
         .padding(.horizontal, LeafyRootChromeMetrics.horizontalInset)
         .padding(.bottom, LeafyRootChromeMetrics.contentSpacing)
@@ -344,19 +348,20 @@ struct CampusAIComposerBar: View {
                         outputMode = outputMode == .artifact ? .automatic : .artifact
                     } label: {
                         Label(
-                            outputMode == .artifact ? "取消生成成品" : "生成成品",
-                            systemImage: outputMode == .artifact ? "checkmark" : "doc.richtext"
+                            outputMode == .artifact ? "取消生成卡片" : "生成卡片",
+                            systemImage: outputMode == .artifact ? "checkmark" : "rectangle.stack"
                         )
                     }
                 } label: {
-                    Image(systemName: "plus")
+                    Image(systemName: "rectangle.stack")
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(AppTheme.primaryText)
                         .frame(width: 44, height: 44)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("更多输入选项")
+                .disabled(isSending)
+                .accessibilityLabel("卡片选项")
 
                 TextField("问问 Leafy", text: $draftText, axis: .vertical)
                     .focused(isFocused)
@@ -430,8 +435,8 @@ struct CampusAIComposerBar: View {
     @ViewBuilder
     private var artifactModePill: some View {
         let pill = HStack(spacing: 8) {
-            Image(systemName: "doc.richtext")
-            Text("下一条消息将生成成品")
+            Image(systemName: "rectangle.stack")
+            Text("下一条消息将生成卡片")
                 .font(.caption.weight(.medium))
             Spacer(minLength: 8)
             Button(action: cancelArtifactMode) {
@@ -441,7 +446,7 @@ struct CampusAIComposerBar: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("取消生成成品")
+            .accessibilityLabel("取消生成卡片")
         }
         .foregroundStyle(AppTheme.accent)
         .padding(.leading, 14)

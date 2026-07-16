@@ -23,6 +23,7 @@ import {
   processDeepSeekSSEBlock,
   redactProviderError,
   safeAgentSearchQuery,
+  shouldGenerateArtifact,
   shouldRunManagedAgent,
   shouldSearchOfficialDocument,
   systemPrompt,
@@ -137,6 +138,8 @@ Deno.test("campus-ai-assistant builds non-stream JSON-only action planner payloa
       local_retrieval: {
         results: [{ title: "考试：高等数学", summary: "主楼 112" }],
       },
+      current_local_time: "2026-07-16T09:30:00+09:00",
+      time_zone_identifier: "Asia/Tokyo",
     },
     "帮我打开培养方案",
     "可以查看培养方案。",
@@ -161,6 +164,43 @@ Deno.test("campus-ai-assistant builds non-stream JSON-only action planner payloa
   assert(
     String(messages[1].content).includes("medicalLedger"),
     "expected expanded route schema",
+  );
+  assert(
+    String(messages[1].content).includes('"current_local_time":"2026-07-16T09:30:00+09:00"') &&
+      String(messages[1].content).includes('"time_zone_identifier":"Asia/Tokyo"'),
+    "expected local time and timezone in planner input",
+  );
+  assert(
+    String(messages[1].content).includes('"kind":"createSchedule"') &&
+      !String(messages[1].content).includes('"kind":"createCountdown"'),
+    "new planners should only receive the unified schedule action",
+  );
+  assert(
+    payload.max_tokens === 700,
+    "automatic mode should keep the compact planner",
+  );
+  assert(
+    String(messages[0].content).includes("禁止返回 artifact"),
+    "automatic mode must explicitly reject inferred cards",
+  );
+});
+
+Deno.test("campus-ai-assistant enables card planning only for explicit artifact mode", () => {
+  const payload = actionPlannerPayload(
+    { output_mode: "artifact", app_transaction_id: "app-tx-1" },
+    "整理复习计划",
+    "先按章节复习。",
+  ) as Record<string, unknown>;
+  const messages = payload.messages as Array<Record<string, unknown>>;
+
+  assert(payload.max_tokens === 4000, "card mode should allow a complete card");
+  assert(
+    String(messages[0].content).includes("手动开启生成卡片"),
+    "expected explicit card instruction",
+  );
+  assert(
+    String(messages[1].content).includes('"should_generate_card":true'),
+    "expected the manual card flag in planner input",
   );
 });
 
@@ -442,8 +482,32 @@ Deno.test("campus-ai-assistant builds official document deliverable", () => {
 });
 
 Deno.test("campus-ai-assistant builds local retrieval deliverable", () => {
+  const automaticBody = {
+    local_retrieval: {
+      results: [{
+        domain: "learning",
+        title: "学习任务：整理论文提纲",
+        summary: "周五前完成",
+        source_id: "learning.task.1",
+      }],
+    },
+  };
+  assert(
+    localRetrievalDeliverables(
+      automaticBody,
+      "请导出 HTML Markdown TXT 资料包",
+      "已整理。",
+    ).length === 0,
+    "automatic mode must not infer a card from keywords",
+  );
+  assert(
+    !shouldGenerateArtifact(automaticBody),
+    "missing output mode should default to no card",
+  );
+
   const deliverables = localRetrievalDeliverables(
     {
+      output_mode: "artifact",
       local_retrieval: {
         results: [{
           domain: "learning",
@@ -472,6 +536,7 @@ Deno.test("campus-ai-assistant builds local retrieval deliverable", () => {
   );
   const defaultDeliverables = localRetrievalDeliverables(
     {
+      output_mode: "artifact",
       local_retrieval: {
         results: [{
           domain: "learning",
@@ -548,8 +613,9 @@ Deno.test("campus-ai-assistant synthesis payload carries citations and search re
     "synthesis payload should not cap output tokens",
   );
   assert(
-    String(messages[0].content).includes("Markdown 链接标注来源"),
-    "expected citation instruction",
+    String(messages[0].content).includes("不要在正文中输出来源标题") &&
+      !String(messages[0].content).includes("Markdown 链接标注来源"),
+    "expected sources to stay outside the answer body",
   );
   assert(
     String(messages[1].content).includes("web_search_results") &&
@@ -594,17 +660,37 @@ Deno.test("campus-ai-assistant parses and validates action planner output", () =
 
 Deno.test("campus-ai-assistant falls back to schedule action cards", () => {
   const actions = fallbackActionDrafts(
-    { web_search_enabled: false },
-    "我要新建一个日程",
-    "可以去日程页面添加。",
+    {
+      web_search_enabled: false,
+      current_local_time: "2026-07-16T23:30:00+09:00",
+      time_zone_identifier: "Asia/Tokyo",
+    },
+    "帮我设置一个明天早上十点的日程",
+    "已准备日程，请确认保存。",
   );
 
   assert(actions.length === 1, "expected one fallback action");
-  assert(actions[0].kind === "openAcademicRoute", "expected route action");
+  assert(actions[0].kind === "createSchedule", "expected unified schedule action");
   assert(
-    actions[0].payload?.route === "examSchedule",
-    "expected schedule route",
+    actions[0].payload?.startsAt === "2026-07-17T10:00:00+09:00",
+    "expected tomorrow morning ten with the device timezone",
   );
+});
+
+Deno.test("campus-ai-assistant accepts incomplete unified schedule drafts", () => {
+  const actions = parseActionPlannerActions(JSON.stringify({
+    actions: [{
+      kind: "create_schedule",
+      title: "",
+      payload: { location: "图书馆", minutes_before: -5 },
+    }],
+  }));
+
+  assert(actions.length === 1, "expected incomplete schedule draft");
+  assert(actions[0].kind === "createSchedule", "expected normalized kind");
+  assert(actions[0].title === "添加日程", "expected default title");
+  assert(actions[0].payload?.location === "图书馆", "expected location");
+  assert(actions[0].payload?.minutesBefore === 0, "expected reminder clamp");
 });
 
 Deno.test("campus-ai-assistant parses planner usage from provider response", () => {
@@ -631,6 +717,34 @@ Deno.test("campus-ai-assistant parses planner usage from provider response", () 
     "expected reminder minutes to clamp",
   );
   assert(parsed.usage.total_tokens === 14, "expected usage to parse");
+  assert(
+    parsed.artifact === null,
+    "automatic planner response should not invent a card",
+  );
+});
+
+Deno.test("campus-ai-assistant parses a validated manual card", () => {
+  const parsed = parseActionPlannerProviderResponse(JSON.stringify({
+    choices: [{
+      message: {
+        content: JSON.stringify({
+          actions: [],
+          artifact: {
+            title: "期末复习卡片",
+            summary: "按三阶段完成复习。",
+            markdown:
+              "# 期末复习\n\n| 阶段 | 任务 |\n| --- | --- |\n| 一 | 梳理 |",
+          },
+        }),
+      },
+    }],
+  }));
+
+  assert(parsed.artifact?.title === "期末复习卡片", "expected card title");
+  assert(
+    parsed.artifact?.markdown.includes("| --- | --- |") === true,
+    "expected complete card markdown",
+  );
 });
 
 Deno.test("campus-ai-assistant prefers the managed DeepSeek API key list", () => {
@@ -706,8 +820,9 @@ Deno.test("campus-ai-assistant prompt keeps file bodies out of scope and allows 
     "expected action planner safety prompt",
   );
   assert(
-    plannerPrompt.includes("一般日程用 examSchedule"),
-    "expected schedule fallback route instruction",
+    plannerPrompt.includes("新建、添加、设置日程或提醒时生成 createSchedule") &&
+      prompt.includes("用户在表单中保存前，不得声称已经添加、设置或执行"),
+    "expected pending unified schedule instruction",
   );
 });
 

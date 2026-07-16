@@ -17,6 +17,7 @@ nonisolated enum CampusAIActionStatus: String, Codable, Hashable {
 
 nonisolated enum CampusAIActionKind: String, Codable, Hashable {
     case openAcademicRoute
+    case createSchedule
     case createCountdown
     case createTimetableReminder
 
@@ -26,6 +27,8 @@ nonisolated enum CampusAIActionKind: String, Codable, Hashable {
         switch rawValue {
         case Self.openAcademicRoute.rawValue, "open_academic_route":
             self = .openAcademicRoute
+        case Self.createSchedule.rawValue, "create_schedule":
+            self = .createSchedule
         case Self.createCountdown.rawValue, "create_countdown":
             self = .createCountdown
         case Self.createTimetableReminder.rawValue, "create_timetable_reminder":
@@ -116,6 +119,8 @@ nonisolated struct CampusAIActionPayload: Codable, Hashable {
     var route: String?
     var countdownTitle: String?
     var targetDate: String?
+    var startsAt: String?
+    var endsAt: String?
     var week: Int?
     var dayOfWeek: Int?
     var period: Int?
@@ -129,6 +134,8 @@ nonisolated struct CampusAIActionPayload: Codable, Hashable {
         route: String? = nil,
         countdownTitle: String? = nil,
         targetDate: String? = nil,
+        startsAt: String? = nil,
+        endsAt: String? = nil,
         week: Int? = nil,
         dayOfWeek: Int? = nil,
         period: Int? = nil,
@@ -141,6 +148,8 @@ nonisolated struct CampusAIActionPayload: Codable, Hashable {
         self.route = route
         self.countdownTitle = countdownTitle
         self.targetDate = targetDate
+        self.startsAt = startsAt
+        self.endsAt = endsAt
         self.week = week
         self.dayOfWeek = dayOfWeek
         self.period = period
@@ -157,6 +166,10 @@ nonisolated struct CampusAIActionPayload: Codable, Hashable {
         case countdownTitleSnake = "countdown_title"
         case targetDate
         case targetDateSnake = "target_date"
+        case startsAt
+        case startsAtSnake = "starts_at"
+        case endsAt
+        case endsAtSnake = "ends_at"
         case week
         case dayOfWeek
         case dayOfWeekSnake = "day_of_week"
@@ -177,6 +190,10 @@ nonisolated struct CampusAIActionPayload: Codable, Hashable {
             ?? container.decodeIfPresent(String.self, forKey: .countdownTitleSnake)
         targetDate = try container.decodeIfPresent(String.self, forKey: .targetDate)
             ?? container.decodeIfPresent(String.self, forKey: .targetDateSnake)
+        startsAt = try container.decodeIfPresent(String.self, forKey: .startsAt)
+            ?? container.decodeIfPresent(String.self, forKey: .startsAtSnake)
+        endsAt = try container.decodeIfPresent(String.self, forKey: .endsAt)
+            ?? container.decodeIfPresent(String.self, forKey: .endsAtSnake)
         week = try container.decodeIfPresent(Int.self, forKey: .week)
         dayOfWeek = try container.decodeIfPresent(Int.self, forKey: .dayOfWeek)
             ?? container.decodeIfPresent(Int.self, forKey: .dayOfWeekSnake)
@@ -195,6 +212,8 @@ nonisolated struct CampusAIActionPayload: Codable, Hashable {
         try container.encodeIfPresent(route, forKey: .route)
         try container.encodeIfPresent(countdownTitle, forKey: .countdownTitle)
         try container.encodeIfPresent(targetDate, forKey: .targetDate)
+        try container.encodeIfPresent(startsAt, forKey: .startsAt)
+        try container.encodeIfPresent(endsAt, forKey: .endsAt)
         try container.encodeIfPresent(week, forKey: .week)
         try container.encodeIfPresent(dayOfWeek, forKey: .dayOfWeek)
         try container.encodeIfPresent(period, forKey: .period)
@@ -254,6 +273,8 @@ nonisolated enum CampusAIActionValidation {
         switch draft.kind {
         case .openAcademicRoute:
             return validateOpenRoute(draft)
+        case .createSchedule:
+            return validateSchedule(draft)
         case .createCountdown:
             return validateCountdown(draft)
         case .createTimetableReminder:
@@ -272,11 +293,37 @@ nonisolated enum CampusAIActionValidation {
         parseDate(draft.payload.targetDate)
     }
 
+    static func scheduleStartDate(for draft: CampusAIActionDraft) -> Date? {
+        parseDateTime(draft.payload.startsAt)
+    }
+
+    static func scheduleEndDate(for draft: CampusAIActionDraft) -> Date? {
+        parseDateTime(draft.payload.endsAt)
+    }
+
     private static func validateOpenRoute(_ draft: CampusAIActionDraft) -> CampusAIActionDraft? {
         guard let routeID = routeID(for: draft) else { return nil }
         var normalized = draft
         normalized.title = normalized.title.nonEmptyTrimmed ?? "打开\(routeID.title)"
         normalized.payload.route = routeID.rawValue
+        return normalized
+    }
+
+    private static func validateSchedule(_ draft: CampusAIActionDraft) -> CampusAIActionDraft? {
+        var normalized = draft
+        normalized.title = normalized.title.nonEmptyTrimmed ?? "添加日程"
+        normalized.payload.title = normalized.payload.title?.nonEmptyTrimmed
+        normalized.payload.location = normalized.payload.location?.nonEmptyTrimmed
+        normalized.payload.note = normalized.payload.note?.nonEmptyTrimmed
+        normalized.payload.minutesBefore = max(0, normalized.payload.minutesBefore ?? 0)
+        if normalized.payload.startsAt != nil, scheduleStartDate(for: normalized) == nil {
+            normalized.payload.startsAt = nil
+        }
+        if let end = scheduleEndDate(for: normalized),
+           let start = scheduleStartDate(for: normalized),
+           end <= start {
+            normalized.payload.endsAt = nil
+        }
         return normalized
     }
 
@@ -286,7 +333,7 @@ nonisolated enum CampusAIActionValidation {
             return nil
         }
         var normalized = draft
-        normalized.title = normalized.title.nonEmptyTrimmed ?? "创建重要日期"
+        normalized.title = normalized.title.nonEmptyTrimmed ?? "添加日程"
         normalized.payload.countdownTitle = title
         normalized.payload.title = nil
         return normalized
@@ -325,6 +372,23 @@ nonisolated enum CampusAIActionValidation {
             return date
         }
         return queryDateFormatter().date(from: value)
+    }
+
+    private static func parseDateTime(_ value: String?) -> Date? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        if let date = ISO8601DateFormatter().date(from: value) {
+            return date
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = TimeZone.current
+        for format in ["yyyy-MM-dd HH:mm", "yyyy-MM-dd'T'HH:mm"] {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: value) { return date }
+        }
+        return nil
     }
 
     private static func queryDateFormatter() -> DateFormatter {
@@ -401,10 +465,20 @@ nonisolated enum CampusAIToolRegistry {
 
     static let createCountdown = CampusAIToolDescriptor(
         id: CampusAIActionKind.createCountdown.rawValue,
-        title: "创建重要日期",
-        detail: "创建本机保存的重要日期或倒计时。",
+        title: "添加日程",
+        detail: "使用兼容动作打开统一日程表单。",
         systemImageName: "calendar.badge.clock",
         actionKind: .createCountdown,
+        toolName: nil,
+        requiresConfirmation: true
+    )
+
+    static let createSchedule = CampusAIToolDescriptor(
+        id: CampusAIActionKind.createSchedule.rawValue,
+        title: "添加日程",
+        detail: "填写日期、时间和可选的地点、备注后保存日程。",
+        systemImageName: "calendar.badge.plus",
+        actionKind: .createSchedule,
         toolName: nil,
         requiresConfirmation: true
     )
@@ -425,6 +499,7 @@ nonisolated enum CampusAIToolRegistry {
             localRetrieval,
             actionPlan,
             openAcademicRoute,
+            createSchedule,
             createCountdown,
             createTimetableReminder
         ]
@@ -453,19 +528,11 @@ nonisolated enum CampusAIToolRegistry {
                 ]
             ),
             CampusAIToolSupportedAction(
-                kind: CampusAIActionKind.createCountdown.rawValue,
-                requiredPayloadFields: ["countdownTitle", "targetDate"],
+                kind: CampusAIActionKind.createSchedule.rawValue,
+                requiredPayloadFields: [],
                 allowedValues: [
-                    "targetDate": ["yyyy-MM-dd"]
-                ]
-            ),
-            CampusAIToolSupportedAction(
-                kind: CampusAIActionKind.createTimetableReminder.rawValue,
-                requiredPayloadFields: ["week", "dayOfWeek", "period", "title"],
-                allowedValues: [
-                    "week": ["1...\(SemesterConfig.supportedWeeks)"],
-                    "dayOfWeek": ["1...7"],
-                    "period": TimetablePeriodSchedule.slots.map { String($0.period) }
+                    "startsAt": ["ISO 8601，包含本地时区"],
+                    "endsAt": ["ISO 8601，包含本地时区"]
                 ]
             )
         ]
@@ -2139,7 +2206,7 @@ nonisolated enum CampusAIDeliverableFileBuilder {
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>\(htmlEscape(deliverable.title.nonEmptyTrimmed ?? "学校官方资料包"))</title>
+          <title>\(htmlEscape(deliverable.title.nonEmptyTrimmed ?? "学校官方资料卡片"))</title>
           <style>
             body { font: -apple-system-body; margin: 0; padding: 28px; color: #17201a; background: #fbfdfb; }
             main { max-width: 820px; margin: 0 auto; }
@@ -2159,7 +2226,7 @@ nonisolated enum CampusAIDeliverableFileBuilder {
         <body>
           <main>
             <header>
-              <h1>\(htmlEscape(deliverable.title.nonEmptyTrimmed ?? "学校官方资料包"))</h1>
+              <h1>\(htmlEscape(deliverable.title.nonEmptyTrimmed ?? "学校官方资料卡片"))</h1>
               <p class="meta">查询：\(htmlEscape(deliverable.query))</p>
               <p class="meta">生成时间：\(htmlEscape(deliverable.generatedAt))</p>
               \(paragraphHTML(deliverable.summary.nonEmptyTrimmed))
@@ -2187,7 +2254,7 @@ nonisolated enum CampusAIDeliverableFileBuilder {
         }.joined(separator: "\n\n")
 
         return """
-        # \(markdownEscape(deliverable.title.nonEmptyTrimmed ?? "学校官方资料包"))
+        # \(markdownEscape(deliverable.title.nonEmptyTrimmed ?? "学校官方资料卡片"))
 
         - 查询：\(markdownEscape(deliverable.query))
         - 生成时间：\(markdownEscape(deliverable.generatedAt))
@@ -2215,7 +2282,7 @@ nonisolated enum CampusAIDeliverableFileBuilder {
         }.joined(separator: "\n\n")
 
         return """
-        \(deliverable.title.nonEmptyTrimmed ?? "学校官方资料包")
+        \(deliverable.title.nonEmptyTrimmed ?? "学校官方资料卡片")
 
         查询：\(deliverable.query)
         生成时间：\(deliverable.generatedAt)
@@ -2283,7 +2350,7 @@ nonisolated enum CampusAIDeliverableFileBuilder {
 nonisolated enum CampusAILocalArtifactBuilder {
     static func deliverables(for request: CampusAIRequest, answer: String) -> [CampusAIDeliverable] {
         guard request.capabilities.artifactGenerationEnabled,
-              shouldGenerateArtifact(for: request.message),
+              request.outputMode == .artifact,
               !request.localRetrieval.results.isEmpty
         else {
             return []
@@ -2311,36 +2378,21 @@ nonisolated enum CampusAILocalArtifactBuilder {
                 summary: artifactSummary(answer: answer),
                 generatedAt: ISO8601DateFormatter().string(from: Date()),
                 sources: sources,
-                formats: CampusAIArtifactFormatResolver.formats(for: request.message)
+                formats: CampusAIArtifactFormatResolver.formats(for: request.message),
+                content: CampusAIArtifactContent(markdown: answer)
             )
         ]
-    }
-
-    private static func shouldGenerateArtifact(for message: String) -> Bool {
-        let text = message.lowercased()
-        return [
-            "资料包",
-            "交付",
-            "导出",
-            "生成文件",
-            "整理成文件",
-            "html",
-            "markdown",
-            "txt",
-            "md 文件",
-            "文档"
-        ].contains { text.contains($0) }
     }
 
     private static func artifactTitle(for message: String) -> String {
         let base = message
             .replacingOccurrences(of: #"[\r\n\t]+"#, with: " ", options: .regularExpression)
             .clampedForAIContext(32)
-        return "\(base.nonEmptyTrimmed ?? "本地资料")资料包"
+        return "\(base.nonEmptyTrimmed ?? "本地资料")卡片"
     }
 
     private static func artifactSummary(answer: String) -> String {
-        answer.nonEmptyTrimmed?.clampedForAIContext(240) ?? "已根据相关资料整理为可打开的本地文件。"
+        answer.nonEmptyTrimmed?.clampedForAIContext(240) ?? "已根据相关资料整理为可打开的卡片。"
     }
 }
 
@@ -4647,7 +4699,7 @@ nonisolated struct CampusAIService {
                             )
                             directAgentTrace.append(synthesisStep)
                             continuation.yield(.agentStep(synthesisStep))
-                            continuation.yield(.agentStatus(shouldCreateArtifact ? "正在整理成品" : "正在整理回答"))
+                            continuation.yield(.agentStatus(shouldCreateArtifact ? "正在整理卡片" : "正在整理回答"))
                             if shouldCreateArtifact {
                                 continuation.yield(.agentTool(.init(name: "completion.plan", status: "running")))
                             }
@@ -5001,10 +5053,11 @@ nonisolated struct CampusAIService {
             "缺少关键信息时，用一句话说明缺什么，并给出用户下一步能做的选择。",
             "不要声称读取了未提供的数据，不要声称读取了用户上传文件正文、图片像素、OCR、PDF、Word、PPT、表格或本地文件路径。",
             "不要推断私信、身份资料、未提供的远端内容或后台登录后的内容。",
+            "当用户要求添加日程时，只能说明已准备待确认日程；用户在表单中保存前，不得声称已经添加、设置或执行。",
             "医疗台账只能做整理、提醒、流程梳理和材料核对，不提供诊断、治疗、用药或医疗决策建议。",
-            "回复必须是中文 Markdown，并保持适合手机阅读的块级结构。先给结论；不同主题必须换段或使用短标题；三项以上并列信息必须使用列表；不要用 emoji、连续加粗或挤在同一段中的序号模拟结构。不要输出 JSON，不要输出动作草稿。",
+            "回复必须是中文 Markdown，并保持适合手机阅读的块级结构。先给结论；不同主题必须换段或使用短标题；三项以上并列信息必须使用列表；表格必须使用完整的 GFM 表头与分隔行，无法稳定构造时改用列表；不要用 emoji、连续加粗或挤在同一段中的序号模拟结构。不要输出 JSON，不要输出动作草稿。",
             preparesArtifact
-                ? "本次会另行生成完整成品。主回答只用一到三句话说明已理解需求、将交付什么，不要重复完整计划、报告、清单或表格。"
+                ? "本次会另行生成完整卡片。主回答只用一到三句话说明已理解需求、将交付什么，不要重复完整计划、报告、清单或表格。"
                 : nil,
             customPrompt.map { "用户自定义偏好：\n\($0)" }
         ].compactMap { $0 }.joined(separator: "\n")
@@ -5013,18 +5066,18 @@ nonisolated struct CampusAIService {
     static func actionPlannerSystemPrompt() -> String {
         [
             "你是 MyLeafy 的交付规划器，只能输出 JSON，不能输出代码块、解释或多余文本。",
-            "根据用户问题、AI 已生成回答和本机上下文，一次返回最多 3 个待确认动作，以及可选的 Artifact 成品。",
+            "根据用户问题、AI 已生成回答和本机上下文，一次返回最多 3 个待确认动作，以及可选的 Artifact 卡片。",
             "输出根对象必须是 {\"actions\":[],\"artifact\":null}。当 should_generate_artifact 为 true 时，artifact 必须是 {\"title\":\"...\",\"summary\":\"...\",\"markdown\":\"...\"}；否则 artifact 必须为 null。",
-            "Artifact 必须是完整、可直接阅读的中文 Markdown 成品。可使用标题、列表、表格、引用、Mermaid 或 KaTeX；不要在 Artifact 中编造来源。",
+            "Artifact 必须是完整、可直接阅读的中文 Markdown 卡片。可使用标题、列表、表格、引用、Mermaid 或 KaTeX；表格必须包含完整的 GFM 表头与分隔行，无法稳定构造时改用列表；不要在 Artifact 中编造来源。",
             "Artifact 的 title、summary 和正文由你生成；来源、数据范围和本机条目引用由 App 在本地附加，不要输出 sources 字段。",
             "可以使用 local_retrieval 中的 routeHint 和 sourceID 判断动作目标；缺少明确目标 ID 时不要编造编辑或删除动作。",
-            "只有用户明确想打开页面、设置重要日期、设置课表提醒，或回答中明显需要这一步时才生成动作；否则返回 {\"actions\":[]}。",
-            "支持 kind：openAcademicRoute、createCountdown、createTimetableReminder。",
+            "只有用户明确想打开页面或添加日程，或回答中明显需要这一步时才生成动作；否则返回 {\"actions\":[]}。",
+            "支持 kind：openAcademicRoute、createSchedule。旧 kind 仅用于客户端兼容，不得再生成。",
             "openAcademicRoute.payload.route 必须来自 supported_actions 中的 allowed_values.route。",
             "用户明确想查看、添加或管理考试、考场、考试时间、考试安排时，生成 openAcademicRoute 到 examSchedule。",
-            "用户想新建、添加或管理日程/提醒，但缺少创建课表提醒所需的周次、星期、节次时，生成 openAcademicRoute：普通日程、事项、待办、提醒、重要日期或自定日程管理用 customCountdowns，推送或报告用 scheduleReports。",
-            "createCountdown 兼容旧字段名，语义是创建重要日期；payload 必须包含 countdownTitle 和 targetDate，targetDate 使用 yyyy-MM-dd。",
-            "createTimetableReminder.payload 必须包含 week、dayOfWeek、period、title；dayOfWeek 为 1 到 7，minutesBefore 必须大于等于 0。",
+            "用户想管理已有日程时生成 openAcademicRoute 到 customCountdowns；用户想新建、添加、设置日程或提醒时生成 createSchedule，即使标题或时间不完整也不要改成页面跳转。",
+            "createSchedule.payload 可包含 title、startsAt、endsAt、location、note、minutesBefore；只填写用户明确提供或可靠解析出的字段。startsAt 和 endsAt 使用包含时区的 ISO 8601。",
+            "相对日期必须依据输入中的 current_local_time 和 time_zone_identifier 解析。",
             "不要生成删除、修改成绩或课表原始数据、医疗决策、社区发帖评论、远程抓取、后台登录等动作。",
             "输出格式必须是 {\"actions\":[{\"kind\":\"...\",\"title\":\"...\",\"detail\":\"...\",\"payload\":{...}}],\"artifact\":null}，或将 artifact 替换为完整对象。"
         ].joined(separator: "\n")
@@ -5047,7 +5100,7 @@ nonisolated struct CampusAIService {
             throw CampusAIServiceError.invalidProviderResponse
         }
         guard (200..<300).contains(httpResponse.statusCode) else {
-            throw CampusAIServiceError.providerRejected("成品整理服务返回了 \(httpResponse.statusCode) 错误。")
+            throw CampusAIServiceError.providerRejected("卡片整理服务返回了 \(httpResponse.statusCode) 错误。")
         }
         let providerResponse = try providerJSONDecoder().decode(CampusAIActionPlannerProviderResponse.self, from: data)
         guard let content = providerResponse.choices?
@@ -5071,6 +5124,21 @@ nonisolated struct CampusAIService {
         let hasScheduleIntent = ["日程", "提醒", "事项", "待办", "安排"].contains { text.contains($0) }
         let hasExamIntent = text.contains("考试") || text.contains("考场")
         guard (hasCreateIntent || hasOpenIntent) && (hasScheduleIntent || hasExamIntent) else { return [] }
+
+        if hasCreateIntent, hasScheduleIntent, !hasExamIntent {
+            return [
+                CampusAIActionDraft(
+                    kind: .createSchedule,
+                    title: "添加日程",
+                    detail: "确认日期、时间和日程信息后保存。",
+                    payload: CampusAIActionPayload(
+                        startsAt: fallbackScheduleStartDate(in: request.message).map {
+                            scheduleDateTimeFormatter.string(from: $0)
+                        }
+                    )
+                )
+            ]
+        }
 
         let route: CampusAIAcademicRouteID
         if text.contains("推送") || text.contains("报告") {
@@ -5102,6 +5170,50 @@ nonisolated struct CampusAIService {
             return "前往\(route.title)继续处理。"
         }
     }
+
+    private static func fallbackScheduleStartDate(in message: String, now: Date = Date()) -> Date? {
+        var normalized = message
+        let chineseHours = [
+            "十二点": "12点", "十一点": "11点", "十点": "10点",
+            "九点": "9点", "八点": "8点", "七点": "7点", "六点": "6点",
+            "五点": "5点", "四点": "4点", "三点": "3点", "两点": "2点", "一点": "1点"
+        ]
+        for (source, target) in chineseHours {
+            normalized = normalized.replacingOccurrences(of: source, with: target)
+        }
+
+        let pattern = #"(早上|上午|中午|下午|晚上)?\s*(\d{1,2})(?:点|:|：)(\d{1,2})?"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: normalized, range: NSRange(normalized.startIndex..., in: normalized)),
+              let hourRange = Range(match.range(at: 2), in: normalized),
+              var hour = Int(normalized[hourRange]) else { return nil }
+        let minute: Int = {
+            guard match.range(at: 3).location != NSNotFound,
+                  let range = Range(match.range(at: 3), in: normalized) else { return 0 }
+            return Int(normalized[range]) ?? 0
+        }()
+        let period: String = {
+            guard match.range(at: 1).location != NSNotFound,
+                  let range = Range(match.range(at: 1), in: normalized) else { return "" }
+            return String(normalized[range])
+        }()
+        if ["下午", "晚上"].contains(period), hour < 12 { hour += 12 }
+        if period == "中午", hour < 11 { hour += 12 }
+        guard (0...23).contains(hour), (0...59).contains(minute) else { return nil }
+
+        let dayOffset = normalized.contains("后天") ? 2 : (normalized.contains("明天") ? 1 : 0)
+        let calendar = Calendar.current
+        let day = calendar.date(byAdding: .day, value: dayOffset, to: calendar.startOfDay(for: now)) ?? now
+        return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: day)
+    }
+
+    private static let scheduleDateTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssXXX"
+        return formatter
+    }()
 
     static func actionPlannerActions(fromProviderResponseData data: Data) throws -> [CampusAIActionDraft] {
         let response = try providerJSONDecoder().decode(CampusAIActionPlannerProviderResponse.self, from: data)
@@ -5286,6 +5398,8 @@ nonisolated private struct CampusAIActionPlannerUserContent: Encodable {
     let capabilities: CampusAICapabilitySet
     let localRetrieval: CampusAILocalRetrievalPayload
     let shouldGenerateArtifact: Bool
+    let currentLocalTime: String
+    let timeZoneIdentifier: String
     let supportedActions: [CampusAIToolSupportedAction]
     let safetyBoundary: [String]
 
@@ -5297,6 +5411,8 @@ nonisolated private struct CampusAIActionPlannerUserContent: Encodable {
         case capabilities
         case localRetrieval = "local_retrieval"
         case shouldGenerateArtifact = "should_generate_artifact"
+        case currentLocalTime = "current_local_time"
+        case timeZoneIdentifier = "time_zone_identifier"
         case supportedActions = "supported_actions"
         case safetyBoundary = "safety_boundary"
     }
@@ -5317,13 +5433,19 @@ nonisolated private struct CampusAIActionPlannerUserContent: Encodable {
         self.capabilities = capabilities
         self.localRetrieval = localRetrieval
         self.shouldGenerateArtifact = shouldGenerateArtifact
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssXXX"
+        currentLocalTime = formatter.string(from: Date())
+        timeZoneIdentifier = TimeZone.current.identifier
         supportedActions = CampusAIToolRegistry.supportedActions()
         safetyBoundary = [
             "所有动作都只生成待确认草稿，不会自动执行。",
             "不要生成修改成绩或课表原始数据、医疗决策、社区发帖评论、远程抓取、后台登录等动作。",
             "编辑或删除必须有 local_retrieval.sourceID 等明确目标 ID；缺少目标 ID 时改生成 openAcademicRoute 或返回空 actions。",
             "删除类动作需要二次确认；当前 schema 未提供删除 kind 时不要输出删除动作。",
-            "缺少必要 payload 字段或字段无法从上下文确定时，返回空 actions。"
+            "创建日程缺少的字段保持为空，由用户在确认表单中补充。"
         ]
     }
 
@@ -5343,6 +5465,9 @@ nonisolated private struct CampusAIManagedFunctionRequest: Encodable {
     let webSearchEnabled: Bool
     let capabilities: CampusAICapabilitySet
     let localRetrieval: CampusAILocalRetrievalPayload
+    let outputMode: CampusAIOutputMode
+    let currentLocalTime: String
+    let timeZoneIdentifier: String
 
     enum CodingKeys: String, CodingKey {
         case requestID = "request_id"
@@ -5358,6 +5483,9 @@ nonisolated private struct CampusAIManagedFunctionRequest: Encodable {
         case webSearchEnabled = "web_search_enabled"
         case capabilities
         case localRetrieval = "local_retrieval"
+        case outputMode = "output_mode"
+        case currentLocalTime = "current_local_time"
+        case timeZoneIdentifier = "time_zone_identifier"
     }
 
     init(
@@ -5379,6 +5507,13 @@ nonisolated private struct CampusAIManagedFunctionRequest: Encodable {
         self.webSearchEnabled = request.webSearchEnabled
         self.capabilities = request.capabilities
         self.localRetrieval = request.localRetrieval
+        self.outputMode = request.outputMode
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssXXX"
+        self.currentLocalTime = formatter.string(from: Date())
+        self.timeZoneIdentifier = TimeZone.current.identifier
     }
 }
 

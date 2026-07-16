@@ -33,12 +33,12 @@ struct CampusAIArtifactCard: View {
                         .background(AppTheme.accent.opacity(0.11), in: Circle())
 
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(deliverable.title.nonEmptyTrimmed ?? "Leafy 成品")
+                        Text(deliverable.title.nonEmptyTrimmed ?? "Leafy 卡片")
                             .font(.headline)
                             .foregroundStyle(AppTheme.primaryText)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        Text(deliverable.summary.nonEmptyTrimmed ?? "已整理为可阅读和导出的成品。")
+                        Text(deliverable.summary.nonEmptyTrimmed ?? "已整理为可阅读和导出的卡片。")
                             .font(.subheadline)
                             .foregroundStyle(AppTheme.secondaryText)
                             .lineLimit(3)
@@ -82,7 +82,7 @@ struct CampusAIArtifactCard: View {
 
                     Spacer(minLength: 8)
 
-                    Text("打开成品")
+                    Text("打开卡片")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AppTheme.accent)
                 }
@@ -123,16 +123,16 @@ struct CampusAIArtifactFailureView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("成品整理失败", systemImage: "exclamationmark.triangle")
+            Label("卡片整理失败", systemImage: "exclamationmark.triangle")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(AppTheme.danger)
 
-            Text(message?.nonEmptyTrimmed ?? "回答已保留，可以单独重试生成成品。")
+            Text(message?.nonEmptyTrimmed ?? "回答已保留，可以单独重试生成卡片。")
                 .font(.caption)
                 .foregroundStyle(AppTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Button("重试生成成品", action: retry)
+            Button("重试生成卡片", action: retry)
                 .font(.caption.weight(.semibold))
                 .buttonStyle(.bordered)
                 .tint(AppTheme.accent)
@@ -161,7 +161,7 @@ struct CampusAIArtifactReaderView: View {
         Group {
             if markdown.isEmpty {
                 ContentUnavailableView(
-                    "成品内容不可用",
+                    "卡片内容不可用",
                     systemImage: "doc.badge.ellipsis",
                     description: Text("这条旧记录没有保存 Markdown 原文。")
                 )
@@ -171,7 +171,7 @@ struct CampusAIArtifactReaderView: View {
             }
         }
         .background(AppTheme.cardElevated)
-        .navigationTitle(deliverable.title.nonEmptyTrimmed ?? "Leafy 成品")
+        .navigationTitle(deliverable.title.nonEmptyTrimmed ?? "Leafy 卡片")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
@@ -273,7 +273,7 @@ private struct CampusAIArtifactSourcesSheet: View {
                     }
                 }
             }
-            .navigationTitle("成品来源")
+            .navigationTitle("卡片来源")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

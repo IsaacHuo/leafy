@@ -1,6 +1,12 @@
 import SwiftData
 import SwiftUI
 
+nonisolated enum CampusAINewConversationPolicy {
+    static func canStartNewConversation(messageCount: Int, isSending: Bool) -> Bool {
+        messageCount > 0 && !isSending
+    }
+}
+
 struct CampusAIAssistantView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var appNavigation: AppNavigationCoordinator
@@ -119,9 +125,7 @@ struct CampusAIAssistantView: View {
                 }
             case .actionEditor(let presentation):
                 CampusAIActionEditorSheet(presentation: presentation) { draft in
-                    Task {
-                        await confirmActionEditor(presentation, draft: draft)
-                    }
+                    await confirmActionEditor(presentation, draft: draft)
                 }
             }
         }
@@ -160,7 +164,7 @@ struct CampusAIAssistantView: View {
                 pendingRewindAssistantMessageID = nil
             }
         } message: {
-            Text("这会删除所选问答以及它之后的消息、动作和成品，且无法撤销。")
+            Text("这会删除所选问答以及它之后的消息、动作和卡片，且无法撤销。")
         }
         .sensoryFeedback(.success, trigger: artifactCompletionSignal)
     }
@@ -177,6 +181,7 @@ struct CampusAIAssistantView: View {
                         selectedModelID: userSettings.selectedModelID,
                         allowsModelSelection: userSettings.serviceMode == .ownAPIKey,
                         isModelSelectionDisabled: isSending,
+                        isNewConversationDisabled: isNewConversationDisabled,
                         selectModel: selectModel,
                         startNewConversation: startNewConversation
                     )
@@ -202,21 +207,23 @@ struct CampusAIAssistantView: View {
     private var conversationScroll: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: AppSpacing.card) {
-                    if selectedMessages.isEmpty {
-                        CampusAIEmptyConversationPanel(
-                            prompts: visibleSuggestionPrompts,
-                            canUseService: canUseCurrentService,
-                            quotaText: emptyStateQuotaText,
-                            openSubscription: openSubscription,
-                            configureAPIKey: openAPIKeySetup,
-                            selectPrompt: { prompt in
-                                draftText = prompt
-                                isComposerFocused = true
-                            }
-                        )
-                            .padding(.top, 44)
-                    } else {
+                if selectedMessages.isEmpty {
+                    CampusAIEmptyConversationPanel(
+                        prompts: visibleSuggestionPrompts,
+                        canUseService: canUseCurrentService,
+                        quotaText: emptyStateQuotaText,
+                        openSubscription: openSubscription,
+                        configureAPIKey: openAPIKeySetup,
+                        selectPrompt: { prompt in
+                            draftText = prompt
+                            isComposerFocused = true
+                        }
+                    )
+                    .leafyAdaptiveContentWidth(maxWidth: 820, horizontalPadding: AppSpacing.page)
+                    .containerRelativeFrame(.vertical, alignment: .center)
+                    .padding(.vertical, AppSpacing.card)
+                } else {
+                    LazyVStack(alignment: .leading, spacing: AppSpacing.card) {
                         ForEach(selectedMessages) { message in
                             CampusAIMessageRow(
                                 message: message,
@@ -244,24 +251,23 @@ struct CampusAIAssistantView: View {
                                 .transition(.opacity)
                                 .id(message.id)
                         }
-                    }
+                        if isSending, selectedMessages.last?.roleRawValue == CampusAIMessageRole.user.rawValue {
+                            CampusAITypingRow()
+                                .id("campus-ai-typing")
+                        }
 
-                    if isSending, selectedMessages.last?.roleRawValue == CampusAIMessageRole.user.rawValue {
-                        CampusAITypingRow()
-                            .id("campus-ai-typing")
+                        Color.clear
+                            .frame(height: 1)
+                            .id("campus-ai-bottom")
                     }
-
-                    Color.clear
-                        .frame(height: 1)
-                        .id("campus-ai-bottom")
+                    .leafyAdaptiveContentWidth(maxWidth: 820, horizontalPadding: AppSpacing.page)
+                    .padding(.top, AppSpacing.card)
+                    .padding(.bottom, AppSpacing.card)
+                    .animation(
+                        accessibilityReduceMotion ? nil : .easeOut(duration: 0.18),
+                        value: selectedMessages.map(\.id)
+                    )
                 }
-                .leafyAdaptiveContentWidth(maxWidth: 820, horizontalPadding: AppSpacing.page)
-                .padding(.top, AppSpacing.card)
-                .padding(.bottom, AppSpacing.card)
-                .animation(
-                    accessibilityReduceMotion ? nil : .easeOut(duration: 0.18),
-                    value: selectedMessages.map(\.id)
-                )
             }
             .campusAIKeyboardDismissBehavior()
             .onChange(of: selectedMessages.map(\.id)) { _, _ in
@@ -284,6 +290,13 @@ struct CampusAIAssistantView: View {
 
     private var canSend: Bool {
         canUseCurrentService && !isSending && !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var isNewConversationDisabled: Bool {
+        !CampusAINewConversationPolicy.canStartNewConversation(
+            messageCount: selectedMessages.count,
+            isSending: isSending
+        )
     }
 
     private var emptyStateQuotaText: String {
@@ -347,7 +360,7 @@ struct CampusAIAssistantView: View {
     }
 
     private func startNewConversation() {
-        cancelStreaming()
+        guard !isNewConversationDisabled else { return }
         cancelEditingMessage()
         let conversation = CampusAIConversation()
         modelContext.insert(conversation)
@@ -544,7 +557,7 @@ struct CampusAIAssistantView: View {
                     let displayStatus = CampusAIAgentPresentation.sanitizedStatusText(status)
                     chatSession.update(statusText: displayStatus)
                     agentMetadata.statusText = displayStatus
-                    if status.contains("成品") {
+                    if status.contains("卡片") {
                         agentMetadata.artifactState = .generating
                     }
                     persistAgentMetadata(agentMetadata, for: assistantMessage)
@@ -818,7 +831,7 @@ struct CampusAIAssistantView: View {
             persistModelContext(operation: "message.metadata", showsAlert: false)
         } catch {
             CampusAIDiagnostics.persistenceFailure(error, operation: "message.metadata.encode")
-            operationAlert = .failure("成品状态保存失败，请重试。")
+            operationAlert = .failure("卡片状态保存失败，请重试。")
         }
     }
 
@@ -848,6 +861,8 @@ struct CampusAIAssistantView: View {
             case .openAcademicRoute:
                 try executeOpenAcademicRoute(validated)
                 markAction(record, status: .completed)
+            case .createSchedule:
+                activeSheet = .actionEditor(CampusAIActionEditorPresentation(record: record, draft: validated))
             case .createCountdown:
                 activeSheet = .actionEditor(CampusAIActionEditorPresentation(record: record, draft: validated))
             case .createTimetableReminder:
@@ -863,31 +878,31 @@ struct CampusAIAssistantView: View {
     private func confirmActionEditor(
         _ presentation: CampusAIActionEditorPresentation,
         draft: CampusAIActionDraft
-    ) async {
+    ) async -> Bool {
         guard presentation.record.status == .pending else {
-            activeSheet = nil
-            return
+            return false
         }
         guard let validated = CampusAIActionValidation.validate(draft) else {
             operationAlert = .failure("动作内容无效，无法执行。")
-            return
+            return false
         }
 
         do {
             switch validated.kind {
             case .openAcademicRoute:
                 try executeOpenAcademicRoute(validated)
+            case .createSchedule:
+                try await executeCreateSchedule(validated)
             case .createCountdown:
                 try executeCreateCountdown(validated)
             case .createTimetableReminder:
                 try await executeCreateTimetableReminder(validated)
             }
             markAction(presentation.record, status: .completed)
-            activeSheet = nil
+            return true
         } catch {
-            markAction(presentation.record, status: .failed)
-            activeSheet = nil
             operationAlert = .failure(error.localizedDescription)
+            return false
         }
     }
 
@@ -912,7 +927,36 @@ struct CampusAIAssistantView: View {
         var events = CustomScheduleStore.load()
         events.append(CustomScheduleEvent(title: title, startsAt: targetDate))
         CustomScheduleStore.save(events)
-        operationAlert = .success("已创建重要日期：\(title)。")
+        operationAlert = .success("日程已保存：\(title)。")
+    }
+
+    @MainActor
+    private func executeCreateSchedule(_ draft: CampusAIActionDraft) async throws {
+        guard let title = draft.payload.title?.nonEmptyTrimmed,
+              let startsAt = CampusAIActionValidation.scheduleStartDate(for: draft)
+        else {
+            throw CampusAIActionExecutionError.invalidPayload
+        }
+        let endsAt = CampusAIActionValidation.scheduleEndDate(for: draft)
+        let event = CustomScheduleEvent(
+            title: title,
+            startsAt: startsAt,
+            endsAt: endsAt,
+            location: draft.payload.location ?? "",
+            note: draft.payload.note ?? "",
+            minutesBefore: max(0, draft.payload.minutesBefore ?? 0)
+        )
+        var events = CustomScheduleStore.load()
+        events.append(event)
+        events.sort { $0.startsAt < $1.startsAt }
+        CustomScheduleStore.save(events)
+
+        do {
+            _ = try await TimetableNotificationManager.applyReminder(for: event)
+            operationAlert = .success("日程已保存：\(title)。")
+        } catch {
+            operationAlert = .success("日程已保存，但提醒未创建：\(error.localizedDescription)")
+        }
     }
 
     @MainActor
@@ -1003,7 +1047,7 @@ struct CampusAIAssistantView: View {
             try CampusAIDeliverableFileBuilder.removeAllArtifacts()
         } catch {
             CampusAIDiagnostics.failure(error, stage: "artifact.cleanup.all")
-            operationAlert = .failure("部分成品缓存清理失败，聊天记录仍会继续清除。")
+            operationAlert = .failure("部分卡片缓存清理失败，聊天记录仍会继续清除。")
         }
         for action in actionRecords {
             modelContext.delete(action)
@@ -1031,6 +1075,7 @@ struct CampusAIAssistantView: View {
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
+        guard !selectedMessages.isEmpty else { return }
         let action = {
             proxy.scrollTo("campus-ai-bottom", anchor: .bottom)
         }

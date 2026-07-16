@@ -42,34 +42,37 @@ struct CampusAIActionEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let presentation: CampusAIActionEditorPresentation
-    let onSave: (CampusAIActionDraft) -> Void
+    let onSave: @MainActor (CampusAIActionDraft) async -> Bool
 
-    @State private var countdownTitle: String
-    @State private var targetDate: Date
-    @State private var week: Int
-    @State private var dayOfWeek: Int
-    @State private var period: Int
-    @State private var endPeriod: Int
-    @State private var reminderTitle: String
+    @State private var scheduleTitle: String
+    @State private var scheduleDate: Date
+    @State private var startTime: Date
+    @State private var endTime: Date
+    @State private var hasDate: Bool
+    @State private var hasStartTime: Bool
+    @State private var hasEndTime: Bool
     @State private var location: String
     @State private var note: String
     @State private var minutesBefore: Int
+    @State private var isSaving = false
 
     init(
         presentation: CampusAIActionEditorPresentation,
-        onSave: @escaping (CampusAIActionDraft) -> Void
+        onSave: @escaping @MainActor (CampusAIActionDraft) async -> Bool
     ) {
         self.presentation = presentation
         self.onSave = onSave
         let payload = presentation.draft.payload
-        _countdownTitle = State(initialValue: payload.countdownTitle ?? payload.title ?? "")
-        _targetDate = State(initialValue: CampusAIActionValidation.countdownDate(for: presentation.draft) ?? Date())
-        _week = State(initialValue: max(1, min(payload.week ?? SemesterConfig.currentWeek(), SemesterConfig.supportedWeeks)))
-        _dayOfWeek = State(initialValue: max(1, min(payload.dayOfWeek ?? 1, 7)))
-        let initialPeriod = payload.period ?? TimetablePeriodSchedule.slots.first?.period ?? 1
-        _period = State(initialValue: max(1, min(initialPeriod, TimetablePeriodSchedule.slots.last?.period ?? 12)))
-        _endPeriod = State(initialValue: max(initialPeriod, min(payload.endPeriod ?? initialPeriod, TimetablePeriodSchedule.slots.last?.period ?? 12)))
-        _reminderTitle = State(initialValue: payload.title ?? payload.countdownTitle ?? "")
+        let initialStart = Self.initialStartDate(for: presentation.draft)
+        let initialEnd = Self.initialEndDate(for: presentation.draft)
+        let fallback = initialStart ?? Date()
+        _scheduleTitle = State(initialValue: payload.title ?? payload.countdownTitle ?? "")
+        _scheduleDate = State(initialValue: fallback)
+        _startTime = State(initialValue: fallback)
+        _endTime = State(initialValue: initialEnd ?? fallback.addingTimeInterval(45 * 60))
+        _hasDate = State(initialValue: Self.hasInitialDate(for: presentation.draft))
+        _hasStartTime = State(initialValue: Self.hasInitialTime(for: presentation.draft))
+        _hasEndTime = State(initialValue: initialEnd != nil)
         _location = State(initialValue: payload.location ?? "")
         _note = State(initialValue: payload.note ?? "")
         _minutesBefore = State(initialValue: max(0, payload.minutesBefore ?? 0))
@@ -78,17 +81,9 @@ struct CampusAIActionEditorSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                switch presentation.draft.kind {
-                case .createCountdown:
-                    countdownSection
-                case .createTimetableReminder:
-                    timetableReminderSection
-                default:
-                    Text("这个动作不需要编辑。")
-                        .foregroundStyle(AppTheme.secondaryText)
-                }
+                scheduleSection
             }
-            .navigationTitle(navigationTitle)
+            .navigationTitle("添加日程")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -97,112 +92,153 @@ struct CampusAIActionEditorSheet: View {
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") {
-                        onSave(editedDraft)
-                        dismiss()
+                    Button(isSaving ? "保存中" : "保存") {
+                        Task { await save() }
                     }
-                    .disabled(!canSave)
-                }
-            }
-            .onChange(of: period) { _, newValue in
-                if endPeriod < newValue {
-                    endPeriod = newValue
+                    .disabled(!canSave || isSaving)
                 }
             }
         }
     }
 
-    private var countdownSection: some View {
-        Section("重要日期") {
-            TextField("标题", text: $countdownTitle)
-            DatePicker("目标日期", selection: $targetDate, displayedComponents: .date)
-        }
-    }
+    private var scheduleSection: some View {
+        Group {
+            Section("日程信息") {
+                TextField("标题", text: $scheduleTitle)
+                TextField("地点（可选）", text: $location)
+                TextField("备注（可选）", text: $note, axis: .vertical)
+                    .lineLimit(2...4)
+            }
 
-    private var timetableReminderSection: some View {
-        Section("课表提醒") {
-            TextField("标题", text: $reminderTitle)
-            Stepper("第 \(week) 周", value: $week, in: 1...SemesterConfig.supportedWeeks)
-            Picker("星期", selection: $dayOfWeek) {
-                ForEach(1...7, id: \.self) { day in
-                    Text(Self.weekdayText(day)).tag(day)
+            Section("日程时间") {
+                Toggle("设置日期", isOn: $hasDate)
+                if hasDate {
+                    DatePicker("日期", selection: $scheduleDate, displayedComponents: .date)
+                }
+
+                Toggle("设置开始时间", isOn: $hasStartTime)
+                if hasStartTime {
+                    DatePicker("开始时间", selection: $startTime, displayedComponents: .hourAndMinute)
+                }
+
+                Toggle("设置结束时间", isOn: $hasEndTime)
+                    .disabled(!hasDate || !hasStartTime)
+                if hasEndTime {
+                    DatePicker("结束时间", selection: $endTime, displayedComponents: .hourAndMinute)
                 }
             }
-            Stepper("开始节次：\(period)", value: $period, in: periodRange)
-            Stepper("结束节次：\(endPeriod)", value: $endPeriod, in: period...periodRange.upperBound)
-            TextField("地点", text: $location)
-            TextField("备注", text: $note, axis: .vertical)
-                .lineLimit(2...4)
-            Stepper(minutesBefore > 0 ? "提前 \(minutesBefore) 分钟提醒" : "不提前提醒", value: $minutesBefore, in: 0...180, step: 5)
-        }
-    }
 
-    private var navigationTitle: String {
-        switch presentation.draft.kind {
-        case .createCountdown:
-            return "编辑重要日期"
-        case .createTimetableReminder:
-            return "编辑课表提醒"
-        default:
-            return "编辑动作"
+            Section("提醒") {
+                Stepper(
+                    minutesBefore > 0 ? "提前 \(minutesBefore) 分钟提醒" : "不提前提醒",
+                    value: $minutesBefore,
+                    in: 0...180,
+                    step: 5
+                )
+            }
         }
     }
 
     private var canSave: Bool {
-        switch presentation.draft.kind {
-        case .createCountdown:
-            return countdownTitle.nonEmptyTrimmed != nil
-        case .createTimetableReminder:
-            return reminderTitle.nonEmptyTrimmed != nil
-        default:
-            return false
-        }
+        guard scheduleTitle.nonEmptyTrimmed != nil, hasDate, hasStartTime else { return false }
+        return !hasEndTime || combinedEndDate > combinedStartDate
     }
 
     private var editedDraft: CampusAIActionDraft {
-        switch presentation.draft.kind {
+        CampusAIActionDraft(
+            id: presentation.draft.id,
+            kind: .createSchedule,
+            title: "添加日程",
+            detail: presentation.draft.detail,
+            payload: CampusAIActionPayload(
+                startsAt: Self.isoFormatter.string(from: combinedStartDate),
+                endsAt: hasEndTime ? Self.isoFormatter.string(from: combinedEndDate) : nil,
+                title: scheduleTitle,
+                location: location,
+                note: note,
+                minutesBefore: minutesBefore
+            )
+        )
+    }
+
+    private var combinedStartDate: Date {
+        Self.combinedDate(date: scheduleDate, time: startTime)
+    }
+
+    private var combinedEndDate: Date {
+        Self.combinedDate(date: scheduleDate, time: endTime)
+    }
+
+    @MainActor
+    private func save() async {
+        guard canSave else { return }
+        isSaving = true
+        let succeeded = await onSave(editedDraft)
+        isSaving = false
+        if succeeded { dismiss() }
+    }
+
+    private static func initialStartDate(for draft: CampusAIActionDraft) -> Date? {
+        switch draft.kind {
+        case .createSchedule:
+            return CampusAIActionValidation.scheduleStartDate(for: draft)
         case .createCountdown:
-            let target = DateFormatters.queryDate.string(from: targetDate)
-            return CampusAIActionDraft(
-                id: presentation.draft.id,
-                kind: .createCountdown,
-                title: presentation.draft.title,
-                detail: presentation.draft.detail,
-                payload: CampusAIActionPayload(
-                    countdownTitle: countdownTitle,
-                    targetDate: target
-                )
-            )
+            return CampusAIActionValidation.countdownDate(for: draft)
         case .createTimetableReminder:
-            return CampusAIActionDraft(
-                id: presentation.draft.id,
-                kind: .createTimetableReminder,
-                title: presentation.draft.title,
-                detail: presentation.draft.detail,
-                payload: CampusAIActionPayload(
-                    week: week,
-                    dayOfWeek: dayOfWeek,
-                    period: period,
-                    endPeriod: endPeriod,
-                    title: reminderTitle,
-                    location: location,
-                    note: note,
-                    minutesBefore: minutesBefore
-                )
-            )
-        default:
-            return presentation.draft
+            guard let week = draft.payload.week,
+                  let day = draft.payload.dayOfWeek,
+                  let period = draft.payload.period else { return nil }
+            return TimetablePeriodSchedule.startDate(week: week, dayOfWeek: day, period: period)
+        case .openAcademicRoute:
+            return nil
         }
     }
 
-    private var periodRange: ClosedRange<Int> {
-        let periods = TimetablePeriodSchedule.slots.map(\.period)
-        return (periods.min() ?? 1)...(periods.max() ?? 12)
+    private static func initialEndDate(for draft: CampusAIActionDraft) -> Date? {
+        switch draft.kind {
+        case .createSchedule:
+            return CampusAIActionValidation.scheduleEndDate(for: draft)
+        case .createTimetableReminder:
+            guard let week = draft.payload.week,
+                  let day = draft.payload.dayOfWeek,
+                  let period = draft.payload.endPeriod ?? draft.payload.period else { return nil }
+            return TimetablePeriodSchedule.endDate(week: week, dayOfWeek: day, period: period)
+        case .createCountdown, .openAcademicRoute:
+            return nil
+        }
     }
 
-    private static func weekdayText(_ day: Int) -> String {
-        ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][max(1, min(day, 7)) - 1]
+    private static func hasInitialDate(for draft: CampusAIActionDraft) -> Bool {
+        initialStartDate(for: draft) != nil
     }
+
+    private static func hasInitialTime(for draft: CampusAIActionDraft) -> Bool {
+        switch draft.kind {
+        case .createCountdown:
+            return false
+        default:
+            return initialStartDate(for: draft) != nil
+        }
+    }
+
+    private static func combinedDate(date: Date, time: Date) -> Date {
+        let calendar = Calendar.current
+        let dateParts = calendar.dateComponents([.year, .month, .day], from: date)
+        let timeParts = calendar.dateComponents([.hour, .minute], from: time)
+        return calendar.date(from: DateComponents(
+            year: dateParts.year,
+            month: dateParts.month,
+            day: dateParts.day,
+            hour: timeParts.hour,
+            minute: timeParts.minute
+        )) ?? date
+    }
+
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
 }
 
 private extension String {

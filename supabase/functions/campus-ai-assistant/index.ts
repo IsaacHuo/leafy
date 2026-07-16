@@ -54,10 +54,17 @@ type CampusAIRequest = {
   capabilities?: unknown;
   local_retrieval?: unknown;
   localRetrieval?: unknown;
+  output_mode?: string;
+  outputMode?: string;
+  current_local_time?: string;
+  currentLocalTime?: string;
+  time_zone_identifier?: string;
+  timeZoneIdentifier?: string;
 };
 
 type CampusAIActionKind =
   | "openAcademicRoute"
+  | "createSchedule"
   | "createCountdown"
   | "createTimetableReminder";
 
@@ -65,6 +72,8 @@ type CampusAIActionPayload = {
   route?: string;
   countdownTitle?: string;
   targetDate?: string;
+  startsAt?: string;
+  endsAt?: string;
   week?: number;
   dayOfWeek?: number;
   period?: number;
@@ -131,6 +140,17 @@ type CampusAIDeliverable = {
   generatedAt: string;
   sources: CampusAIDeliverableSource[];
   formats: CampusAIDeliverableFormat[];
+  content?: {
+    html?: string;
+    markdown?: string;
+    text?: string;
+  };
+};
+
+type CampusAIArtifactDraft = {
+  title: string;
+  summary: string;
+  markdown: string;
 };
 
 type CampusAILocalRetrievalResult = {
@@ -383,20 +403,61 @@ export async function handler(request: Request): Promise<Response> {
         ...agentTrace,
         ...(result.agentTrace ?? []),
       ]);
-      deliverables = deduplicateDeliverables(result.deliverables ?? []);
-      if (deliverables.length === 0) {
-        deliverables = deduplicateDeliverables(
-          localRetrievalDeliverables(body, message, result.answer),
-        );
+      const researchDeliverables = deduplicateDeliverables(
+        result.deliverables ?? [],
+      );
+      const generatesCard = shouldGenerateArtifact(body);
+      if (generatesCard) {
+        enqueueSSE(controller, { type: "agent_status", text: "正在整理卡片" });
+        enqueueSSE(controller, {
+          type: "agent_tool",
+          tool: { name: "completion.plan", status: "running" },
+        });
       }
 
-      const actionPlan = await planActions(
+      const completionPlan = await planActions(
         body,
         message,
         result.answer,
         signal,
       );
-      usage = mergeUsage(usage, actionPlan.usage);
+      usage = mergeUsage(usage, completionPlan.usage);
+      let artifactState: "none" | "ready" | "failed" = "none";
+      let artifactErrorMessage: string | null = null;
+      deliverables = [];
+      if (generatesCard) {
+        const card = completionPlan.artifact
+          ? artifactDeliverable(
+            body,
+            message,
+            completionPlan.artifact,
+            researchDeliverables.flatMap((item) => item.sources),
+          )
+          : null;
+        if (card) {
+          deliverables = [card];
+          artifactState = "ready";
+          enqueueSSE(controller, {
+            type: "agent_tool",
+            tool: {
+              name: "completion.plan",
+              status: "completed",
+              resultCount: 1,
+            },
+          });
+        } else {
+          artifactState = "failed";
+          artifactErrorMessage = "这次没有生成卡片内容，请重试。";
+          enqueueSSE(controller, {
+            type: "agent_tool",
+            tool: {
+              name: "completion.plan",
+              status: "failed",
+              detail: artifactErrorMessage,
+            },
+          });
+        }
+      }
 
       completed = true;
       enqueueSSE(controller, {
@@ -406,9 +467,11 @@ export async function handler(request: Request): Promise<Response> {
         finish_reason: result.finishReason,
         suggested_title: shortTitle(message),
         summary: "",
-        actions: actionPlan.actions,
+        actions: completionPlan.actions,
         citations,
         deliverables,
+        artifact_state: artifactState,
+        artifact_error_message: artifactErrorMessage,
         agentTrace,
         agent_trace: agentTrace,
       });
@@ -419,7 +482,7 @@ export async function handler(request: Request): Promise<Response> {
         counted: result.answer.length > 0,
         requestCharCount,
         responseCharCount: result.answer.length +
-          safeJSONStringify(actionPlan.actions).length +
+          safeJSONStringify(completionPlan.actions).length +
           safeJSONStringify(citations).length +
           safeJSONStringify(deliverables).length +
           safeJSONStringify(agentTrace).length,
@@ -726,7 +789,7 @@ async function runAgentDeepSeek(
           emitStep(agentStep(
             "tool",
             "官方资料检索失败",
-            "本次回答将不生成资料包。",
+            "本次回答将不使用这批官方资料。",
             "failed",
             { tool: "official.document.search" },
           ));
@@ -1630,7 +1693,7 @@ export function officialDocumentDeliverable(
     id: `deliverable-${
       hashString(`${query}|${sources.map((source) => source.url).join("|")}`)
     }`,
-    title: "官方资料包",
+    title: "官方资料卡片",
     query,
     summary,
     generatedAt: new Date().toISOString(),
@@ -1654,11 +1717,29 @@ export function localRetrievalDeliverables(
   message: string,
   answer: string,
 ): CampusAIDeliverable[] {
-  if (!shouldGenerateLocalArtifact(message)) return [];
-  const results = localRetrievalResults(body);
-  if (results.length === 0) return [];
+  if (!shouldGenerateArtifact(body)) return [];
+  const sources = localDeliverableSources(body);
+  if (sources.length === 0) return [];
 
-  const sources = results.slice(0, 12).map((result, index) => {
+  return [{
+    id: `local-deliverable-${
+      hashString(`${message}|${sources.map((source) => source.id).join("|")}`)
+    }`,
+    title: `${normalizeText(message)?.slice(0, 32) || "本地资料"}卡片`,
+    query: message,
+    summary: normalizeText(answer)?.slice(0, 240) ??
+      "已根据相关本地资料整理为可打开的卡片。",
+    generatedAt: new Date().toISOString(),
+    sources,
+    formats: artifactFormatsForMessage(message),
+    content: { markdown: answer },
+  }];
+}
+
+function localDeliverableSources(
+  body: CampusAIRequest,
+): CampusAIDeliverableSource[] {
+  return localRetrievalResults(body).slice(0, 12).map((result, index) => {
     const domain = normalizeText(result.domain) ?? "local";
     const sourceID = normalizeText(result.sourceID) ??
       normalizeText(result.source_id) ??
@@ -1677,19 +1758,44 @@ export function localRetrievalDeliverables(
       attachments: [],
     } satisfies CampusAIDeliverableSource;
   });
+}
 
-  return [{
-    id: `local-deliverable-${
-      hashString(`${message}|${sources.map((source) => source.id).join("|")}`)
-    }`,
-    title: `${normalizeText(message)?.slice(0, 32) || "本地资料"}资料包`,
+export function shouldGenerateArtifact(body: CampusAIRequest) {
+  return (normalizeText(body.output_mode) ?? normalizeText(body.outputMode)) ===
+    "artifact";
+}
+
+function artifactDeliverable(
+  body: CampusAIRequest,
+  message: string,
+  draft: CampusAIArtifactDraft,
+  researchSources: CampusAIDeliverableSource[],
+): CampusAIDeliverable | null {
+  const title = normalizeText(draft.title)?.slice(0, 100);
+  const summary = normalizeText(draft.summary)?.slice(0, 280);
+  const markdown = normalizeText(draft.markdown)?.slice(0, 30_000);
+  if (!title || !summary || !markdown) return null;
+
+  const sources: CampusAIDeliverableSource[] = [];
+  const seen = new Set<string>();
+  for (const source of [...researchSources, ...localDeliverableSources(body)]) {
+    const key = source.url.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    sources.push(source);
+    if (sources.length >= 12) break;
+  }
+
+  return {
+    id: `card-${hashString(`${message}|${title}|${markdown}`)}`,
+    title,
     query: message,
-    summary: normalizeText(answer)?.slice(0, 240) ??
-      "已根据相关本地资料整理为可打开的本地文件。",
+    summary,
     generatedAt: new Date().toISOString(),
     sources,
-    formats: artifactFormatsForMessage(message),
-  }];
+    formats: ["html", "markdown", "txt"],
+    content: { markdown },
+  };
 }
 
 function artifactFormatsForMessage(
@@ -1721,22 +1827,6 @@ function artifactFormatsForMessage(
     : (["html", "markdown", "txt"] as CampusAIDeliverableFormat[]).filter((
       format,
     ) => formats.includes(format));
-}
-
-function shouldGenerateLocalArtifact(message: string) {
-  const text = message.toLowerCase();
-  return [
-    "资料包",
-    "交付",
-    "导出",
-    "生成文件",
-    "整理成文件",
-    "html",
-    "markdown",
-    "txt",
-    "md 文件",
-    "文档",
-  ].some((keyword) => text.includes(keyword));
 }
 
 function localRetrievalResults(body: CampusAIRequest) {
@@ -1904,6 +1994,7 @@ export function agentSynthesisPayload(
           normalizeText(body.user_system_prompt) ??
             normalizeText(body.userSystemPrompt),
           citations.length > 0,
+          shouldGenerateArtifact(body),
         ),
       },
       {
@@ -1933,15 +2024,16 @@ export function agentSynthesisPayload(
 function agentSynthesisSystemPrompt(
   userSystemPrompt: string | null,
   hasCitations: boolean,
+  generatesCard: boolean,
 ) {
   return [
-    systemPrompt(userSystemPrompt),
+    systemPrompt(userSystemPrompt, generatesCard),
     "你现在处于 agent 模式。请整合本机上下文、联网搜索结果和子任务结论。",
     "如果输入包含 local_retrieval，优先使用其中最相关的本地结果；不需要说明内部检索流程。",
     hasCitations
-      ? "使用联网结果时，必须在相关句子后用 Markdown 链接标注来源，优先引用输入 citations 中的 URL。"
+      ? "可以使用输入 citations 中已验证的资料，但不要在正文中输出来源标题、URL、脚注或 Markdown 引用链接；来源会由界面单独展示。"
       : "本次没有可用联网搜索结果；如果问题需要最新信息，请明确说明未使用联网结果。",
-    "如果输入包含 official_document_deliverables，请简要说明已整理资料包；不要把 HTML、Markdown 或 TXT 文件全文复制到回答正文。",
+    "如果输入包含 official_document_deliverables，只把它们作为已读取资料使用，不要声称已经生成卡片或文件。",
     "不要输出工具调用 JSON、内部 trace 或动作草稿。",
   ].join("\n");
 }
@@ -2102,8 +2194,12 @@ async function planActions(
   message: string,
   answer: string,
   signal: AbortSignal,
-): Promise<{ actions: CampusAIActionDraft[]; usage: DeepSeekUsage }> {
-  if (!answer.trim()) return { actions: [], usage: {} };
+): Promise<{
+  actions: CampusAIActionDraft[];
+  artifact: CampusAIArtifactDraft | null;
+  usage: DeepSeekUsage;
+}> {
+  if (!answer.trim()) return { actions: [], artifact: null, usage: {} };
 
   try {
     const payload = JSON.stringify(actionPlannerPayload(body, message, answer));
@@ -2162,6 +2258,7 @@ async function planActions(
         actions: planned.actions.length > 0
           ? planned.actions
           : fallbackActionDrafts(body, message, answer),
+        artifact: planned.artifact,
         usage: planned.usage,
       };
     }
@@ -2174,12 +2271,16 @@ async function planActions(
         redactProviderError(errorMessage(error)),
       );
     }
-    return { actions: fallbackActionDrafts(body, message, answer), usage: {} };
+    return {
+      actions: fallbackActionDrafts(body, message, answer),
+      artifact: null,
+      usage: {},
+    };
   }
 }
 
 export function fallbackActionDrafts(
-  _body: CampusAIRequest,
+  body: CampusAIRequest,
   message: string,
   answer = "",
 ): CampusAIActionDraft[] {
@@ -2192,23 +2293,63 @@ export function fallbackActionDrafts(
   ) => text.includes(keyword));
   if (!hasCreateIntent || !hasScheduleIntent) return [];
 
-  const route = text.includes("倒计时") || text.includes("重要日期") ||
-      text.includes("纪念日")
-    ? "customCountdowns"
-    : text.includes("推送") || text.includes("报告")
-    ? "scheduleReports"
-    : "examSchedule";
-  const title = route === "customCountdowns"
-    ? "打开自定义倒计时"
-    : route === "scheduleReports"
-    ? "打开日程推送"
-    : "打开考试与日程";
   return [{
-    kind: "openAcademicRoute",
-    title,
-    detail: `前往${title.replace(/^打开/, "")}继续创建或管理日程。`,
-    payload: { route },
+    kind: "createSchedule",
+    title: "添加日程",
+    detail: "确认日期、时间和日程信息后保存。",
+    payload: {
+      startsAt: fallbackScheduleStartDate(
+        message,
+        body.current_local_time ?? body.currentLocalTime,
+      ),
+    },
   }];
+}
+
+function fallbackScheduleStartDate(
+  message: string,
+  currentLocalTime = beijingLocalDateTime(),
+): string | undefined {
+  const chineseHours: Record<string, string> = {
+    "十二点": "12点",
+    "十一点": "11点",
+    "十点": "10点",
+    "九点": "9点",
+    "八点": "8点",
+    "七点": "7点",
+    "六点": "6点",
+    "五点": "5点",
+    "四点": "4点",
+    "三点": "3点",
+    "两点": "2点",
+    "一点": "1点",
+  };
+  let normalized = message;
+  for (const [source, target] of Object.entries(chineseHours)) {
+    normalized = normalized.replaceAll(source, target);
+  }
+  const match = normalized.match(/(早上|上午|中午|下午|晚上)?\s*(\d{1,2})(?:点|:|：)(\d{1,2})?/);
+  if (!match) return undefined;
+  let hour = Number(match[2]);
+  const minute = Number(match[3] ?? 0);
+  if (["下午", "晚上"].includes(match[1] ?? "") && hour < 12) hour += 12;
+  if (match[1] === "中午" && hour < 11) hour += 12;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return undefined;
+
+  const localMatch = currentLocalTime.match(
+    /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})$/,
+  );
+  if (!localMatch) return undefined;
+  const dayOffset = normalized.includes("后天") ? 2 : normalized.includes("明天") ? 1 : 0;
+  const localDay = new Date(Date.UTC(
+    Number(localMatch[1]),
+    Number(localMatch[2]) - 1,
+    Number(localMatch[3]) + dayOffset,
+  ));
+  const year = localDay.getUTCFullYear();
+  const month = String(localDay.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(localDay.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00${localMatch[4]}`;
 }
 
 async function readDeepSeekStream(
@@ -2277,6 +2418,7 @@ export function deepSeekPayload(body: CampusAIRequest, message: string) {
         content: systemPrompt(
           normalizeText(body.user_system_prompt) ??
             normalizeText(body.userSystemPrompt),
+          shouldGenerateArtifact(body),
         ),
       },
       {
@@ -2304,12 +2446,17 @@ export function actionPlannerPayload(
   message: string,
   answer: string,
 ) {
+  const generatesCard = shouldGenerateArtifact(body);
+  const currentLocalTime = body.current_local_time ?? body.currentLocalTime ??
+    beijingLocalDateTime();
+  const timeZoneIdentifier = body.time_zone_identifier ??
+    body.timeZoneIdentifier ?? "Asia/Shanghai";
   return {
     model: defaultModel,
     messages: [
       {
         role: "system",
-        content: actionPlannerSystemPrompt(),
+        content: actionPlannerSystemPrompt(generatesCard),
       },
       {
         role: "user",
@@ -2320,6 +2467,9 @@ export function actionPlannerPayload(
           context_settings: body.context_settings ?? body.contextSettings ?? {},
           capabilities: body.capabilities ?? {},
           local_retrieval: localRetrievalFromBody(body),
+          should_generate_card: generatesCard,
+          current_local_time: currentLocalTime,
+          time_zone_identifier: timeZoneIdentifier,
           supported_actions: [
             {
               kind: "openAcademicRoute",
@@ -2329,17 +2479,11 @@ export function actionPlannerPayload(
               },
             },
             {
-              kind: "createCountdown",
-              required_payload_fields: ["countdownTitle", "targetDate"],
-              allowed_values: { targetDate: ["yyyy-MM-dd"] },
-            },
-            {
-              kind: "createTimetableReminder",
-              required_payload_fields: ["week", "dayOfWeek", "period", "title"],
+              kind: "createSchedule",
+              required_payload_fields: [],
               allowed_values: {
-                week: ["1...30"],
-                dayOfWeek: ["1...7"],
-                period: ["1...12"],
+                startsAt: ["ISO 8601 with time zone"],
+                endsAt: ["ISO 8601 with time zone"],
               },
             },
           ],
@@ -2348,19 +2492,37 @@ export function actionPlannerPayload(
             "不要生成修改成绩或课表原始数据、医疗决策、社区发帖评论、远程抓取、后台登录等动作。",
             "编辑或删除必须有 local_retrieval.sourceID 等明确目标 ID；缺少目标 ID 时改用 openAcademicRoute 或返回空 actions。",
             "删除类动作需要二次确认；当前 schema 未提供删除 kind 时不要输出删除动作。",
-            "缺少 createTimetableReminder 必要字段时不要编造；如果用户是在新建或管理日程/提醒，改用 openAcademicRoute 打开对应页面。",
+            "创建日程时只填写用户明确提供或可靠解析出的字段，缺失字段留空并交给 App 表单补充。",
           ],
         }),
       },
     ],
     stream: false,
     temperature: 0,
-    max_tokens: 700,
+    max_tokens: generatesCard ? 4000 : 700,
     user: userCacheKey(body.app_transaction_id),
   };
 }
 
-export function systemPrompt(userSystemPrompt?: string | null) {
+function beijingLocalDateTime(now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const value = (type: string) => parts.find((part) => part.type === type)?.value ?? "00";
+  return `${value("year")}-${value("month")}-${value("day")}T${value("hour")}:${value("minute")}:${value("second")}+08:00`;
+}
+
+export function systemPrompt(
+  userSystemPrompt?: string | null,
+  preparesCard = false,
+) {
   const customPrompt = normalizeText(userSystemPrompt)
     ?.slice(0, maxUserSystemPromptLength);
   return [
@@ -2371,25 +2533,32 @@ export function systemPrompt(userSystemPrompt?: string | null) {
     "缺少关键信息时，用一句话说明缺什么，并给出用户下一步能做的选择。",
     "不要声称读取了未提供的数据，不要声称读取了用户上传文件正文、图片像素、OCR、PDF、Word、PPT、表格或本地文件路径。",
     "不要推断私信、身份资料、未提供的远端内容或后台登录后的内容。",
+    "当用户要求添加日程时，只能说明已准备待确认日程；用户在表单中保存前，不得声称已经添加、设置或执行。",
     "医疗台账只能做整理、提醒、流程梳理和材料核对，不提供诊断、治疗、用药或医疗决策建议。",
-    "回复必须是中文 Markdown。优先使用短标题、列表、加粗和清晰分段；不要在正文输出 JSON 或动作草稿，动作会由单独规划器生成。",
+    "回复必须是中文 Markdown。优先使用短标题、列表、加粗和清晰分段；表格必须使用完整的 GFM 表头与分隔行，无法稳定构造时改用列表；不要在正文输出 JSON 或动作草稿，动作会由单独规划器生成。",
+    preparesCard
+      ? "本次会另行生成完整卡片。主回答只用一到三句话说明已理解需求和卡片内容，不要重复完整计划、报告、清单或表格。"
+      : "",
     customPrompt ? `用户自定义偏好：\n${customPrompt}` : "",
   ].filter(Boolean).join("\n");
 }
 
-export function actionPlannerSystemPrompt() {
+export function actionPlannerSystemPrompt(generatesCard = false) {
   return [
     "你是 MyLeafy 的动作规划器，只能输出 JSON，不能输出 Markdown、解释、代码块或多余文本。",
     "根据用户问题、AI 已生成回答和本机上下文，最多生成 3 个需要用户确认后执行的动作。",
     "可以使用 local_retrieval 中的 routeHint 和 sourceID 判断动作目标；缺少明确目标 ID 时不要编造编辑或删除动作。",
-    '只有用户明确想打开页面、设置倒计时、设置课表提醒，或回答中明显需要这一步时才生成动作；否则返回 {"actions":[]}。',
-    "支持 kind：openAcademicRoute、createCountdown、createTimetableReminder。",
+    '只有用户明确想打开页面或添加日程，或回答中明显需要这一步时才生成动作；否则返回 {"actions":[]}。',
+    "支持 kind：openAcademicRoute、createSchedule。旧 kind 仅用于客户端兼容，不得再生成。",
     "openAcademicRoute.payload.route 必须来自 supported_actions 中的 allowed_values.route。",
-    "用户想新建、添加或管理日程/提醒，但缺少创建课表提醒所需的周次、星期、节次时，生成 openAcademicRoute：一般日程用 examSchedule，倒计时或重要日期用 customCountdowns，推送或报告用 scheduleReports。",
-    "createCountdown.payload 必须包含 countdownTitle 和 targetDate，targetDate 使用 yyyy-MM-dd。",
-    "createTimetableReminder.payload 必须包含 week、dayOfWeek、period、title；dayOfWeek 为 1 到 7，minutesBefore 必须大于等于 0。",
+    "用户想管理已有日程时生成 openAcademicRoute 到 customCountdowns；用户想新建、添加、设置日程或提醒时生成 createSchedule，即使标题或时间不完整也不要改成页面跳转。",
+    "createSchedule.payload 可包含 title、startsAt、endsAt、location、note、minutesBefore；只填写用户明确提供或可靠解析出的字段。startsAt 和 endsAt 使用包含时区的 ISO 8601。",
+    "相对日期必须依据 current_local_time 和 time_zone_identifier 解析。",
     "不要生成删除、修改成绩或课表原始数据、医疗决策、社区发帖评论、远程抓取、后台登录等动作。",
-    '输出格式必须是 {"actions":[{"kind":"...","title":"...","detail":"...","payload":{...}}]}。',
+    generatesCard
+      ? '本次用户已手动开启生成卡片。除 actions 外，必须返回 artifact：{"title":"不超过100字","summary":"不超过280字","markdown":"完整中文 Markdown 卡片"}。卡片表格必须包含完整 GFM 表头与分隔行，无法稳定构造时改用列表；不要编造来源。'
+      : "本次未开启生成卡片，禁止返回 artifact，即使用户文字提到报告、文档、资料包、清单或表格也一样。",
+    '输出格式必须是 {"actions":[{"kind":"...","title":"...","detail":"...","payload":{...}}],"artifact":null}；开启卡片时用 artifact 对象替换 null。',
   ].join("\n");
 }
 
@@ -2476,7 +2645,11 @@ export function processDeepSeekSSEBlock(
 
 export function parseActionPlannerProviderResponse(
   responseText: string,
-): { actions: CampusAIActionDraft[]; usage: DeepSeekUsage } {
+): {
+  actions: CampusAIActionDraft[];
+  artifact: CampusAIArtifactDraft | null;
+  usage: DeepSeekUsage;
+} {
   const payload = JSON.parse(responseText) as Record<string, unknown>;
   const usagePayload = objectValue(payload.usage);
   const usage = usagePayload ? deepSeekUsage(usagePayload) : {};
@@ -2487,10 +2660,39 @@ export function parseActionPlannerProviderResponse(
     .map((message) => stringValue(message?.content))
     .find((value) => !!value) ?? "";
 
-  return {
-    actions: parseActionPlannerActions(content),
-    usage,
-  };
+  const completion = parseActionPlannerCompletion(content);
+  return { ...completion, usage };
+}
+
+function parseActionPlannerCompletion(content: string): {
+  actions: CampusAIActionDraft[];
+  artifact: CampusAIArtifactDraft | null;
+} {
+  for (const candidate of actionPlannerJSONCandidates(content)) {
+    try {
+      const parsed = JSON.parse(candidate);
+      const actions = parseActionPlannerActions(candidate);
+      const artifact = validateArtifactDraft(
+        parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? parsed.artifact
+          : null,
+      );
+      return { actions, artifact };
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return { actions: [], artifact: null };
+}
+
+function validateArtifactDraft(value: unknown): CampusAIArtifactDraft | null {
+  const record = objectValue(value);
+  if (!record) return null;
+  const title = normalizeText(record.title)?.slice(0, 100);
+  const summary = normalizeText(record.summary)?.slice(0, 280);
+  const markdown = normalizeText(record.markdown)?.slice(0, 30_000);
+  if (!title || !summary || !markdown) return null;
+  return { title, summary, markdown };
 }
 
 export function parseActionPlannerActions(content: string) {
@@ -2562,6 +2764,8 @@ function validateActionDraft(value: unknown): CampusAIActionDraft | null {
   switch (kind) {
     case "openAcademicRoute":
       return validateOpenAcademicRoute(draft);
+    case "createSchedule":
+      return validateCreateSchedule(draft);
     case "createCountdown":
       return validateCreateCountdown(draft);
     case "createTimetableReminder":
@@ -2574,6 +2778,9 @@ function normalizeActionKind(value: string | null): CampusAIActionKind | null {
     case "openAcademicRoute":
     case "open_academic_route":
       return "openAcademicRoute";
+    case "createSchedule":
+    case "create_schedule":
+      return "createSchedule";
     case "createCountdown":
     case "create_countdown":
       return "createCountdown";
@@ -2594,6 +2801,10 @@ function normalizeActionPayload(
       stringValue(payload.countdown_title) ?? undefined,
     targetDate: stringValue(payload.targetDate) ??
       stringValue(payload.target_date) ?? undefined,
+    startsAt: stringValue(payload.startsAt) ??
+      stringValue(payload.starts_at) ?? undefined,
+    endsAt: stringValue(payload.endsAt) ??
+      stringValue(payload.ends_at) ?? undefined,
     week: integerValue(payload.week) ?? undefined,
     dayOfWeek: integerValue(payload.dayOfWeek) ??
       integerValue(payload.day_of_week) ?? undefined,
@@ -2619,6 +2830,36 @@ function validateOpenAcademicRoute(
     title: normalizeText(draft.title) ?? `打开${academicRouteTitle(route)}`,
     payload: { route },
   };
+}
+
+function validateCreateSchedule(
+  draft: CampusAIActionDraft,
+): CampusAIActionDraft {
+  const startsAt = normalizeISODateTime(draft.payload?.startsAt);
+  const endsAtCandidate = normalizeISODateTime(draft.payload?.endsAt);
+  const endsAt = startsAt && endsAtCandidate &&
+      new Date(endsAtCandidate).getTime() > new Date(startsAt).getTime()
+    ? endsAtCandidate
+    : undefined;
+  return {
+    ...draft,
+    title: normalizeText(draft.title) ?? "添加日程",
+    payload: {
+      title: normalizeText(draft.payload?.title) ?? undefined,
+      startsAt,
+      endsAt,
+      location: normalizeText(draft.payload?.location) ?? undefined,
+      note: normalizeText(draft.payload?.note) ?? undefined,
+      minutesBefore: Math.max(0, draft.payload?.minutesBefore ?? 0),
+    },
+  };
+}
+
+function normalizeISODateTime(value: string | undefined): string | undefined {
+  const normalized = normalizeText(value);
+  if (!normalized) return undefined;
+  const timestamp = Date.parse(normalized);
+  return Number.isFinite(timestamp) ? normalized : undefined;
 }
 
 function validateCreateCountdown(

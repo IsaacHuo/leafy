@@ -1,5 +1,149 @@
 import Foundation
 
+nonisolated enum CampusAIMarkdownNormalizer {
+    static func normalize(_ markdown: String, removingCitationURLs citationURLs: [String] = []) -> String {
+        let citationKeys = Set(citationURLs.compactMap(citationURLKey))
+        let sourceLines = markdown
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: "\n")
+        var normalizedLines: [String] = []
+        var protectedLines: [Bool] = []
+        var activeFence: String?
+
+        for sourceLine in sourceLines {
+            let trimmed = sourceLine.trimmingCharacters(in: .whitespaces)
+            let fence = fenceMarker(in: trimmed)
+            let isProtected = activeFence != nil || fence != nil
+            var line = sourceLine
+
+            if !isProtected {
+                line = line.replacingOccurrences(
+                    of: "(?<=[0-9０-９])\\s*~~\\s*(?=[0-9０-９])",
+                    with: "–",
+                    options: .regularExpression
+                )
+                line = normalizeTablePipes(in: line)
+                if !citationKeys.isEmpty {
+                    line = removeCitationLinks(in: line, citationKeys: citationKeys)
+                }
+            }
+
+            normalizedLines.append(line)
+            protectedLines.append(isProtected)
+
+            if let currentFence = activeFence {
+                if trimmed.hasPrefix(currentFence) {
+                    activeFence = nil
+                }
+            } else if let fence {
+                activeFence = fence
+            }
+        }
+
+        return repairStrictTables(lines: normalizedLines, protectedLines: protectedLines)
+            .joined(separator: "\n")
+    }
+
+    private static func fenceMarker(in line: String) -> String? {
+        if line.hasPrefix("```") { return "```" }
+        if line.hasPrefix("~~~") { return "~~~" }
+        return nil
+    }
+
+    private static func normalizeTablePipes(in line: String) -> String {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard (trimmed.hasPrefix("|") || trimmed.hasPrefix("｜")),
+              (trimmed.hasSuffix("|") || trimmed.hasSuffix("｜"))
+        else { return line }
+        let normalizedPipes = line.replacingOccurrences(of: "｜", with: "|")
+        let normalizedDashes = normalizedPipes
+            .replacingOccurrences(of: "—", with: "-")
+            .replacingOccurrences(of: "–", with: "-")
+            .replacingOccurrences(of: "－", with: "-")
+        if let cells = strictTableCells(in: normalizedDashes), isTableSeparator(cells) {
+            return normalizedDashes
+        }
+        return normalizedPipes
+    }
+
+    private static func repairStrictTables(lines: [String], protectedLines: [Bool]) -> [String] {
+        var result: [String] = []
+        var index = 0
+
+        while index < lines.count {
+            guard !protectedLines[index],
+                  let header = strictTableCells(in: lines[index]),
+                  index + 1 < lines.count,
+                  !protectedLines[index + 1],
+                  let next = strictTableCells(in: lines[index + 1]),
+                  header.count == next.count
+            else {
+                result.append(lines[index])
+                index += 1
+                continue
+            }
+
+            var end = index + 2
+            while end < lines.count,
+                  !protectedLines[end],
+                  let cells = strictTableCells(in: lines[end]),
+                  cells.count == header.count {
+                end += 1
+            }
+
+            result.append(lines[index])
+            if !isTableSeparator(next) {
+                result.append("| " + Array(repeating: "---", count: header.count).joined(separator: " | ") + " |")
+            }
+            result.append(contentsOf: lines[(index + 1)..<end])
+            index = end
+        }
+
+        return result
+    }
+
+    fileprivate static func strictTableCells(in line: String) -> [String]? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("|"), trimmed.hasSuffix("|"), trimmed.count >= 3 else { return nil }
+        let content = trimmed.dropFirst().dropLast()
+        let cells = content.split(separator: "|", omittingEmptySubsequences: false).map {
+            String($0).trimmingCharacters(in: .whitespaces)
+        }
+        return cells.count >= 2 ? cells : nil
+    }
+
+    fileprivate static func isTableSeparator(_ cells: [String]) -> Bool {
+        !cells.isEmpty && cells.allSatisfy { cell in
+            cell.range(of: "^:?-{3,}:?$", options: .regularExpression) != nil
+        }
+    }
+
+    private static func removeCitationLinks(in line: String, citationKeys: Set<String>) -> String {
+        let pattern = #"\[([^\]\n]+)\]\((https?://[^\s\)]+)(?:\s+[\"'][^\)]*[\"'])?\)"#
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return line }
+        var result = line
+        let matches = expression.matches(in: line, range: NSRange(line.startIndex..., in: line))
+
+        for match in matches.reversed() {
+            guard let range = Range(match.range, in: result),
+                  let urlRange = Range(match.range(at: 2), in: result),
+                  citationKeys.contains(citationURLKey(String(result[urlRange])) ?? "")
+            else { continue }
+            result.replaceSubrange(range, with: "")
+        }
+
+        return result.trimmingCharacters(in: .whitespaces)
+    }
+
+    private static func citationURLKey(_ value: String) -> String? {
+        guard let decoded = value.removingPercentEncoding?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !decoded.isEmpty
+        else { return nil }
+        return decoded.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+}
+
 nonisolated struct CampusAIResponseDocument: Equatable {
     nonisolated enum Block: Equatable {
         case heading(level: Int, text: String)
@@ -8,12 +152,13 @@ nonisolated struct CampusAIResponseDocument: Equatable {
         case orderedList([String])
         case quote(String)
         case code(language: String?, source: String)
+        case table(headers: [String], rows: [[String]])
     }
 
     let blocks: [Block]
 
-    init(markdown: String) {
-        blocks = Self.parse(markdown)
+    init(markdown: String, citationURLs: [String] = []) {
+        blocks = Self.parse(CampusAIMarkdownNormalizer.normalize(markdown, removingCitationURLs: citationURLs))
     }
 
     private static func parse(_ markdown: String) -> [Block] {
@@ -52,6 +197,12 @@ nonisolated struct CampusAIResponseDocument: Equatable {
             if let heading = heading(in: trimmed) {
                 result.append(.heading(level: heading.level, text: heading.text))
                 index += 1
+                continue
+            }
+
+            if let table = table(in: lines, startIndex: index) {
+                result.append(.table(headers: table.headers, rows: table.rows))
+                index = table.nextIndex
                 continue
             }
 
@@ -106,7 +257,8 @@ nonisolated struct CampusAIResponseDocument: Equatable {
 
     private static func isBlockStart(_ line: String) -> Bool {
         fenceStart(in: line) != nil || heading(in: line) != nil || unorderedItem(in: line) != nil ||
-            orderedItem(in: line) != nil || line.hasPrefix(">")
+            orderedItem(in: line) != nil || line.hasPrefix(">") ||
+            CampusAIMarkdownNormalizer.strictTableCells(in: line) != nil
     }
 
     private static func heading(in line: String) -> (level: Int, text: String)? {
@@ -145,6 +297,28 @@ nonisolated struct CampusAIResponseDocument: Equatable {
         }
         let language = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
         return (marker, language.isEmpty ? nil : language)
+    }
+
+    private static func table(
+        in lines: [String],
+        startIndex: Int
+    ) -> (headers: [String], rows: [[String]], nextIndex: Int)? {
+        guard startIndex + 1 < lines.count,
+              let headers = CampusAIMarkdownNormalizer.strictTableCells(in: lines[startIndex]),
+              let separator = CampusAIMarkdownNormalizer.strictTableCells(in: lines[startIndex + 1]),
+              separator.count == headers.count,
+              CampusAIMarkdownNormalizer.isTableSeparator(separator)
+        else { return nil }
+
+        var rows: [[String]] = []
+        var index = startIndex + 2
+        while index < lines.count,
+              let cells = CampusAIMarkdownNormalizer.strictTableCells(in: lines[index]),
+              cells.count == headers.count {
+            rows.append(cells)
+            index += 1
+        }
+        return (headers, rows, index)
     }
 }
 

@@ -105,7 +105,11 @@ struct CampusAIMessageRow: View {
                         .padding(.vertical, 10)
                         .background(AppTheme.softFill, in: Capsule())
                 } else {
-                    CampusAIMessageMarkdown(markdown: message.text, isStreaming: isStreaming)
+                    CampusAIMessageMarkdown(
+                        markdown: message.text,
+                        citationURLs: agentMetadata.citations.map(\.url),
+                        isStreaming: isStreaming
+                    )
                 }
 
                 if isStreaming || !agentMetadata.agentTrace.isEmpty {
@@ -198,7 +202,7 @@ struct CampusAIMessageRow: View {
     }
 
     private var regenerateTitle: String {
-        agentMetadata.artifactState == .failed ? "重试生成成品" : "重新生成"
+        agentMetadata.artifactState == .failed ? "重试生成卡片" : "重新生成"
     }
 
     private func messageActionButton(
@@ -218,11 +222,17 @@ struct CampusAIMessageRow: View {
     }
 
     private func copyMessage() {
+        let copyText = isUser
+            ? message.text
+            : CampusAIMarkdownNormalizer.normalize(
+                message.text,
+                removingCitationURLs: agentMetadata.citations.map(\.url)
+            )
         #if os(iOS)
-        UIPasteboard.general.string = message.text
+        UIPasteboard.general.string = copyText
         #elseif os(macOS)
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(message.text, forType: .string)
+        NSPasteboard.general.setString(copyText, forType: .string)
         #endif
         copied = true
         copyFeedbackSignal += 1
@@ -788,10 +798,11 @@ private struct CampusAITypingDots: View {
 
 private struct CampusAIMessageMarkdown: View {
     let markdown: String
+    let citationURLs: [String]
     let isStreaming: Bool
 
     var body: some View {
-        let document = CampusAIResponseDocument(markdown: markdown)
+        let document = CampusAIResponseDocument(markdown: markdown, citationURLs: citationURLs)
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(document.blocks.enumerated()), id: \.offset) { _, block in
                 CampusAIResponseBlockView(block: block)
@@ -845,6 +856,28 @@ private struct CampusAIResponseBlockView: View {
             }
             .padding(12)
             .background(AppTheme.softFill.opacity(0.72), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        case .table(let headers, let rows):
+            ScrollView(.horizontal, showsIndicators: false) {
+                Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                    GridRow {
+                        ForEach(Array(headers.enumerated()), id: \.offset) { _, header in
+                            tableCell(header, isHeader: true, isShaded: true)
+                        }
+                    }
+                    ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
+                        GridRow {
+                            ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                                tableCell(cell, isHeader: false, isShaded: rowIndex.isMultiple(of: 2))
+                            }
+                        }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(AppTheme.separator.opacity(0.55), lineWidth: 0.5)
+                }
+            }
         }
     }
 
@@ -862,6 +895,26 @@ private struct CampusAIResponseBlockView: View {
                 }
             }
         }
+    }
+
+    private func tableCell(_ markdown: String, isHeader: Bool, isShaded: Bool) -> some View {
+        inlineText(markdown)
+            .font(isHeader ? .subheadline.weight(.semibold) : .subheadline)
+            .lineSpacing(2)
+            .frame(minWidth: 112, maxWidth: 220, minHeight: 24, alignment: .leading)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 9)
+            .background(isShaded ? AppTheme.softFill.opacity(0.72) : Color.clear)
+            .overlay(alignment: .trailing) {
+                Rectangle()
+                    .fill(AppTheme.separator.opacity(0.45))
+                    .frame(width: 0.5)
+            }
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(AppTheme.separator.opacity(0.45))
+                    .frame(height: 0.5)
+            }
     }
 
     private func inlineText(_ markdown: String) -> Text {

@@ -436,7 +436,7 @@ nonisolated struct CampusAIResearchAgent {
             \(research)
             </leafy_research_data>
 
-            请基于已实际取得的资料回答原始问题，并用 [来源标题](URL) 标注关键事实。若资料不完整或某工具失败，必须明确说明未验证范围。
+            请基于已实际取得的资料回答原始问题。不要在正文中输出来源标题、URL、脚注或 Markdown 引用链接；来源会由界面单独展示。若资料不完整或某工具失败，必须明确说明未验证范围。
             """,
             context: originalRequest.context,
             recentMessages: originalRequest.recentMessages,
@@ -667,12 +667,11 @@ nonisolated enum CampusAIResearchQueryRelevance {
 }
 
 nonisolated enum CampusAIResearchCitationPolicy {
-    static func adopted(from candidates: [CampusAICitation], answer: String) -> [CampusAICitation] {
-        candidates.filter { citation in
-            answer.localizedCaseInsensitiveContains(citation.url) ||
-                citation.attachments.contains(where: {
-                    answer.localizedCaseInsensitiveContains($0.url)
-                })
+    static func adopted(from candidates: [CampusAICitation], answer _: String) -> [CampusAICitation] {
+        var seen = Set<String>()
+        return candidates.filter { citation in
+            let key = citation.url.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return !key.isEmpty && seen.insert(key).inserted
         }
     }
 }

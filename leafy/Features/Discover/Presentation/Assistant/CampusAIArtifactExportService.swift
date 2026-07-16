@@ -99,11 +99,11 @@ private enum CampusAIArtifactExportError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingMarkdown:
-            return "这个成品缺少可导出的 Markdown 原文。"
+            return "这个卡片缺少可导出的 Markdown 原文。"
         case .rendererUnavailable:
-            return "成品渲染资源不可用。"
+            return "卡片渲染资源不可用。"
         case .renderingFailed:
-            return "成品渲染失败，请重试。"
+            return "卡片渲染失败，请重试。"
         case .unsafeHTML:
             return "HTML 清理失败，已停止导出。"
         }
