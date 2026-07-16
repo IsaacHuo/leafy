@@ -786,6 +786,10 @@ private struct CampusAIResponseBlockView: View {
                         .strokeBorder(AppTheme.separator.opacity(0.55), lineWidth: 0.5)
                 }
             }
+        case .divider:
+            Divider()
+                .overlay(AppTheme.separator.opacity(0.7))
+                .padding(.vertical, 2)
         }
     }
 

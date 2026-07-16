@@ -153,6 +153,7 @@ nonisolated struct CampusAIResponseDocument: Equatable {
         case quote(String)
         case code(language: String?, source: String)
         case table(headers: [String], rows: [[String]])
+        case divider
     }
 
     let blocks: [Block]
@@ -196,6 +197,12 @@ nonisolated struct CampusAIResponseDocument: Equatable {
 
             if let heading = heading(in: trimmed) {
                 result.append(.heading(level: heading.level, text: heading.text))
+                index += 1
+                continue
+            }
+
+            if isThematicBreak(trimmed) {
+                result.append(.divider)
                 index += 1
                 continue
             }
@@ -257,15 +264,22 @@ nonisolated struct CampusAIResponseDocument: Equatable {
 
     private static func isBlockStart(_ line: String) -> Bool {
         fenceStart(in: line) != nil || heading(in: line) != nil || unorderedItem(in: line) != nil ||
-            orderedItem(in: line) != nil || line.hasPrefix(">") ||
+            orderedItem(in: line) != nil || line.hasPrefix(">") || isThematicBreak(line) ||
             CampusAIMarkdownNormalizer.strictTableCells(in: line) != nil
     }
 
     private static func heading(in line: String) -> (level: Int, text: String)? {
         let hashes = line.prefix { $0 == "#" }
-        guard (1...3).contains(hashes.count), line.dropFirst(hashes.count).first == " " else { return nil }
+        guard (1...6).contains(hashes.count), line.dropFirst(hashes.count).first == " " else { return nil }
         let text = line.dropFirst(hashes.count + 1).trimmingCharacters(in: .whitespaces)
         return text.isEmpty ? nil : (hashes.count, text)
+    }
+
+    private static func isThematicBreak(_ line: String) -> Bool {
+        line.range(
+            of: #"^(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$"#,
+            options: .regularExpression
+        ) != nil
     }
 
     private static func unorderedItem(in line: String) -> String? {

@@ -243,6 +243,36 @@ final class CampusAIAssistantTests: XCTestCase {
         )
     }
 
+    func testResponseDocumentParsesDeepHeadingsAndThematicBreaks() {
+        let document = CampusAIResponseDocument(
+            markdown: """
+            什么是概率分布
+
+            ---
+
+            #### 1. 离散分布
+
+            内容
+
+            * * *
+
+            ###### 补充说明
+            """
+        )
+
+        XCTAssertEqual(
+            document.blocks,
+            [
+                .paragraph("什么是概率分布"),
+                .divider,
+                .heading(level: 4, text: "1. 离散分布"),
+                .paragraph("内容"),
+                .divider,
+                .heading(level: 6, text: "补充说明")
+            ]
+        )
+    }
+
     func testMarkdownNormalizerRemovesSourceLinksButPreservesOrdinaryLinks() {
         let markdown = "天气晴朗。[天气来源](https://weather.example.com/today)\n请打开[报名页面](https://apply.example.com)。"
         let normalized = CampusAIMarkdownNormalizer.normalize(
