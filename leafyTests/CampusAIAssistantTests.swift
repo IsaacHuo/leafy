@@ -1004,9 +1004,24 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertEqual(input.question, request.message)
         XCTAssertEqual(input.recentMessages.count, 4)
         XCTAssertLessThanOrEqual(input.recentMessages[1].text.count, 500)
+        XCTAssertFalse(input.currentLocalTime.isEmpty)
+        XCTAssertFalse(input.timeZoneIdentifier.isEmpty)
         XCTAssertFalse(encoded.contains("localRetrieval"))
         XCTAssertFalse(encoded.contains("contextSettings"))
         XCTAssertFalse(encoded.contains("不应进入规划输入"))
+
+        let routingPayload = CampusAIResearchAgent.routingPayload(for: request)
+        let routingData = try JSONEncoder().encode(routingPayload)
+        let routingBody = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: routingData) as? [String: Any]
+        )
+        let routingMessages = try XCTUnwrap(routingBody["messages"] as? [[String: Any]])
+        let routingContent = try XCTUnwrap(routingMessages.last?["content"] as? String)
+        XCTAssertEqual(routingBody["tool_choice"] as? String, "required")
+        XCTAssertTrue(routingContent.contains("2026 年工学院保研政策"))
+        XCTAssertFalse(routingContent.contains("localRetrieval"))
+        XCTAssertFalse(routingContent.contains("contextSettings"))
+        XCTAssertFalse(routingContent.contains("不应进入规划输入"))
     }
 
     func testResearchQueryMustRemainAnchoredToOriginalQuestion() {
@@ -1103,6 +1118,53 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertTrue(results.contains { String(describing: $0["title"] ?? "").contains("整理论文提纲") })
         XCTAssertFalse(userContentText.contains("localFilename"))
         XCTAssertFalse(userContentText.contains("private-local-path"))
+    }
+
+    func testChatCompletionsPayloadOmitsPersonalContextUnlessRoutingSelectsIt() throws {
+        let context = CampusAIContextBuilder.build(
+            courses: [],
+            grades: [],
+            exams: [
+                ExamArrangement(
+                    id: 1,
+                    courseID: "MATH",
+                    name: "高等数学",
+                    date: "2026-07-18",
+                    start: "09:00",
+                    end: "11:00",
+                    location: "主楼"
+                )
+            ],
+            teachingPlan: [],
+            trainingProgram: nil,
+            countdowns: []
+        )
+        let request = CampusAIRequest(
+            message: "北京林业大学期末整体安排是什么？",
+            context: context,
+            recentMessages: [],
+            localRetrieval: CampusAILocalKnowledgeIndex.search(
+                query: "高等数学考试",
+                context: context
+            )
+        )
+
+        let payload = try CampusAIService.chatCompletionsPayload(
+            for: request,
+            usePersonalContext: false
+        )
+        let userContentText = try XCTUnwrap(payload.messages.last?.content)
+        let userContent = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(userContentText.utf8)) as? [String: Any]
+        )
+
+        XCTAssertEqual(userContent["campus_name"] as? String, "北京林业大学")
+        XCTAssertNotNil(userContent["current_local_time"] as? String)
+        XCTAssertNotNil(userContent["time_zone_identifier"] as? String)
+        XCTAssertNil(userContent["context"])
+        XCTAssertNil(userContent["context_settings"])
+        XCTAssertNil(userContent["local_retrieval"])
+        XCTAssertFalse(userContentText.contains("高等数学"))
     }
 
     func testChatCompletionsPayloadUsesRequestModelIdentifier() throws {

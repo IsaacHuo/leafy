@@ -46,6 +46,27 @@ struct CampusAIMessageRow: View {
         message.agentMetadata
     }
 
+    private var progressSearchResults: [CampusAISearchResultPreview] {
+        var results = agentMetadata.searchResults
+        var seenURLs = Set(results.map(\.url))
+        for citation in agentMetadata.citations where seenURLs.insert(citation.url).inserted {
+            results.append(CampusAISearchResultPreview(
+                id: "citation-\(citation.id)",
+                title: citation.title,
+                url: citation.url,
+                siteName: citation.siteName
+            ))
+        }
+        return results
+    }
+
+    private var citationAttachments: [CampusAIDeliverableAttachment] {
+        var seenURLs = Set<String>()
+        return agentMetadata.citations
+            .flatMap(\.attachments)
+            .filter { seenURLs.insert($0.url).inserted }
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: AppSpacing.compact) {
             if isUser {
@@ -112,21 +133,18 @@ struct CampusAIMessageRow: View {
                     )
                 }
 
-                if isStreaming || !agentMetadata.agentTrace.isEmpty {
+                if isStreaming || !agentMetadata.agentTrace.isEmpty || !progressSearchResults.isEmpty {
                     CampusAIAgentProgressView(
                         steps: agentMetadata.agentTrace,
                         statusText: agentMetadata.statusText,
-                        searchResults: agentMetadata.searchResults,
+                        searchResults: progressSearchResults,
                         isStreaming: isStreaming,
                         isExpanded: $isProcessExpanded
                     )
                 }
 
-                if !agentMetadata.citations.isEmpty {
-                    CampusAISourceAttachmentPillList(
-                        citations: agentMetadata.citations,
-                        deliverables: []
-                    )
+                if !citationAttachments.isEmpty {
+                    CampusAIAttachmentPillList(attachments: citationAttachments)
                 }
 
                 if !isStreaming,
@@ -264,6 +282,7 @@ struct CampusAITypingRow: View {
 
 private struct CampusAIAgentProgressView: View {
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    @Environment(\.openURL) private var openURL
 
     let steps: [CampusAIAgentTraceStep]
     let statusText: String?
@@ -298,7 +317,13 @@ private struct CampusAIAgentProgressView: View {
             } else if !steps.isEmpty || !searchResults.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
                     Button {
-                        isExpanded.toggle()
+                        if accessibilityReduceMotion {
+                            isExpanded.toggle()
+                        } else {
+                            withAnimation(.easeOut(duration: 0.18)) {
+                                isExpanded.toggle()
+                            }
+                        }
                     } label: {
                         HStack(spacing: 8) {
                             Label("已完成 \(steps.count) 步", systemImage: "checklist")
@@ -328,10 +353,9 @@ private struct CampusAIAgentProgressView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 8)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        .transition(.opacity)
                     }
                 }
-                .animation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.18), value: isExpanded)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -365,7 +389,8 @@ private struct CampusAIAgentProgressView: View {
 
             ForEach(searchResults) { result in
                 Button {
-                    openCampusAIExternalURL(result.url)
+                    guard let url = URL(string: result.url) else { return }
+                    openURL(url)
                 } label: {
                     HStack(alignment: .firstTextBaseline, spacing: 7) {
                         Image(systemName: "link")
@@ -393,159 +418,58 @@ private struct CampusAIAgentProgressView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityHint("在 Safari 中打开")
+                .accessibilityHint("在应用内打开")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-private struct CampusAISourceAttachmentPillList: View {
-    private struct PillItem: Identifiable, Hashable {
-        enum Kind: Hashable {
-            case source
-            case attachment(String)
-        }
+private struct CampusAIAttachmentPillList: View {
+    @Environment(\.openURL) private var openURL
 
-        let id: String
-        let title: String
-        let subtitle: String?
-        let url: String
-        let kind: Kind
-
-        var iconName: String {
-            switch kind {
-            case .source:
-                return "link"
-            case .attachment:
-                return "paperclip"
-            }
-        }
-
-        var badge: String {
-            switch kind {
-            case .source:
-                return "来源"
-            case .attachment(let fileType):
-                return fileType.uppercased()
-            }
-        }
-    }
-
-    let citations: [CampusAICitation]
-    let deliverables: [CampusAIDeliverable]
-
-    private var items: [PillItem] {
-        var result: [PillItem] = []
-        var seen = Set<String>()
-
-        for citation in citations {
-            append(
-                PillItem(
-                    id: "citation-\(citation.id)",
-                    title: citation.title.nonEmptyTrimmed ?? citation.url,
-                    subtitle: citation.siteName?.nonEmptyTrimmed,
-                    url: citation.url,
-                    kind: .source
-                ),
-                to: &result,
-                seen: &seen
-            )
-            for attachment in citation.attachments {
-                append(
-                    PillItem(
-                        id: "citation-attachment-\(attachment.url)",
-                        title: attachment.title.nonEmptyTrimmed ?? attachment.url,
-                        subtitle: citation.title.nonEmptyTrimmed,
-                        url: attachment.url,
-                        kind: .attachment(attachment.fileType.nonEmptyTrimmed ?? "附件")
-                    ),
-                    to: &result,
-                    seen: &seen
-                )
-            }
-        }
-
-        for deliverable in deliverables {
-            for source in deliverable.sources {
-                append(
-                    PillItem(
-                        id: "source-\(source.id)",
-                        title: source.title.nonEmptyTrimmed ?? source.url,
-                        subtitle: source.siteName?.nonEmptyTrimmed,
-                        url: source.url,
-                        kind: .source
-                    ),
-                    to: &result,
-                    seen: &seen
-                )
-
-                for attachment in source.attachments {
-                    append(
-                        PillItem(
-                            id: "attachment-\(attachment.url)",
-                            title: attachment.title.nonEmptyTrimmed ?? attachment.url,
-                            subtitle: source.title.nonEmptyTrimmed,
-                            url: attachment.url,
-                            kind: .attachment(attachment.fileType.nonEmptyTrimmed ?? "附件")
-                        ),
-                        to: &result,
-                        seen: &seen
-                    )
-                }
-            }
-        }
-
-        return Array(result.prefix(12))
-    }
+    let attachments: [CampusAIDeliverableAttachment]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            ForEach(items) { item in
-                pill(item)
+            ForEach(attachments.prefix(12)) { attachment in
+                pill(attachment)
             }
         }
     }
 
     @ViewBuilder
-    private func pill(_ item: PillItem) -> some View {
-        if let url = URL(string: item.url), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+    private func pill(_ attachment: CampusAIDeliverableAttachment) -> some View {
+        if let url = URL(string: attachment.url), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
             Button {
-                openCampusAIExternalURL(url.absoluteString)
+                openURL(url)
             } label: {
-                pillContent(item)
+                pillContent(attachment)
             }
             .buttonStyle(.plain)
-            .accessibilityHint("在 Safari 中打开")
+            .accessibilityHint("在应用内打开")
         } else {
-            pillContent(item)
+            pillContent(attachment)
         }
     }
 
-    private func pillContent(_ item: PillItem) -> some View {
+    private func pillContent(_ attachment: CampusAIDeliverableAttachment) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: item.iconName)
+            Image(systemName: "paperclip")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(AppTheme.accent)
                 .frame(width: 18, height: 18)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(item.title)
+                Text(attachment.title.nonEmptyTrimmed ?? attachment.url)
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(AppTheme.primaryText)
                     .lineLimit(1)
-
-                if let subtitle = item.subtitle {
-                    Text(subtitle)
-                        .font(.caption2)
-                        .foregroundStyle(AppTheme.secondaryText)
-                        .lineLimit(1)
-                }
             }
 
             Spacer(minLength: 8)
 
-            Text(item.badge)
+            Text(attachment.fileType.nonEmptyTrimmed?.uppercased() ?? "附件")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(AppTheme.secondaryText)
                 .padding(.horizontal, 7)
@@ -558,22 +482,6 @@ private struct CampusAISourceAttachmentPillList: View {
         .background(AppTheme.softFill.opacity(0.72), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
-
-    private func append(_ item: PillItem, to result: inout [PillItem], seen: inout Set<String>) {
-        let key = "\(item.url)|\(item.title)|\(item.badge)"
-        guard !seen.contains(key), !item.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        seen.insert(key)
-        result.append(item)
-    }
-}
-
-private func openCampusAIExternalURL(_ rawURL: String) {
-    guard let url = URL(string: rawURL), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return }
-    #if os(iOS)
-    UIApplication.shared.open(url)
-    #elseif os(macOS)
-    NSWorkspace.shared.open(url)
-    #endif
 }
 
 private struct CampusAIActionList: View {

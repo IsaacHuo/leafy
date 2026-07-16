@@ -21,12 +21,13 @@ import {
   parseActionPlannerProviderResponse,
   parseAgentToolCallsFromProviderResponse,
   parseDeepSeekAPIKeys,
+  parseSearchRoutingDecision,
   processDeepSeekSSEBlock,
   redactProviderError,
   safeAgentSearchQuery,
+  searchRoutingPayload,
   shouldGenerateArtifact,
   shouldRunManagedAgent,
-  shouldSearchOfficialDocument,
   systemPrompt,
   verifiedAppTransactionID,
   webSearch,
@@ -179,6 +180,11 @@ Deno.test("campus-ai-assistant declares DeepSeek V4 Flash streaming Markdown pay
   );
   const userContent = JSON.parse(String(messages[1].content));
   assert(
+    typeof userContent.current_local_time === "string" &&
+      typeof userContent.time_zone_identifier === "string",
+    "expected every answer request to include the current date and time zone",
+  );
+  assert(
     userContent.capabilities.localSearchEnabled === true,
     "expected capabilities in user content",
   );
@@ -186,6 +192,39 @@ Deno.test("campus-ai-assistant declares DeepSeek V4 Flash streaming Markdown pay
     userContent.local_retrieval.results[0].title === "学习任务：刷题",
     "expected local retrieval in user content",
   );
+});
+
+Deno.test("campus-ai-assistant omits personal context when routing does not select it", () => {
+  const payload = deepSeekPayload(
+    {
+      context: {
+        campusID: "bjfu",
+        campusName: "北京林业大学",
+        exams: [{ name: "高等数学" }],
+      },
+      context_settings: { includesExamsAndPlans: true },
+      local_retrieval: { results: [{ title: "个人考试" }] },
+    },
+    "北京林业大学期末整体安排是什么？",
+    false,
+  ) as Record<string, unknown>;
+  const messages = payload.messages as Array<Record<string, unknown>>;
+  const content = JSON.parse(String(messages[1].content));
+
+  assert(
+    content.campus.name === "北京林业大学",
+    "expected public campus context",
+  );
+  assert(
+    typeof content.current_local_time === "string",
+    "expected current date even without personal context",
+  );
+  assert(!("context" in content), "personal context should be omitted");
+  assert(
+    !("context_settings" in content),
+    "context settings should be omitted",
+  );
+  assert(!("local_retrieval" in content), "local retrieval should be omitted");
 });
 
 Deno.test("campus-ai-assistant builds non-stream JSON-only action planner payload", () => {
@@ -268,36 +307,93 @@ Deno.test("campus-ai-assistant enables card planning only for explicit artifact 
   );
 });
 
-Deno.test("campus-ai-assistant enables managed agent only for search or multi-step requests", () => {
+Deno.test("campus-ai-assistant enables model routing whenever managed research is available", () => {
   assert(
-    shouldRunManagedAgent(
-      { web_search_enabled: true },
-      "帮我搜索一下北林最近通知",
-    ),
-    "expected search request to use agent mode",
+    shouldRunManagedAgent({ web_search_enabled: true }),
+    "enabled web research should use the semantic router",
   );
   assert(
-    !shouldRunManagedAgent(
-      { web_search_enabled: false },
-      "帮我搜索一下北林最近通知",
-    ),
+    !shouldRunManagedAgent({ web_search_enabled: false }),
     "disabled web search should force fast path",
   );
   assert(
-    shouldRunManagedAgent(
-      { web_search_enabled: false },
-      "帮我安排今天的日常计划",
-    ),
-    "disabled web search should still allow non-web planning agent",
-  );
-  assert(
-    !shouldRunManagedAgent({ agent_mode: "off" }, "最近有什么通知？"),
+    !shouldRunManagedAgent({ agent_mode: "off", web_search_enabled: true }),
     "agent_mode off should force fast path",
   );
   assert(
-    !shouldRunManagedAgent({}, "帮我搜索一下北林最近通知"),
+    !shouldRunManagedAgent({}),
     "missing web_search_enabled should default to fast path",
   );
+});
+
+Deno.test("campus-ai-assistant builds a bounded routing payload without personal context", () => {
+  const payload = searchRoutingPayload(
+    {
+      context: {
+        campusID: "bjfu",
+        campusName: "北京林业大学",
+        exams: [{ name: "不应进入路由的个人考试" }],
+      },
+      context_settings: { includesExamsAndPlans: true },
+      local_retrieval: { results: [{ title: "不应进入路由的本地结果" }] },
+      recent_messages: [
+        { role: "user", text: "第一轮" },
+        { role: "assistant", text: "第二轮" },
+      ],
+      web_search_enabled: true,
+    },
+    "北京林业大学期末整体安排是什么？",
+  ) as Record<string, unknown>;
+  const content = String(
+    (payload.messages as Array<Record<string, unknown>>)[1].content,
+  );
+
+  assert(
+    payload.tool_choice === "required",
+    "router must return a structured decision",
+  );
+  assert(
+    content.includes("北京林业大学期末整体安排是什么"),
+    "expected question",
+  );
+  assert(content.includes("北京林业大学"), "expected public campus descriptor");
+  assert(!content.includes("个人考试"), "router must exclude personal exams");
+  assert(!content.includes("本地结果"), "router must exclude local retrieval");
+  assert(
+    !content.includes("context_settings"),
+    "router must exclude context settings",
+  );
+});
+
+Deno.test("campus-ai-assistant parses semantic routing decisions", () => {
+  const response = JSON.stringify({
+    choices: [{
+      message: {
+        tool_calls: [{
+          function: {
+            name: "route_search",
+            arguments: JSON.stringify({
+              route: "officialResearch",
+              query: "2026 北京林业大学 推免 政策",
+              use_personal_context: false,
+              reason_code: "public_institutional",
+            }),
+          },
+        }],
+      },
+    }],
+  });
+  const decision = parseSearchRoutingDecision(
+    response,
+    "2026 年北京林业大学保研政策",
+  );
+
+  assert(decision.route === "officialResearch", "expected official research");
+  assert(
+    !decision.usePersonalContext,
+    "public policy should not use personal context",
+  );
+  assert(decision.query.includes("2026"), "expected year anchor");
 });
 
 Deno.test("campus-ai-assistant builds DeepSeek tool planner payload", () => {
@@ -390,15 +486,11 @@ Deno.test("campus-ai-assistant parses and limits agent tool calls", () => {
     message: "帮我查一下北林通知",
   });
 
-  assert(normalized.length === 3, "expected invalid delegate to be filtered");
+  assert(normalized.length === 2, "expected invalid delegate to be filtered");
+  assert(normalized[0].name === "web_search", "expected explicit web search");
+  assert(normalized[0].arguments.count === 8, "expected count to clamp");
   assert(
-    normalized[0].name === "official_document_search",
-    "expected official document search first",
-  );
-  assert(normalized[1].name === "web_search", "expected web search second");
-  assert(normalized[1].arguments.count === 8, "expected count to clamp");
-  assert(
-    normalized[2].arguments.role === "campusAnalyst",
+    normalized[1].arguments.role === "campusAnalyst",
     "expected delegate role",
   );
 
@@ -414,19 +506,7 @@ Deno.test("campus-ai-assistant parses and limits agent tool calls", () => {
   );
 });
 
-Deno.test("campus-ai-assistant detects official document search intent", () => {
-  assert(
-    shouldSearchOfficialDocument("查北京林业大学论文格式官方网页和附件"),
-    "expected thesis format attachment query to trigger official search",
-  );
-  assert(
-    shouldSearchOfficialDocument("帮我找学院推免政策办法"),
-    "expected postgraduate recommendation policy query to trigger official search",
-  );
-  assert(
-    !shouldSearchOfficialDocument("明天上什么课"),
-    "ordinary schedule query should not trigger official search",
-  );
+Deno.test("campus-ai-assistant keeps official document freshness bounded", () => {
   assert(
     officialDocumentFreshness("今天最新的教务处通知") === "oneMonth",
     "recent official requests should use freshness",
@@ -689,6 +769,27 @@ Deno.test("campus-ai-assistant synthesis payload carries citations and search re
   assert(
     String(messages[1].content).includes("local_retrieval"),
     "expected local retrieval in synthesis payload",
+  );
+
+  const publicPayload = agentSynthesisPayload(
+    {
+      context: { campusID: "bjfu", campusName: "北京林业大学" },
+      local_retrieval: { results: [{ title: "个人考试" }] },
+    },
+    "北京林业大学期末整体安排是什么？",
+    [],
+    [],
+    [],
+    [],
+    false,
+  ) as Record<string, unknown>;
+  const publicMessages = publicPayload.messages as Array<
+    Record<string, unknown>
+  >;
+  const publicContent = JSON.parse(String(publicMessages[1].content));
+  assert(
+    !("local_retrieval" in publicContent),
+    "public synthesis should omit local retrieval",
   );
 });
 

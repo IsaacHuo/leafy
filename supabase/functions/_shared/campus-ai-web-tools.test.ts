@@ -92,6 +92,44 @@ Deno.test("campus ai search relevance recognizes recommendation synonyms and sta
   );
 });
 
+Deno.test("campus ai search relevance rejects explicitly stale years", () => {
+  const ranked = rankSearchResultsByRelevance([
+    {
+      title: "北京林业大学 2022 年春季学期期末考试总体安排",
+      url: "https://jwc.bjfu.edu.cn/final-2022",
+      snippet: "2021-2022 学年公共课考试通知",
+    },
+    {
+      title: "北京林业大学 16-17 学年期末考试安排",
+      url: "https://jwc.bjfu.edu.cn/final-2016",
+    },
+    {
+      title: "北京林业大学 2025-2026 学年期末考试总体安排",
+      url: "https://jwc.bjfu.edu.cn/final-2026",
+      snippet: "教务处发布公共课考试安排",
+    },
+    {
+      title: "北京林业大学期末考试安排",
+      url: "https://jwc.bjfu.edu.cn/final-undated",
+      snippet: "教务处通知",
+    },
+  ], "2026 北京林业大学 期末考试 总体安排");
+
+  assert(
+    ranked.some((item) => item.url.endsWith("final-2026")),
+    "expected the matching academic year",
+  );
+  assert(
+    ranked.some((item) => item.url.endsWith("final-undated")),
+    "undated but relevant official results may remain",
+  );
+  assert(
+    !ranked.some((item) => item.url.endsWith("final-2022")) &&
+      !ranked.some((item) => item.url.endsWith("final-2016")),
+    "explicitly stale years must be rejected",
+  );
+});
+
 Deno.test("campus ai web tools distinguish empty results from provider structure changes", async () => {
   const originalFetch = globalThis.fetch;
   try {

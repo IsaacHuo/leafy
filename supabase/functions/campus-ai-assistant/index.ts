@@ -103,6 +103,17 @@ type AgentToolCall = {
   arguments: Record<string, unknown>;
 };
 
+type CampusAISearchRoute = "direct" | "officialResearch" | "webResearch";
+
+export type CampusAISearchRoutingDecision = {
+  route: CampusAISearchRoute;
+  query: string;
+  usePersonalContext: boolean;
+  reasonCode: string;
+};
+
+class CampusAISearchRoutingError extends Error {}
+
 type AgentCitation = {
   id: string;
   title: string;
@@ -373,9 +384,47 @@ export async function handler(request: Request): Promise<Response> {
         },
       };
 
-      const result = shouldRunManagedAgent(body, message)
-        ? await runAgentDeepSeek(body, message, signal, streamCallbacks)
-        : await streamDeepSeek(body, message, signal, streamCallbacks);
+      let routing: CampusAISearchRoutingDecision = {
+        route: "direct",
+        query: "",
+        usePersonalContext: true,
+        reasonCode: "routing_disabled",
+      };
+      if (shouldRunManagedAgent(body)) {
+        streamCallbacks.onAgentStatus?.("正在判断是否需要联网");
+        const routed = await managedSearchRoutingDecisionWithRetry(
+          body,
+          message,
+          signal,
+        );
+        routing = routed.decision;
+        usage = mergeUsage(usage, routed.usage);
+        console.info(
+          "campus-ai-assistant: routing",
+          safeJSONStringify({
+            route: routing.route,
+            use_personal_context: routing.usePersonalContext,
+            reason_code: routing.reasonCode,
+          }),
+        );
+      }
+
+      const result = routing.route === "direct"
+        ? await streamDeepSeek(
+          body,
+          message,
+          signal,
+          streamCallbacks,
+          routing.usePersonalContext,
+        )
+        : await runAgentDeepSeek(
+          body,
+          message,
+          signal,
+          streamCallbacks,
+          [routingToolCall(routing)],
+          routing.usePersonalContext,
+        );
       usage = mergeUsage(usage, result.usage ?? {});
       citations = deduplicateCitations([
         ...citations,
@@ -481,7 +530,9 @@ export async function handler(request: Request): Promise<Response> {
       console.error("campus-ai-assistant: request failed", errorMessage(error));
       enqueueSSE(controller, {
         type: "error",
-        error: "AI 助手暂时不可用，请稍后重试。",
+        error: error instanceof CampusAISearchRoutingError
+          ? "联网判断失败，请重试。"
+          : "AI 助手暂时不可用，请稍后重试。",
       });
       await completeUsage(adminClient, {
         requestUUID,
@@ -513,14 +564,10 @@ if (import.meta.main) {
   Deno.serve(handler);
 }
 
-export function shouldRunManagedAgent(body: CampusAIRequest, message: string) {
+export function shouldRunManagedAgent(body: CampusAIRequest) {
   const mode = normalizeText(body.agent_mode) ??
     normalizeText(body.agentMode) ?? "auto";
-  if (mode === "off") return false;
-  const allowWebSearch = webSearchEnabled(body);
-  return (allowWebSearch &&
-    (shouldSearchWeb(message) || shouldSearchOfficialDocument(message))) ||
-    shouldDelegate(message);
+  return mode !== "off" && webSearchEnabled(body);
 }
 
 function webSearchEnabled(body: CampusAIRequest) {
@@ -531,79 +578,187 @@ function webSearchEnabled(body: CampusAIRequest) {
   return false;
 }
 
-export function shouldSearchWeb(message: string) {
-  const text = message.toLowerCase();
-  return [
-    "搜索",
-    "联网",
-    "网上",
-    "查一下",
-    "查找",
-    "最近",
-    "最新",
-    "新闻",
-    "通知",
-    "政策",
-    "官网",
-    "网页",
-    "今天",
-    "现在",
-    "实时",
-    "资料",
-    "出处",
-    "来源",
-  ].some((keyword) => text.includes(keyword));
+async function managedSearchRoutingDecisionWithRetry(
+  body: CampusAIRequest,
+  message: string,
+  signal: AbortSignal,
+): Promise<{ decision: CampusAISearchRoutingDecision; usage: DeepSeekUsage }> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const response = await deepSeekJSONRequest(
+        JSON.stringify(searchRoutingPayload(body, message)),
+        signal,
+        "search router",
+      );
+      return {
+        decision: parseSearchRoutingDecision(response.text, message),
+        usage: response.usage,
+      };
+    } catch (error) {
+      if (signal.aborted) throw error;
+      lastError = error;
+      console.warn(
+        "campus-ai-assistant: search routing failed",
+        safeJSONStringify({
+          attempt,
+          error_type: error instanceof Error ? error.name : "unknown",
+        }),
+      );
+    }
+  }
+  throw new CampusAISearchRoutingError(
+    lastError instanceof Error ? lastError.name : "routing_failed",
+  );
 }
 
-export function shouldSearchOfficialDocument(message: string) {
-  const text = message.toLowerCase();
-  const hasOfficialIntent = [
-    "官网",
-    "官方",
-    "教务处",
-    "学院",
-    "政策",
-    "保研",
-    "推免",
-    "论文",
-    "格式",
-    "附件",
-    "模板",
-    "下载",
-    "通知",
-    "办法",
-    "规定",
-  ].some((keyword) => text.includes(keyword));
-  const hasDocumentIntent = [
-    "网页",
-    "链接",
-    "入口",
-    "资料",
-    "文件",
-    "查",
-    "找",
-    "搜索",
-    "给我",
-    "打开",
-    "哪里",
-    "在哪",
-  ].some((keyword) => text.includes(keyword));
-  return hasOfficialIntent && hasDocumentIntent;
+export function searchRoutingPayload(
+  body: CampusAIRequest,
+  message: string,
+) {
+  const currentLocalTime = normalizeText(
+    body.current_local_time ?? body.currentLocalTime,
+  ) ?? beijingLocalDateTime();
+  const timeZoneIdentifier = normalizeText(
+    body.time_zone_identifier ?? body.timeZoneIdentifier,
+  ) ?? "Asia/Shanghai";
+  return {
+    model: defaultModel,
+    messages: [
+      {
+        role: "system",
+        content: searchRoutingSystemPrompt(),
+      },
+      {
+        role: "user",
+        content: safeJSONStringify({
+          question: message.slice(0, 1_000),
+          recent_messages: recentMessagesFromBody(body).slice(-4).map((
+            item,
+          ) => ({
+            role: item.role === "assistant" ? "assistant" : "user",
+            text: (normalizeText(item.text) ?? "").slice(0, 500),
+          })),
+          campus: campusDescriptor(body.context),
+          current_local_time: currentLocalTime,
+          time_zone_identifier: timeZoneIdentifier,
+          web_search_available: webSearchEnabled(body),
+        }),
+      },
+    ],
+    tools: [searchRoutingToolDefinition()],
+    tool_choice: "required",
+    stream: false,
+    thinking: { type: "disabled" },
+    temperature: 0,
+    max_tokens: 320,
+    user: userCacheKey(body.app_transaction_id),
+  };
 }
 
-function shouldDelegate(message: string) {
-  const text = message.toLowerCase();
+function searchRoutingSystemPrompt() {
   return [
-    "拆解",
-    "规划",
-    "计划",
-    "比较",
-    "分析",
-    "结合",
-    "安排",
-    "方案",
-    "多步",
-  ].some((keyword) => text.includes(keyword));
+    "你是 Leafy 的请求路由器。你必须且只能调用 route_search，不直接回答用户。",
+    "根据问题语义决定是否需要外部核验，不得依赖固定关键词清单。",
+    "学校、学院、教务处层面的公共政策、通知、公共课安排、整体考试安排、培养要求等公共事实选择 officialResearch。即使本机可能有个人考试或课表，也不能用个人记录代替学校整体信息。",
+    "学校之外的实时、近期或可外部核验事实选择 webResearch。寒暄、稳定通识、纯创作和只询问明确个人本地记录的请求选择 direct。无法确认信息是否可能过期时，保守选择研究。",
+    "use_personal_context 默认 false。只有问题明确需要个人事实或个性化安排时才为 true；不要为了显得个性化而调用成绩、考试、课表或日程。",
+    "混合问题既问学校公共安排又要求结合个人情况时，选择 officialResearch 且 use_personal_context 为 true。",
+    "query 必须保留用户问题的学校、年份和实质主题；direct 时 query 必须为空。用户明确禁止联网时选择 direct。",
+    "current_local_time 是每次请求的当前日期依据。涉及当前、最新、近期、当前学期或未明确年份的公共安排时，query 必须带上当前年份；用户明确询问历史年份时保留其年份。",
+    "示例：当前年份为 2026 时，北京林业大学期末整体安排是什么，返回查询 2026 北京林业大学 期末考试 总体安排；2026 年北京林业大学保研政策选择 officialResearch 且不使用个人上下文；我明天考什么选择 direct 且使用个人上下文；结合学校期末安排和我的考试制定计划选择 officialResearch 且使用个人上下文；你好选择 direct 且不使用个人上下文。",
+  ].join("\n");
+}
+
+function searchRoutingToolDefinition() {
+  return {
+    type: "function",
+    function: {
+      name: "route_search",
+      description:
+        "Choose direct answer, official school research, or public web research, and whether personal context is necessary.",
+      parameters: {
+        type: "object",
+        properties: {
+          route: {
+            type: "string",
+            enum: ["direct", "officialResearch", "webResearch"],
+          },
+          query: { type: "string" },
+          use_personal_context: { type: "boolean" },
+          reason_code: { type: "string" },
+        },
+        required: [
+          "route",
+          "query",
+          "use_personal_context",
+          "reason_code",
+        ],
+        additionalProperties: false,
+      },
+    },
+  };
+}
+
+export function parseSearchRoutingDecision(
+  responseText: string,
+  originalMessage: string,
+): CampusAISearchRoutingDecision {
+  const payload = JSON.parse(responseText) as Record<string, unknown>;
+  const choices = Array.isArray(payload.choices) ? payload.choices : [];
+  for (const choice of choices) {
+    const message = objectValue(objectValue(choice)?.message);
+    const calls = Array.isArray(message?.tool_calls)
+      ? message.tool_calls as unknown[]
+      : [];
+    for (const rawCall of calls) {
+      const call = objectValue(rawCall);
+      const fn = objectValue(call?.function);
+      if (stringValue(fn?.name) !== "route_search") continue;
+      const args = parseToolArguments(fn?.arguments);
+      const route = stringValue(args.route);
+      const usesPersonalContext = args.use_personal_context;
+      if (
+        route !== "direct" && route !== "officialResearch" &&
+        route !== "webResearch"
+      ) {
+        throw new CampusAISearchRoutingError("invalid_route");
+      }
+      if (typeof usesPersonalContext !== "boolean") {
+        throw new CampusAISearchRoutingError("invalid_context_decision");
+      }
+      const rawQuery = normalizeText(args.query) ?? "";
+      const query = route === "direct"
+        ? ""
+        : safeAgentSearchQuery(rawQuery, originalMessage);
+      if (route !== "direct" && !query) {
+        throw new CampusAISearchRoutingError("invalid_query");
+      }
+      return {
+        route,
+        query: query ?? "",
+        usePersonalContext: usesPersonalContext,
+        reasonCode: (normalizeText(args.reason_code) ?? "")
+          .replace(/[^A-Za-z0-9_-]/g, "")
+          .slice(0, 80) || "unspecified",
+      };
+    }
+  }
+  throw new CampusAISearchRoutingError("missing_route_search_call");
+}
+
+function routingToolCall(
+  decision: CampusAISearchRoutingDecision,
+): AgentToolCall {
+  return decision.route === "officialResearch"
+    ? {
+      name: "official_document_search",
+      arguments: { query: decision.query },
+    }
+    : {
+      name: "web_search",
+      arguments: { query: decision.query, freshness: "noLimit", count: 5 },
+    };
 }
 
 async function runAgentDeepSeek(
@@ -611,6 +766,8 @@ async function runAgentDeepSeek(
   message: string,
   signal: AbortSignal,
   callbacks: AgentCallbacks,
+  initialToolCalls: AgentToolCall[],
+  usePersonalContext: boolean,
 ): Promise<DeepSeekStreamResult> {
   const agentSignal = agentTimeoutSignal(signal);
   const trace: AgentTraceStep[] = [];
@@ -630,43 +787,18 @@ async function runAgentDeepSeek(
     callbacks.onAgentCitation?.(citation);
   };
 
-  callbacks.onAgentStatus?.("正在拆解任务");
-  emitStep(
-    agentStep(
-      "planner",
-      "任务拆解",
-      "判断是否需要搜索、委派或动作规划。",
-      "running",
-    ),
-  );
-  let toolCalls: AgentToolCall[] = [];
-  try {
-    const plan = await planAgentToolCalls(body, message, agentSignal);
-    usage = mergeUsage(usage, plan.usage);
-    toolCalls = plan.toolCalls;
-    emitStep(agentStep(
-      "planner",
-      "任务拆解完成",
-      toolCalls.length > 0
-        ? `计划调用 ${toolCalls.length} 个工具。`
-        : "未发现必须调用的外部工具。",
-      "completed",
-    ));
-  } catch (error) {
-    console.warn(
-      "campus-ai-assistant: agent planner failed",
-      redactProviderError(errorMessage(error)),
-    );
-    toolCalls = heuristicAgentToolCalls(message);
-    emitStep(agentStep(
-      "fallback",
-      "任务拆解降级",
-      toolCalls.length > 0 ? "已使用本地规则选择工具。" : "已回退为普通回答。",
-      toolCalls.length > 0 ? "completed" : "skipped",
-    ));
-  }
+  emitStep(agentStep(
+    "planner",
+    initialToolCalls[0]?.name === "official_document_search"
+      ? "需要查找官方资料"
+      : "需要联网核实",
+    initialToolCalls[0]?.name === "official_document_search"
+      ? "已判断问题涉及学校公共信息。"
+      : "已判断问题需要外部最新信息。",
+    "completed",
+  ));
 
-  toolCalls = normalizeAgentToolCalls(toolCalls, {
+  const toolCalls = normalizeAgentToolCalls(initialToolCalls, {
     allowWebSearch: webSearchEnabled(body),
     message,
   });
@@ -850,7 +982,9 @@ async function runAgentDeepSeek(
     agentStep(
       "synthesis",
       "整合回答",
-      "结合本机上下文、搜索结果和子任务结论生成最终回答。",
+      usePersonalContext
+        ? "结合已验证资料和必要的个人上下文生成最终回答。"
+        : "结合已验证资料生成最终回答。",
       "running",
     ),
   );
@@ -863,6 +997,7 @@ async function runAgentDeepSeek(
     deliverables,
     agentSignal,
     callbacks,
+    usePersonalContext,
   );
   usage = mergeUsage(usage, result.usage ?? {});
   emitStep(agentStep("synthesis", "整合完成", "已生成最终回答。", "completed"));
@@ -1208,70 +1343,9 @@ export function normalizeAgentToolCalls(
     }
   }
 
-  if (
-    options.allowWebSearch &&
-    officialSearchCount === 0 &&
-    shouldSearchOfficialDocument(options.message) &&
-    normalized.length < maxAgentToolCalls
-  ) {
-    normalized.unshift({
-      name: "official_document_search",
-      arguments: {
-        query: normalizeSearchQuery(options.message) ?? options.message,
-      },
-    });
-  }
-
-  if (
-    options.allowWebSearch &&
-    searchCount === 0 &&
-    shouldSearchWeb(options.message) &&
-    normalized.length < maxAgentToolCalls
-  ) {
-    normalized.unshift({
-      name: "web_search",
-      arguments: {
-        query: normalizeSearchQuery(options.message) ?? options.message,
-        freshness: "oneMonth",
-        count: 5,
-      },
-    });
-  }
   return normalized
     .sort((left, right) => agentToolPriority(left) - agentToolPriority(right))
     .slice(0, maxAgentToolCalls);
-}
-
-function heuristicAgentToolCalls(message: string): AgentToolCall[] {
-  const calls: AgentToolCall[] = [];
-  if (shouldSearchOfficialDocument(message)) {
-    calls.push({
-      name: "official_document_search",
-      arguments: {
-        query: normalizeSearchQuery(message) ?? message,
-      },
-    });
-  }
-  if (shouldSearchWeb(message)) {
-    calls.push({
-      name: "web_search",
-      arguments: {
-        query: normalizeSearchQuery(message) ?? message,
-        freshness: "oneMonth",
-        count: 5,
-      },
-    });
-  }
-  if (shouldDelegate(message)) {
-    calls.push({
-      name: "delegate_subtask",
-      arguments: {
-        role: "campusAnalyst",
-        task: "结合本机上下文和可用搜索结果，整理对用户最有用的校园安排建议。",
-      },
-    });
-  }
-  return calls;
 }
 
 function agentToolPriority(toolCall: AgentToolCall) {
@@ -1902,6 +1976,7 @@ async function streamDeepSeekAgentSynthesis(
   deliverables: CampusAIDeliverable[],
   signal: AbortSignal,
   callbacks: AgentCallbacks,
+  usePersonalContext: boolean,
 ): Promise<DeepSeekStreamResult> {
   const apiKeys = deepSeekAPIKeys();
   if (apiKeys.length === 0) {
@@ -1915,6 +1990,7 @@ async function streamDeepSeekAgentSynthesis(
     subtaskResults,
     citations,
     deliverables,
+    usePersonalContext,
   ));
   let lastError: Error | null = null;
   for (const [index, apiKey] of apiKeys.entries()) {
@@ -1958,6 +2034,7 @@ export function agentSynthesisPayload(
   subtaskResults: AgentSubtaskResult[],
   citations: AgentCitation[],
   deliverables: CampusAIDeliverable[] = [],
+  usePersonalContext = true,
 ) {
   const recentMessages = recentMessagesFromBody(body)
     .slice(-maxRecentMessages)
@@ -1983,15 +2060,21 @@ export function agentSynthesisPayload(
         role: "user",
         content: safeJSONStringify({
           message,
-          context: body.context ?? {},
-          context_settings: body.context_settings ?? body.contextSettings ?? {},
+          campus: campusDescriptor(body.context),
           capabilities: body.capabilities ?? {},
-          local_retrieval: localRetrievalFromBody(body),
           recent_messages: recentMessages,
           web_search_results: searchResults,
           subtask_results: subtaskResults,
           citations,
           official_document_deliverables: deliverables,
+          ...(usePersonalContext
+            ? {
+              context: body.context ?? {},
+              context_settings: body.context_settings ?? body.contextSettings ??
+                {},
+              local_retrieval: localRetrievalFromBody(body),
+            }
+            : {}),
         }),
       },
     ],
@@ -2010,8 +2093,8 @@ function agentSynthesisSystemPrompt(
 ) {
   return [
     systemPrompt(userSystemPrompt, generatesCard),
-    "你现在处于 agent 模式。请整合本机上下文、联网搜索结果和子任务结论。",
-    "如果输入包含 local_retrieval，优先使用其中最相关的本地结果；不需要说明内部检索流程。",
+    "你现在处于 agent 模式。请整合已验证的联网资料；仅在输入明确包含必要的个人上下文时才做个性化补充。",
+    "学校公共政策、通知和整体安排以已验证的官方资料为主要依据。个人课表、考试、成绩和日程只能补充“你的个人安排”，不能替代学校整体信息，也不要为了显得个性化而主动提及。",
     hasCitations
       ? "可以使用输入 citations 中已验证的资料，但不要在正文中输出来源标题、URL、脚注或 Markdown 引用链接；来源会由界面单独展示。"
       : "本次没有可用联网搜索结果；如果问题需要最新信息，请明确说明未使用联网结果。",
@@ -2107,13 +2190,16 @@ async function streamDeepSeek(
   message: string,
   signal: AbortSignal,
   callbacks: AgentCallbacks,
+  usePersonalContext = true,
 ): Promise<DeepSeekStreamResult> {
   const apiKeys = deepSeekAPIKeys();
   if (apiKeys.length === 0) {
     throw new Error("Missing DEEPSEEK_API_KEY or DEEPSEEK_API_KEYS.");
   }
 
-  const payload = JSON.stringify(deepSeekPayload(body, message));
+  const payload = JSON.stringify(
+    deepSeekPayload(body, message, usePersonalContext),
+  );
   let lastError: Error | null = null;
   for (const [index, apiKey] of apiKeys.entries()) {
     let response: Response;
@@ -2423,7 +2509,17 @@ async function readDeepSeekStream(
   return { answer, reasoning, finishReason };
 }
 
-export function deepSeekPayload(body: CampusAIRequest, message: string) {
+export function deepSeekPayload(
+  body: CampusAIRequest,
+  message: string,
+  usePersonalContext = true,
+) {
+  const currentLocalTime = normalizeText(
+    body.current_local_time ?? body.currentLocalTime,
+  ) ?? beijingLocalDateTime();
+  const timeZoneIdentifier = normalizeText(
+    body.time_zone_identifier ?? body.timeZoneIdentifier,
+  ) ?? "Asia/Shanghai";
   const recentMessages = recentMessagesFromBody(body)
     .slice(-maxRecentMessages)
     .map((item) => ({
@@ -2447,11 +2543,19 @@ export function deepSeekPayload(body: CampusAIRequest, message: string) {
         role: "user",
         content: safeJSONStringify({
           message,
-          context: body.context ?? {},
-          context_settings: body.context_settings ?? body.contextSettings ?? {},
+          campus: campusDescriptor(body.context),
+          current_local_time: currentLocalTime,
+          time_zone_identifier: timeZoneIdentifier,
           capabilities: body.capabilities ?? {},
-          local_retrieval: localRetrievalFromBody(body),
           recent_messages: recentMessages,
+          ...(usePersonalContext
+            ? {
+              context: body.context ?? {},
+              context_settings: body.context_settings ?? body.contextSettings ??
+                {},
+              local_retrieval: localRetrievalFromBody(body),
+            }
+            : {}),
         }),
       },
     ],
@@ -2553,8 +2657,9 @@ export function systemPrompt(
   return [
     "你是 MyLeafy 的校园学习与生活助手，当前是测试功能。",
     "回答要直接、具体、可执行；能给结论就先给结论，不要反复解释内部数据来源。",
-    "可以结合已提供的课程、考试、学习、提醒和个人事项上下文，也可以补充合理的一般建议；不要把不确定内容说成事实。",
-    "如果输入包含 local_retrieval，优先使用其中最相关的结果；不要把它作为工程细节反复解释给用户。",
+    "个人课表、考试、成绩、日程和其他本机资料默认不参与回答。只有输入明确包含必要的 context 或 local_retrieval 时，才把其中最相关的少量结果用于用户确实要求的个人事实或个性化安排；不要为了显得个性化而主动提及这些资料。",
+    "学校公共政策、通知和整体安排应以已验证的官方资料为主要依据；个人记录只能作为“你的个人安排”的补充，不能替代学校整体信息。不要把不确定内容说成事实。",
+    "每轮输入都会提供 current_local_time 和 time_zone_identifier。把它们作为当前日期与时区的唯一依据；涉及今天、当前学期、最新政策或近期安排时，不得凭训练数据猜测旧年份。",
     "缺少关键信息时，用一句话说明缺什么，并给出用户下一步能做的选择。",
     "不要声称读取了未提供的数据，不要声称读取了用户上传文件正文、图片像素、OCR、PDF、Word、PPT、表格或本地文件路径。",
     "不要推断私信、身份资料、未提供的远端内容或后台登录后的内容。",
@@ -3559,6 +3664,13 @@ function campusIDFromContext(context: unknown): string {
     if (campusID) return campusID;
   }
   return "unknown";
+}
+
+function campusDescriptor(context: unknown) {
+  return {
+    id: campusIDFromContext(context),
+    name: campusNameFromContext(context),
+  };
 }
 
 function campusNameFromContext(context: unknown): string {

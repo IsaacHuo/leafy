@@ -268,6 +268,7 @@ export function rankSearchResultsByRelevance<
   const queryConcepts = relevanceConcepts(query);
   if (queryConcepts.size === 0) return results;
   const compactQuery = relevanceText(query).replaceAll(" ", "");
+  const queryYears = explicitYears(query);
   return results
     .map((result, index) => {
       const titleConcepts = relevanceConcepts(result.title);
@@ -286,13 +287,42 @@ export function rankSearchResultsByRelevance<
       ) {
         score += 8;
       }
-      const queryYears = query.match(/20\d{2}/g) ?? [];
-      if (queryYears.some((year) => result.title.includes(year))) score += 4;
-      return { result, index, score };
+      const candidateYears = explicitYears(
+        `${result.title} ${result.snippet ?? ""}`,
+      );
+      const hasMatchingYear = queryYears.size === 0 ||
+        candidateYears.size === 0 ||
+        [...queryYears].some((year) => candidateYears.has(year));
+      if (queryYears.size > 0 && candidateYears.size > 0 && hasMatchingYear) {
+        score += 30;
+      }
+      return { result, index, score, hasMatchingYear };
     })
-    .filter((candidate) => candidate.score > 0)
+    .filter((candidate) => candidate.score > 0 && candidate.hasMatchingYear)
     .sort((left, right) => right.score - left.score || left.index - right.index)
     .map((candidate) => candidate.result);
+}
+
+function explicitYears(value: string) {
+  const years = new Set<number>();
+  for (const match of value.matchAll(/(?:19|20)\d{2}/g)) {
+    years.add(Number(match[0]));
+  }
+  for (
+    const match of value.matchAll(
+      /(?<!\d)(\d{2})\s*(?:[-–—~～至]|到)\s*(\d{2})(?=\s*(?:学年|年|届))/g,
+    )
+  ) {
+    const first = Number(match[1]);
+    const second = Number(match[2]);
+    years.add(first >= 70 ? 1900 + first : 2000 + first);
+    years.add(second >= 70 ? 1900 + second : 2000 + second);
+  }
+  for (const match of value.matchAll(/(?<!\d)(\d{2})(?=\s*(?:年|届))/g)) {
+    const year = Number(match[1]);
+    years.add(year >= 70 ? 1900 + year : 2000 + year);
+  }
+  return years;
 }
 
 export async function readWebPage(

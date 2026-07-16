@@ -209,6 +209,15 @@ nonisolated enum CampusAIDiagnostics {
     static func researchCounts(requestID: UUID, found: Int, read: Int, adopted: Int) {
         logger.info("research request=\(requestID.uuidString, privacy: .public) found=\(found, privacy: .public) read=\(read, privacy: .public) adopted=\(adopted, privacy: .public)")
     }
+
+    static func routing(
+        route: String,
+        usesPersonalContext: Bool,
+        reasonCode: String,
+        requestID: UUID
+    ) {
+        logger.info("routing request=\(requestID.uuidString, privacy: .public) route=\(route, privacy: .public) personal_context=\(usesPersonalContext, privacy: .public) reason=\(reasonCode, privacy: .public)")
+    }
 }
 
 nonisolated private extension String {

@@ -4608,7 +4608,9 @@ nonisolated struct CampusAIService {
         if normalizedSettings.serviceMode == .leafyManaged {
             return invokeManagedStream(request, settings: normalizedSettings)
         }
-        if CampusAIResearchIntent.shouldRun(request) {
+        if request.agentMode == .auto,
+           request.webSearchEnabled,
+           request.capabilities.webSearchEnabled {
             return CampusAIResearchAgent.invokeStream(request, settings: normalizedSettings)
         }
         return invokeDirectStream(request, settings: normalizedSettings)
@@ -4616,7 +4618,8 @@ nonisolated struct CampusAIService {
 
     static func invokeDirectStream(
         _ request: CampusAIRequest,
-        settings: CampusAIUserSettings
+        settings: CampusAIUserSettings,
+        usePersonalContext: Bool = true
     ) -> AsyncThrowingStream<CampusAIStreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -4643,7 +4646,8 @@ nonisolated struct CampusAIService {
                     let urlRequest = try makeChatCompletionsRequest(
                         for: request,
                         baseURLString: settings.selectedProvider.baseURLString,
-                        apiKey: apiKey
+                        apiKey: apiKey,
+                        usePersonalContext: usePersonalContext
                     )
                     let (bytes, response) = try await URLSession.shared.bytes(for: urlRequest)
                     var finalResponse: CampusAIResponse?
@@ -4694,7 +4698,9 @@ nonisolated struct CampusAIService {
                             let synthesisStep = directAgentStep(
                                 id: "direct-agent-synthesis",
                                 title: "整合回答",
-                                detail: "结合本机上下文生成回答。",
+                                detail: usePersonalContext
+                                    ? "结合必要的个人上下文生成回答。"
+                                    : "根据当前问题生成回答。",
                                 status: "completed"
                             )
                             directAgentTrace.append(synthesisStep)
@@ -4844,7 +4850,8 @@ nonisolated struct CampusAIService {
     static func makeChatCompletionsRequest(
         for request: CampusAIRequest,
         baseURLString: String,
-        apiKey: String
+        apiKey: String,
+        usePersonalContext: Bool = true
     ) throws -> URLRequest {
         let url = try chatCompletionsURL(baseURLString: baseURLString)
         var urlRequest = URLRequest(url: url)
@@ -4852,7 +4859,12 @@ nonisolated struct CampusAIService {
         urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.httpBody = try providerJSONEncoder().encode(chatCompletionsPayload(for: request))
+        urlRequest.httpBody = try providerJSONEncoder().encode(
+            chatCompletionsPayload(
+                for: request,
+                usePersonalContext: usePersonalContext
+            )
+        )
         return urlRequest
     }
 
@@ -4967,13 +4979,18 @@ nonisolated struct CampusAIService {
         return baseURL.appendingPathComponent("chat/completions")
     }
 
-    static func chatCompletionsPayload(for request: CampusAIRequest) throws -> CampusAIChatCompletionsPayload {
+    static func chatCompletionsPayload(
+        for request: CampusAIRequest,
+        usePersonalContext: Bool = true
+    ) throws -> CampusAIChatCompletionsPayload {
         let userContent = CampusAIProviderUserContent(
             message: request.message,
-            context: request.context,
-            contextSettings: request.contextSettings,
+            campusID: request.context.campusID,
+            campusName: request.context.campusName,
+            context: usePersonalContext ? request.context : nil,
+            contextSettings: usePersonalContext ? request.contextSettings : nil,
             capabilities: request.capabilities,
-            localRetrieval: request.localRetrieval,
+            localRetrieval: usePersonalContext ? request.localRetrieval : nil,
             recentMessages: request.recentMessages.suffix(10).map { message in
                 CampusAIProviderUserContent.RecentMessage(
                     role: message.role == .assistant ? "assistant" : "user",
@@ -5050,8 +5067,9 @@ nonisolated struct CampusAIService {
         return [
             "你是 Leafy 的通用 AI 助手，当前是测试功能。",
             "回答要直接、具体、可执行；能给结论就先给结论，不要反复解释内部数据来源。",
-            "可以回答通用问题；当用户问题与已提供的课程、考试、学习、提醒或个人事项相关时，再结合这些本机上下文给出更具体的建议。不要为了使用本机数据而牵强关联，也不要把不确定内容说成事实。",
-            "如果输入包含 local_retrieval，优先使用其中最相关的结果；不要把它作为工程细节反复解释给用户。",
+            "可以回答通用问题；个人课表、考试、成绩、日程和其他本机资料默认不参与回答。只有输入明确包含必要的 context 或 local_retrieval 时，才把其中最相关的少量结果用于用户确实要求的个人事实或个性化安排。不要为了显得个性化而主动提及这些资料，也不要把不确定内容说成事实。",
+            "学校公共政策、通知和整体安排应以已验证的官方资料为主要依据；个人记录只能作为“你的个人安排”的补充，不能替代学校整体信息。",
+            "每轮输入都会提供 current_local_time 和 time_zone_identifier。把它们作为当前日期与时区的唯一依据；涉及今天、当前学期、最新政策或近期安排时，不得凭训练数据猜测旧年份。",
             "缺少关键信息时，用一句话说明缺什么，并给出用户下一步能做的选择。",
             "不要声称读取了未提供的数据，不要声称读取了用户上传文件正文、图片像素、OCR、PDF、Word、PPT、表格或本地文件路径。",
             "不要推断私信、身份资料、未提供的远端内容或后台登录后的内容。",
@@ -5377,24 +5395,60 @@ nonisolated struct CampusAIService {
 
 nonisolated private struct CampusAIProviderUserContent: Encodable {
     let message: String
-    let context: CampusAIContextPayload
-    let contextSettings: CampusAIContextSettings
+    let campusID: String
+    let campusName: String
+    let context: CampusAIContextPayload?
+    let contextSettings: CampusAIContextSettings?
     let capabilities: CampusAICapabilitySet
-    let localRetrieval: CampusAILocalRetrievalPayload
+    let localRetrieval: CampusAILocalRetrievalPayload?
     let recentMessages: [RecentMessage]
+    let currentLocalTime: String
+    let timeZoneIdentifier: String
 
     enum CodingKeys: String, CodingKey {
         case message
+        case campusID = "campus_id"
+        case campusName = "campus_name"
         case context
         case contextSettings = "context_settings"
         case capabilities
         case localRetrieval = "local_retrieval"
         case recentMessages = "recent_messages"
+        case currentLocalTime = "current_local_time"
+        case timeZoneIdentifier = "time_zone_identifier"
     }
 
     struct RecentMessage: Encodable, Hashable {
         let role: String
         let text: String
+    }
+
+    init(
+        message: String,
+        campusID: String,
+        campusName: String,
+        context: CampusAIContextPayload?,
+        contextSettings: CampusAIContextSettings?,
+        capabilities: CampusAICapabilitySet,
+        localRetrieval: CampusAILocalRetrievalPayload?,
+        recentMessages: [RecentMessage],
+        now: Date = Date(),
+        timeZone: TimeZone = .current
+    ) {
+        self.message = message
+        self.campusID = campusID
+        self.campusName = campusName
+        self.context = context
+        self.contextSettings = contextSettings
+        self.capabilities = capabilities
+        self.localRetrieval = localRetrieval
+        self.recentMessages = recentMessages
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssXXX"
+        currentLocalTime = formatter.string(from: now)
+        timeZoneIdentifier = timeZone.identifier
     }
 }
 
