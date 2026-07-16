@@ -4,6 +4,7 @@ import {
   CampusAIWebToolName,
   fetchDocument,
   maxPDFBytes,
+  readSpreadsheet,
   readWebPage,
   searchBJFUOfficial,
   searchDuckDuckGoLite,
@@ -135,6 +136,24 @@ export async function handler(request: Request): Promise<Response> {
         "success",
         elapsedMilliseconds(startedAt),
         1,
+        null,
+      );
+      return successResponse(requestID, tool, result);
+    }
+    if (tool === "spreadsheet.read") {
+      const result = await readSpreadsheet(
+        stringArgument(args.read_receipt),
+        auth.userID,
+        signingSecret,
+        request.signal,
+      );
+      resultCount = result.row_count;
+      await completeToolCall(
+        adminClient,
+        requestID,
+        "success",
+        elapsedMilliseconds(startedAt),
+        resultCount,
         null,
       );
       return successResponse(requestID, tool, result);
@@ -286,6 +305,7 @@ function normalizedToolName(value: unknown): CampusAIWebToolName | null {
     case "web.search":
     case "web.read":
     case "document.fetch":
+    case "spreadsheet.read":
       return value;
     default:
       return null;

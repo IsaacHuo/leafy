@@ -1,7 +1,9 @@
+import ExcelJS from "npm:exceljs@4.4.0";
 import {
   isSafePublicHTTPURL,
   parseBJFUSearchHTML,
   parseDuckDuckGoLiteHTML,
+  parseSpreadsheetData,
   rankSearchResultsByRelevance,
   searchBJFUOfficial,
   searchDuckDuckGoLite,
@@ -296,5 +298,33 @@ Deno.test("campus ai web tools reject unsafe fetch targets", () => {
   assert(
     !isSafePublicHTTPURL("https://example.com:8443/a"),
     "reject unusual port",
+  );
+});
+
+Deno.test("campus ai web tools parse bounded XLSX values without executing formulas", async () => {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("期末安排");
+  sheet.addRows([
+    ["课程", "日期", "备注"],
+    ["高等数学", "2026-07-20", "公共课考试"],
+    ["安全文本", '=WEBSERVICE("https://example.com")', "只作为数据"],
+  ]);
+  const bytes = await workbook.xlsx.writeBuffer();
+
+  const result = await parseSpreadsheetData(new Uint8Array(bytes), {
+    id: "sheet-1",
+    title: "期末安排.xlsx",
+    url: "https://jwc.bjfu.edu.cn/files/finals.xlsx",
+    fileType: "XLSX",
+  });
+
+  assert(result.file_type === "XLSX", "expected XLSX metadata");
+  assert(result.sheet_count === 1, "expected one sheet");
+  assert(result.row_count === 3, "expected three non-empty rows");
+  assert(result.text.includes("[工作表: 期末安排]"), "expected sheet title");
+  assert(result.text.includes("高等数学\t2026-07-20"), "expected cell text");
+  assert(
+    result.text.includes("=WEBSERVICE"),
+    "formula-looking user data must remain inert text",
   );
 });

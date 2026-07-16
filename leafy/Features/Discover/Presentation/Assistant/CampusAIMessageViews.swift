@@ -150,7 +150,7 @@ struct CampusAIMessageRow: View {
                 if !isStreaming,
                    agentMetadata.citations.isEmpty,
                    agentMetadata.agentTrace.contains(where: { step in
-                       ["official_search", "web_search", "read_web_page", "read_pdf"].contains(step.tool ?? "")
+                       ["official_search", "web_search", "read_web_page", "read_pdf", "read_spreadsheet"].contains(step.tool ?? "")
                    }) {
                     Label("未引用已验证来源", systemImage: "exclamationmark.circle")
                         .font(.caption)

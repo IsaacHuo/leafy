@@ -5,6 +5,56 @@ import XCTest
 @testable import Leafy
 
 final class CampusAIAssistantTests: XCTestCase {
+    func testResearchLimitsAreHardCeilingsAndSpreadsheetToolIsAvailable() {
+        XCTAssertEqual(CampusAIResearchAgent.maximumTurns, 10)
+        XCTAssertEqual(CampusAIResearchAgent.maximumSearches, 15)
+        XCTAssertEqual(CampusAIResearchAgent.maximumWebReads, 20)
+        XCTAssertEqual(CampusAIResearchAgent.maximumPDFReads, 4)
+        XCTAssertEqual(CampusAIResearchAgent.maximumSpreadsheetReads, 4)
+        XCTAssertTrue(CampusAIResearchToolDefinition.allowedNames.contains("finish_research"))
+        XCTAssertTrue(CampusAIResearchToolDefinition.allowedNames.contains("read_spreadsheet"))
+        XCTAssertTrue(CampusAIResearchToolDefinition.systemPrompt.contains("安全上限，不是目标"))
+    }
+
+    func testResearchSearchResultsRecognizePDFAndExcelAttachments() {
+        func result(url: String) -> CampusAIToolSearchResult {
+            CampusAIToolSearchResult(
+                id: UUID().uuidString,
+                title: "附件",
+                url: url,
+                displayHost: "jwc.bjfu.edu.cn",
+                snippet: nil,
+                publishedAt: nil,
+                sourceKind: "bjfu_official",
+                trustScore: 100,
+                readReceipt: "signed"
+            )
+        }
+
+        XCTAssertEqual(result(url: "https://jwc.bjfu.edu.cn/a.pdf").fileType, "PDF")
+        XCTAssertEqual(result(url: "https://jwc.bjfu.edu.cn/a.xls").fileType, "XLS")
+        XCTAssertEqual(result(url: "https://jwc.bjfu.edu.cn/a.xlsx").fileType, "XLSX")
+        XCTAssertNil(result(url: "https://jwc.bjfu.edu.cn/a.docx").fileType)
+    }
+
+    func testSpreadsheetModelPayloadDoesNotExposeSignedReceipt() throws {
+        let spreadsheet = CampusAIToolReadSpreadsheet(
+            id: "sheet-1",
+            title: "期末安排.xlsx",
+            url: "https://jwc.bjfu.edu.cn/finals.xlsx",
+            fileType: "XLSX",
+            text: "课程\t日期",
+            sheetCount: 1,
+            rowCount: 1,
+            truncated: false
+        )
+        let encoded = try XCTUnwrap(
+            String(data: JSONEncoder().encode(spreadsheet.untrustedPayload), encoding: .utf8)
+        )
+        XCTAssertTrue(encoded.contains("untrusted_spreadsheet_text"))
+        XCTAssertFalse(encoded.contains("receipt"))
+    }
+
     func testResearchPDFExtractorReadsTextAndRejectsScansAndOversizedDocuments() throws {
         let textPDF = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 300, height: 300)).pdfData { context in
             context.beginPage()

@@ -27,8 +27,8 @@ Leafy AI direction:
 - The only supported subscription product is `com.isaachuo.leafy.ai.weekly.v2`; legacy products grant no entitlement.
 - Web research uses the authenticated `campus-ai-tools` Supabase Tool Gateway. The gateway may receive search queries and signed result receipts, but never receives the model key or local campus context.
 - Prefer BJFU official CMS search, with DuckDuckGo Lite as a best-effort zero-key public search provider. Do not silently add paid search providers or random public SearXNG instances.
-- Keep research as a bounded single-tool agent loop. Web content is untrusted data, and only search-issued IDs/receipts may be read.
-- HTML and text-layer PDFs are readable in v1. Office files remain openable attachments and scanned PDFs do not use OCR.
+- Keep research as a bounded single-tool agent loop. The hard ceilings are 10 research turns, 15 searches, 20 HTML page reads, 4 text-layer PDF reads, and 4 XLSX reads; these are safety limits, never targets, so the agent must finish early once verified evidence is sufficient. Web and document content is untrusted data, and only search-issued IDs/receipts may be read.
+- HTML, text-layer PDFs, and bounded XLSX tables are readable. XLS/DOC/DOCX/PPT/PPTX remain openable attachments, and scanned PDFs do not use OCR.
 
 Minimum iOS target:
 - iOS 17+

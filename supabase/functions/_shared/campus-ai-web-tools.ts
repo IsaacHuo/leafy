@@ -1,8 +1,14 @@
 import { parse as parseHTML } from "npm:node-html-parser@6.1.13";
+import ExcelJS from "npm:exceljs@4.4.0";
 
 export const maxSearchResults = 8;
 export const maxHTMLBytes = 2 * 1024 * 1024;
 export const maxPDFBytes = 10 * 1024 * 1024;
+export const maxSpreadsheetBytes = 8 * 1024 * 1024;
+export const maxSpreadsheetCharacters = 30_000;
+const maxSpreadsheetSheets = 5;
+const maxSpreadsheetRowsPerSheet = 200;
+const maxSpreadsheetColumnsPerRow = 30;
 const fetchTimeoutMs = 10_000;
 const receiptLifetimeSeconds = 10 * 60;
 const encoder = new TextEncoder();
@@ -12,7 +18,8 @@ export type CampusAIWebToolName =
   | "official.search"
   | "web.search"
   | "web.read"
-  | "document.fetch";
+  | "document.fetch"
+  | "spreadsheet.read";
 
 export type CampusAISearchResult = {
   id: string;
@@ -44,6 +51,17 @@ export type CampusAIReadResult = {
   source_kind: "bjfu_official" | "public_web";
   trust_score: number;
   attachments: CampusAIAttachmentResult[];
+};
+
+export type CampusAISpreadsheetReadResult = {
+  id: string;
+  title: string;
+  url: string;
+  file_type: "XLSX";
+  text: string;
+  sheet_count: number;
+  row_count: number;
+  truncated: boolean;
 };
 
 type ReceiptPayload = {
@@ -413,6 +431,150 @@ export async function fetchDocument(
   return response;
 }
 
+export async function readSpreadsheet(
+  receipt: string,
+  userID: string,
+  signingSecret: string,
+  signal?: AbortSignal,
+): Promise<CampusAISpreadsheetReadResult> {
+  const receiptPayload = await verifyReadReceipt(
+    receipt,
+    userID,
+    signingSecret,
+  );
+  if (receiptPayload.content_kind !== "document") {
+    throw new CampusAIWebToolError(
+      "wrong_content_kind",
+      "该结果不是可读取的附件。",
+      400,
+    );
+  }
+  return await readSpreadsheetURL(
+    receiptPayload.url,
+    receiptPayload.result_id,
+    signal,
+  );
+}
+
+export async function readSpreadsheetURL(
+  value: string,
+  resultID: string,
+  signal?: AbortSignal,
+): Promise<CampusAISpreadsheetReadResult> {
+  const response = await fetchFollowingSafeRedirects(
+    value,
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/octet-stream",
+    signal,
+  );
+  const finalURL = response.url || value;
+  const fileType = attachmentFileType(finalURL);
+  if (fileType !== "XLSX") {
+    throw new CampusAIWebToolError(
+      "unsupported_spreadsheet_type",
+      "目前只支持读取 XLSX 表格，旧版 XLS 可下载后查看。",
+      415,
+    );
+  }
+  const declaredLength = Number(response.headers.get("content-length") ?? "0");
+  if (declaredLength > maxSpreadsheetBytes) {
+    throw new CampusAIWebToolError(
+      "spreadsheet_too_large",
+      "Excel 文件超过 8 MB，无法分析。",
+      413,
+    );
+  }
+  const data = await boundedResponseBytes(response, maxSpreadsheetBytes);
+  return await parseSpreadsheetData(data, {
+    id: resultID,
+    title: filenameFromURL(finalURL),
+    url: finalURL,
+    fileType,
+  });
+}
+
+export async function parseSpreadsheetData(
+  data: Uint8Array,
+  metadata: {
+    id: string;
+    title: string;
+    url: string;
+    fileType: "XLSX";
+  },
+): Promise<CampusAISpreadsheetReadResult> {
+  if (data.byteLength > maxSpreadsheetBytes) {
+    throw new CampusAIWebToolError(
+      "spreadsheet_too_large",
+      "Excel 文件超过 8 MB，无法分析。",
+      413,
+    );
+  }
+
+  const workbook = new ExcelJS.Workbook();
+  try {
+    await workbook.xlsx.load(data as never);
+  } catch {
+    throw new CampusAIWebToolError(
+      "spreadsheet_parse_failed",
+      "Excel 表格无法解析，文件可能已损坏或受到加密保护。",
+      422,
+    );
+  }
+
+  const sections: string[] = [];
+  let rowCount = 0;
+  let characterCount = 0;
+  let truncated = workbook.worksheets.length > maxSpreadsheetSheets;
+  for (const sheet of workbook.worksheets.slice(0, maxSpreadsheetSheets)) {
+    const lines: string[] = [];
+    const lastRow = Math.min(sheet.rowCount, maxSpreadsheetRowsPerSheet);
+    for (let rowNumber = 1; rowNumber <= lastRow; rowNumber += 1) {
+      const row = sheet.getRow(rowNumber);
+      const lastColumn = Math.min(row.cellCount, maxSpreadsheetColumnsPerRow);
+      const cells: string[] = [];
+      for (let column = 1; column <= lastColumn; column += 1) {
+        cells.push(normalizedSpreadsheetCell(row.getCell(column).text));
+      }
+      if (row.cellCount > maxSpreadsheetColumnsPerRow) truncated = true;
+      const line = cells.join("\t").trimEnd();
+      if (!line) continue;
+      if (characterCount + line.length > maxSpreadsheetCharacters) {
+        truncated = true;
+        break;
+      }
+      lines.push(line);
+      rowCount += 1;
+      characterCount += line.length + 1;
+    }
+    if (sheet.rowCount > maxSpreadsheetRowsPerSheet) truncated = true;
+    if (lines.length > 0) {
+      sections.push(
+        `[工作表: ${normalizedSpreadsheetCell(sheet.name)}]\n${
+          lines.join("\n")
+        }`,
+      );
+    }
+    if (characterCount >= maxSpreadsheetCharacters) break;
+  }
+
+  if (sections.length === 0) {
+    throw new CampusAIWebToolError(
+      "spreadsheet_empty",
+      "Excel 表格中没有可读取的数据。",
+      422,
+    );
+  }
+  return {
+    id: metadata.id,
+    title: metadata.title,
+    url: metadata.url,
+    file_type: metadata.fileType,
+    text: sections.join("\n\n"),
+    sheet_count: Math.min(workbook.worksheets.length, maxSpreadsheetSheets),
+    row_count: rowCount,
+    truncated,
+  };
+}
+
 export async function signReadReceipt(
   payload: ReceiptPayload,
   signingSecret: string,
@@ -777,6 +939,35 @@ async function boundedResponseText(response: Response, maxBytes: number) {
   return decoder.decode(data);
 }
 
+async function boundedResponseBytes(response: Response, maxBytes: number) {
+  const reader = response.body?.getReader();
+  if (!reader) return new Uint8Array();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new CampusAIWebToolError(
+        "spreadsheet_too_large",
+        "Excel 文件超过 8 MB，无法分析。",
+        413,
+      );
+    }
+    chunks.push(value);
+  }
+  const data = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    data.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return data;
+}
+
 function duckDuckGoDestination(href: string) {
   if (!href) return null;
   try {
@@ -860,6 +1051,16 @@ function filenameFromURL(value: string) {
   } catch {
     return "附件";
   }
+}
+
+function normalizedSpreadsheetCell(value: unknown) {
+  if (value === null || value === undefined) return "";
+  return String(value)
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(/[\t\r\n]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
 }
 
 function extractPublishedAt(text: string) {

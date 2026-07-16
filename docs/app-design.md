@@ -198,11 +198,11 @@ Leafy AI 是辅助入口，不是替代所有功能的万能聊天框。
 - 用户删除 API Key 后，历史内容仍保留，并可改回 Leafy AI 免费或订阅额度继续使用。
 - 默认使用 Leafy AI Flash：未订阅每日免费 10 次；周订阅每个 Apple 订阅周期 120 次且每日最多 40 次。
 - 自备 DeepSeek API Key 是备选模式，Key 保存在设备 Keychain；只有该模式开放 Flash/Pro 切换，模型选择只影响后续请求。
-- 联网研究默认开启，并可在设置中关闭。iOS 端使用最多 6 轮的单工具 Agent Loop：校园政策优先检索北林官方 CMS，官方资料不足或明确涉及校外内容时使用 DuckDuckGo Lite，再按搜索结果 ID 读取网页或 PDF。
+- 联网研究默认开启，并可在设置中关闭。iOS 端使用动态收束的单工具 Agent Loop：校园政策优先检索北林官方 CMS，官方资料不足或明确涉及校外内容时使用 DuckDuckGo Lite，再按搜索结果 ID 读取网页、PDF 或 Excel。10 轮、15 次搜索、20 个网页、4 个 PDF 和 4 个 Excel 都是安全上限而非目标，资料足够时立即结束。
 - 联网规划输入只包含当前问题和有限的近期对话，不携带整份本机校园上下文。搜索候选先按问题关键词与校园同义词筛选；只有成功读取且被最终回答引用的来源才进入来源卡。
 - Tool Gateway 只接收搜索词、搜索结果 receipt 和 Supabase JWT，不接收用户自备 DeepSeek Key；Leafy AI 服务请求经 `campus-ai-assistant` 发送，自备 Key 模式由 iOS 直连 DeepSeek。Gateway 使用记录只保留用户 ID、工具、状态、耗时、结果数和时间。
 - 免费搜索是 best-effort 能力，可能遇到限流、验证码、超时或页面结构变化。失败必须保留已取得来源，并明确标记未联网验证的范围，不能伪造来源或静默切换随机公共搜索实例。
-- 第一版分析公开 HTML 和带文本层的 PDF。PDF 最大 10 MB、读取前 100 页且最多向模型提供 40,000 字符；扫描 PDF 不做 OCR，DOC/DOCX/XLS/XLSX/PPT/PPTX 只作为可打开附件展示。
+- 公开 HTML、带文本层的 PDF 和 XLSX 表格可被分析。PDF 最大 10 MB、读取前 100 页；Excel 最大 8 MB，并限制工作表、行列和文本总量。扫描 PDF 不做 OCR，旧版 XLS 与 DOC/DOCX/PPT/PPTX 只作为可打开附件展示。
 - Key 配置页说明创建步骤，并提供 DeepSeek 官方 API Keys 页面链接；外部页面由系统浏览器打开。
 
 ### 6.3 Artifact

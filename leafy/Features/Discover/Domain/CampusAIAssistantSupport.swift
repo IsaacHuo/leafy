@@ -2480,7 +2480,8 @@ nonisolated enum CampusAIAgentPresentation {
             "official_search": "搜索工具",
             "web_search": "搜索工具",
             "read_web_page": "网页读取工具",
-            "read_pdf": "PDF 读取工具"
+            "read_pdf": "PDF 读取工具",
+            "read_spreadsheet": "Excel 读取工具"
         ]
         for (internalName, displayName) in replacements {
             result = result.replacingOccurrences(of: internalName, with: displayName)
@@ -2497,6 +2498,8 @@ nonisolated enum CampusAIAgentPresentation {
             return "网页读取工具"
         case "read_pdf":
             return "PDF 读取工具"
+        case "read_spreadsheet":
+            return "Excel 读取工具"
         case "completion.plan":
             return "整理工具"
         case "delegate.subtask":
