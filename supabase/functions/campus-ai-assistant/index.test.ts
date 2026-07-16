@@ -10,6 +10,7 @@ import {
   extractOfficialDocumentSourceFromHTML,
   fallbackActionDrafts,
   handler,
+  hasExplicitCampusActionIntent,
   isSafePublicHTTPURL,
   localRetrievalDeliverables,
   normalizeAgentToolCalls,
@@ -27,6 +28,7 @@ import {
   shouldRunManagedAgent,
   shouldSearchOfficialDocument,
   systemPrompt,
+  verifiedAppTransactionID,
   webSearch,
 } from "./index.ts";
 
@@ -63,6 +65,64 @@ Deno.test("campus-ai-assistant rejects requests without a Supabase Auth JWT", as
   assert(
     payload.error === "缺少登录凭证。",
     "expected missing credential error",
+  );
+});
+
+Deno.test("campus-ai-assistant uses authenticated free quota when AppTransaction is unavailable", async () => {
+  let verificationCalls = 0;
+  const appTransactionID = await verifiedAppTransactionID(
+    { app_transaction_id: "untrusted-client-id" },
+    async () => {
+      verificationCalls += 1;
+      return { appTransactionID: "should-not-run", environment: "Sandbox" };
+    },
+  );
+
+  assert(
+    appTransactionID === null,
+    "missing JWS must use auth-user quota identity",
+  );
+  assert(
+    verificationCalls === 0,
+    "missing JWS should not invoke Apple verification",
+  );
+});
+
+Deno.test("campus-ai-assistant ignores invalid and bare AppTransaction identities", async () => {
+  const appTransactionID = await verifiedAppTransactionID(
+    {
+      app_transaction_id: "untrusted-client-id",
+      app_transaction_jws: "invalid-jws",
+    },
+    async () => {
+      throw new Error("Invalid certificate chain.");
+    },
+  );
+
+  assert(
+    appTransactionID === null,
+    "invalid JWS must not authorize a client-provided ID",
+  );
+});
+
+Deno.test("campus-ai-assistant accepts only a verified AppTransaction identity", async () => {
+  const appTransactionID = await verifiedAppTransactionID(
+    {
+      app_transaction_id: "verified-app-id",
+      app_transaction_jws: "signed-jws",
+    },
+    async (_jws, expectedID) => {
+      assert(
+        expectedID === "verified-app-id",
+        "expected ID should only corroborate the JWS",
+      );
+      return { appTransactionID: "verified-app-id", environment: "Sandbox" };
+    },
+  );
+
+  assert(
+    appTransactionID === "verified-app-id",
+    "verified identity should be retained",
   );
 });
 
@@ -166,8 +226,12 @@ Deno.test("campus-ai-assistant builds non-stream JSON-only action planner payloa
     "expected expanded route schema",
   );
   assert(
-    String(messages[1].content).includes('"current_local_time":"2026-07-16T09:30:00+09:00"') &&
-      String(messages[1].content).includes('"time_zone_identifier":"Asia/Tokyo"'),
+    String(messages[1].content).includes(
+      '"current_local_time":"2026-07-16T09:30:00+09:00"',
+    ) &&
+      String(messages[1].content).includes(
+        '"time_zone_identifier":"Asia/Tokyo"',
+      ),
     "expected local time and timezone in planner input",
   );
   assert(
@@ -670,10 +734,29 @@ Deno.test("campus-ai-assistant falls back to schedule action cards", () => {
   );
 
   assert(actions.length === 1, "expected one fallback action");
-  assert(actions[0].kind === "createSchedule", "expected unified schedule action");
+  assert(
+    actions[0].kind === "createSchedule",
+    "expected unified schedule action",
+  );
   assert(
     actions[0].payload?.startsAt === "2026-07-17T10:00:00+09:00",
     "expected tomorrow morning ten with the device timezone",
+  );
+});
+
+Deno.test("campus-ai-assistant never infers actions from its own answer", () => {
+  assert(
+    !hasExplicitCampusActionIntent("Hi"),
+    "expected a greeting to stay a normal answer",
+  );
+  const actions = fallbackActionDrafts(
+    { web_search_enabled: false },
+    "Hi",
+    "你可以添加日程或查看考试安排。",
+  );
+  assert(
+    actions.length === 0,
+    "expected answer suggestions to create no action",
   );
 });
 

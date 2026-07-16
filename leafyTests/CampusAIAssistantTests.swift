@@ -914,6 +914,28 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertEqual(recentMessages.first?["text"] as? String, "你好")
     }
 
+    func testManagedRequestEncodingAllowsMissingAppTransaction() throws {
+        let request = CampusAIRequest(
+            requestID: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            message: "Hi",
+            context: minimalAIContext(),
+            recentMessages: []
+        )
+        let payload = CampusAIManagedFunctionRequest(
+            request: request,
+            appTransactionID: nil,
+            appTransactionJWS: nil,
+            serviceMode: .leafyManaged
+        )
+
+        let data = try JSONEncoder().encode(payload)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil(body["app_transaction_id"])
+        XCTAssertNil(body["app_transaction_jws"])
+        XCTAssertEqual(body["service_mode"] as? String, CampusAIServiceMode.leafyManaged.rawValue)
+        XCTAssertEqual(body["message"] as? String, "Hi")
+    }
+
     func testResearchPlannerUsesDeepSeekNonThinkingToolCompatibility() throws {
         let toolCall = CampusAIResearchToolCall(
             id: "call-1",
@@ -1323,6 +1345,21 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertNil(actions.first?.payload.startsAt)
         XCTAssertEqual(actions.first?.title, "添加日程")
         XCTAssertEqual(actions.first?.detail, "确认日期、时间和日程信息后保存。")
+    }
+
+    func testActionPlannerNeverInfersActionsFromAssistantAnswer() {
+        let request = CampusAIRequest(
+            message: "Hi",
+            context: minimalAIContext(),
+            recentMessages: [],
+            webSearchEnabled: false
+        )
+
+        XCTAssertFalse(CampusAIService.hasExplicitActionIntent(in: request.message))
+        XCTAssertTrue(CampusAIService.fallbackActionDrafts(
+            for: request,
+            answer: "你可以添加日程或查看考试安排。"
+        ).isEmpty)
     }
 
     func testActionPlannerFallbackParsesTomorrowMorningTen() throws {

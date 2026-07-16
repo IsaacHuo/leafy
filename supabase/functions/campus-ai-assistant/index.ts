@@ -291,25 +291,7 @@ export async function handler(request: Request): Promise<Response> {
     return json({ error: "问题太长了，请拆成更短的一次提问。" }, 400);
   }
 
-  let appTransactionID: string | null = null;
-  try {
-    const appTransaction = await verifyAppTransactionJWS(
-      body.app_transaction_jws,
-      body.app_transaction_id,
-    );
-    appTransactionID = appTransaction?.appTransactionID ??
-      normalizeText(body.app_transaction_id);
-  } catch (error) {
-    console.error(
-      "campus-ai-assistant: app transaction verification failed",
-      errorMessage(error),
-    );
-    return json({ error: "App Store 安装记录验证失败，请稍后重试。" }, 401);
-  }
-
-  if (!appTransactionID) {
-    return json({ error: "缺少 App Store 安装标识。" }, 400);
-  }
+  const appTransactionID = await verifiedAppTransactionID(body);
 
   const campusID = campusIDFromContext(body.context);
   const reservation = await reserveQuota(adminClient, {
@@ -2200,6 +2182,11 @@ async function planActions(
   usage: DeepSeekUsage;
 }> {
   if (!answer.trim()) return { actions: [], artifact: null, usage: {} };
+  const includesUserAction = hasExplicitCampusActionIntent(message);
+  const generatesCard = shouldGenerateArtifact(body);
+  if (!includesUserAction && !generatesCard) {
+    return { actions: [], artifact: null, usage: {} };
+  }
 
   try {
     const payload = JSON.stringify(actionPlannerPayload(body, message, answer));
@@ -2255,9 +2242,11 @@ async function planActions(
 
       const planned = parseActionPlannerProviderResponse(responseText);
       return {
-        actions: planned.actions.length > 0
-          ? planned.actions
-          : fallbackActionDrafts(body, message, answer),
+        actions: includesUserAction
+          ? (planned.actions.length > 0
+            ? planned.actions
+            : fallbackActionDrafts(body, message))
+          : [],
         artifact: planned.artifact,
         usage: planned.usage,
       };
@@ -2272,7 +2261,7 @@ async function planActions(
       );
     }
     return {
-      actions: fallbackActionDrafts(body, message, answer),
+      actions: includesUserAction ? fallbackActionDrafts(body, message) : [],
       artifact: null,
       usage: {},
     };
@@ -2282,9 +2271,9 @@ async function planActions(
 export function fallbackActionDrafts(
   body: CampusAIRequest,
   message: string,
-  answer = "",
+  _answer = "",
 ): CampusAIActionDraft[] {
-  const text = `${message}\n${answer}`.toLowerCase();
+  const text = message.toLowerCase();
   const hasCreateIntent = ["新建", "添加", "创建", "设置", "安排"].some((
     keyword,
   ) => text.includes(keyword));
@@ -2304,6 +2293,31 @@ export function fallbackActionDrafts(
       ),
     },
   }];
+}
+
+export function hasExplicitCampusActionIntent(message: string) {
+  const text = message.toLowerCase();
+  const hasActionVerb = [
+    "新建",
+    "添加",
+    "创建",
+    "设置",
+    "安排",
+    "查看",
+    "打开",
+    "查询",
+    "管理",
+  ].some((keyword) => text.includes(keyword));
+  const hasSupportedTarget = [
+    "日程",
+    "提醒",
+    "事项",
+    "待办",
+    "安排",
+    "考试",
+    "考场",
+  ].some((keyword) => text.includes(keyword));
+  return hasActionVerb && hasSupportedTarget;
 }
 
 function fallbackScheduleStartDate(
@@ -2328,7 +2342,9 @@ function fallbackScheduleStartDate(
   for (const [source, target] of Object.entries(chineseHours)) {
     normalized = normalized.replaceAll(source, target);
   }
-  const match = normalized.match(/(早上|上午|中午|下午|晚上)?\s*(\d{1,2})(?:点|:|：)(\d{1,2})?/);
+  const match = normalized.match(
+    /(早上|上午|中午|下午|晚上)?\s*(\d{1,2})(?:点|:|：)(\d{1,2})?/,
+  );
   if (!match) return undefined;
   let hour = Number(match[2]);
   const minute = Number(match[3] ?? 0);
@@ -2340,7 +2356,11 @@ function fallbackScheduleStartDate(
     /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})$/,
   );
   if (!localMatch) return undefined;
-  const dayOffset = normalized.includes("后天") ? 2 : normalized.includes("明天") ? 1 : 0;
+  const dayOffset = normalized.includes("后天")
+    ? 2
+    : normalized.includes("明天")
+    ? 1
+    : 0;
   const localDay = new Date(Date.UTC(
     Number(localMatch[1]),
     Number(localMatch[2]) - 1,
@@ -2349,7 +2369,9 @@ function fallbackScheduleStartDate(
   const year = localDay.getUTCFullYear();
   const month = String(localDay.getUTCMonth() + 1).padStart(2, "0");
   const day = String(localDay.getUTCDate()).padStart(2, "0");
-  return `${year}-${month}-${day}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00${localMatch[4]}`;
+  return `${year}-${month}-${day}T${String(hour).padStart(2, "0")}:${
+    String(minute).padStart(2, "0")
+  }:00${localMatch[4]}`;
 }
 
 async function readDeepSeekStream(
@@ -2515,8 +2537,11 @@ function beijingLocalDateTime(now = new Date()): string {
     second: "2-digit",
     hourCycle: "h23",
   }).formatToParts(now);
-  const value = (type: string) => parts.find((part) => part.type === type)?.value ?? "00";
-  return `${value("year")}-${value("month")}-${value("day")}T${value("hour")}:${value("minute")}:${value("second")}+08:00`;
+  const value = (type: string) =>
+    parts.find((part) => part.type === type)?.value ?? "00";
+  return `${value("year")}-${value("month")}-${value("day")}T${value("hour")}:${
+    value("minute")
+  }:${value("second")}+08:00`;
 }
 
 export function systemPrompt(
@@ -2548,7 +2573,7 @@ export function actionPlannerSystemPrompt(generatesCard = false) {
     "你是 MyLeafy 的动作规划器，只能输出 JSON，不能输出 Markdown、解释、代码块或多余文本。",
     "根据用户问题、AI 已生成回答和本机上下文，最多生成 3 个需要用户确认后执行的动作。",
     "可以使用 local_retrieval 中的 routeHint 和 sourceID 判断动作目标；缺少明确目标 ID 时不要编造编辑或删除动作。",
-    '只有用户明确想打开页面或添加日程，或回答中明显需要这一步时才生成动作；否则返回 {"actions":[]}。',
+    '只有用户原问题明确要求打开页面或添加日程时才生成动作；不得根据 AI 回答中的建议自行生成动作，否则返回 {"actions":[]}。',
     "支持 kind：openAcademicRoute、createSchedule。旧 kind 仅用于客户端兼容，不得再生成。",
     "openAcademicRoute.payload.route 必须来自 supported_actions 中的 allowed_values.route。",
     "用户想管理已有日程时生成 openAcademicRoute 到 customCountdowns；用户想新建、添加、设置日程或提醒时生成 createSchedule，即使标题或时间不完整也不要改成页面跳转。",
@@ -3007,11 +3032,11 @@ function deepSeekUsage(payload: Record<string, unknown>): DeepSeekUsage {
 async function reserveQuota(adminClient: any, params: {
   requestUUID: string;
   authUserID: string;
-  appTransactionID: string;
+  appTransactionID: string | null;
   campusID: string;
 }) {
-  const { data, error } = await adminClient.schema("private").rpc(
-    "reserve_campus_ai_quota",
+  const { data, error } = await adminClient.rpc(
+    "edge_campus_ai_reserve_quota",
     {
       p_request_uuid: params.requestUUID,
       p_auth_user_id: params.authUserID,
@@ -3032,8 +3057,8 @@ async function reserveQuota(adminClient: any, params: {
 
 async function completeUsage(adminClient: any, event: UsageCompletion) {
   const estimatedCost = estimatedCostUSD(event.usage);
-  const { error } = await adminClient.schema("private").rpc(
-    "complete_campus_ai_usage",
+  const { error } = await adminClient.rpc(
+    "edge_campus_ai_complete_usage",
     {
       p_request_uuid: event.requestUUID,
       p_status: event.status,
@@ -3061,10 +3086,10 @@ async function completeUsage(adminClient: any, event: UsageCompletion) {
 async function quotaSnapshot(
   adminClient: any,
   authUserID: string,
-  appTransactionID: string,
+  appTransactionID: string | null,
 ) {
-  const { data, error } = await adminClient.schema("private").rpc(
-    "campus_ai_quota_snapshot",
+  const { data, error } = await adminClient.rpc(
+    "edge_campus_ai_quota_snapshot",
     {
       p_auth_user_id: authUserID,
       p_app_transaction_id: appTransactionID,
@@ -3075,6 +3100,57 @@ async function quotaSnapshot(
     return null;
   }
   return data;
+}
+
+export async function verifiedAppTransactionID(
+  body: Pick<CampusAIRequest, "app_transaction_id" | "app_transaction_jws">,
+  verify: typeof verifyAppTransactionJWS = verifyAppTransactionJWS,
+): Promise<string | null> {
+  if (!normalizeText(body.app_transaction_jws)) {
+    console.info(JSON.stringify({
+      event: "campus_ai_app_transaction_unavailable",
+      function: "campus-ai-assistant",
+      fallback_identity: "supabase_auth_user",
+    }));
+    return null;
+  }
+
+  try {
+    const appTransaction = await verify(
+      body.app_transaction_jws,
+      body.app_transaction_id,
+    );
+    return appTransaction?.appTransactionID ?? null;
+  } catch (error) {
+    logAppleVerificationFailure(
+      "campus-ai-assistant",
+      "app_transaction",
+      error,
+    );
+    return null;
+  }
+}
+
+function logAppleVerificationFailure(
+  functionName: string,
+  verificationType: "app_transaction" | "subscription_transaction",
+  error: unknown,
+) {
+  const message = errorMessage(error);
+  const configurationFailure =
+    message.includes("APPLE_ROOT_CERTIFICATES_BASE64") ||
+    message.includes("APP_STORE_") || message.includes("certificate");
+  console.warn(JSON.stringify({
+    event: "campus_ai_apple_verification_failed",
+    function: functionName,
+    verification_type: verificationType,
+    error_code: configurationFailure
+      ? "apple_configuration_invalid"
+      : verificationType === "app_transaction"
+      ? "app_transaction_invalid"
+      : "subscription_jws_invalid",
+    error_name: error instanceof Error ? error.name : "UnknownError",
+  }));
 }
 
 async function authenticateUser(adminClient: any, request: Request) {

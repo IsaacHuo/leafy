@@ -4715,7 +4715,9 @@ nonisolated struct CampusAIService {
                                 settings: settings,
                                 apiKey: apiKey
                             )
-                            finalResponse.actions = completionPlan.actions
+                            finalResponse.actions = Self.hasExplicitActionIntent(in: request.message)
+                                ? completionPlan.actions
+                                : []
                             if shouldCreateArtifact {
                                 guard let artifact = completionPlan.artifact,
                                       let deliverable = CampusAIArtifactAssembler.deliverable(
@@ -4930,7 +4932,7 @@ nonisolated struct CampusAIService {
         let client = try LeafySupabase.shared.requireClient()
         let config = try LeafySupabase.shared.requireConfig()
         let session = try await client.auth.session
-        let appTransaction = try await CampusAIManagedEntitlementClient.appTransactionPayload()
+        let appTransaction = await CampusAIManagedEntitlementClient.optionalAppTransactionPayload()
 
         var url = config.url
         url.appendPathComponent("functions")
@@ -4946,8 +4948,8 @@ nonisolated struct CampusAIService {
         urlRequest.httpBody = try providerJSONEncoder().encode(
             CampusAIManagedFunctionRequest(
                 request: request,
-                appTransactionID: appTransaction.appTransactionID,
-                appTransactionJWS: appTransaction.jwsRepresentation,
+                appTransactionID: appTransaction?.appTransactionID,
+                appTransactionJWS: appTransaction?.jwsRepresentation,
                 serviceMode: settings.serviceMode
             )
         )
@@ -5071,7 +5073,7 @@ nonisolated struct CampusAIService {
             "Artifact 必须是完整、可直接阅读的中文 Markdown 卡片。可使用标题、列表、表格、引用、Mermaid 或 KaTeX；表格必须包含完整的 GFM 表头与分隔行，无法稳定构造时改用列表；不要在 Artifact 中编造来源。",
             "Artifact 的 title、summary 和正文由你生成；来源、数据范围和本机条目引用由 App 在本地附加，不要输出 sources 字段。",
             "可以使用 local_retrieval 中的 routeHint 和 sourceID 判断动作目标；缺少明确目标 ID 时不要编造编辑或删除动作。",
-            "只有用户明确想打开页面或添加日程，或回答中明显需要这一步时才生成动作；否则返回 {\"actions\":[]}。",
+            "只有用户原问题明确要求打开页面或添加日程时才生成动作；不得根据 AI 回答中的建议自行生成动作，否则返回 {\"actions\":[]}。",
             "支持 kind：openAcademicRoute、createSchedule。旧 kind 仅用于客户端兼容，不得再生成。",
             "openAcademicRoute.payload.route 必须来自 supported_actions 中的 allowed_values.route。",
             "用户明确想查看、添加或管理考试、考场、考试时间、考试安排时，生成 openAcademicRoute 到 examSchedule。",
@@ -5114,11 +5116,9 @@ nonisolated struct CampusAIService {
 
     static func fallbackActionDrafts(
         for request: CampusAIRequest,
-        answer: String = ""
+        answer _: String = ""
     ) -> [CampusAIActionDraft] {
-        let text = [request.message, answer]
-            .joined(separator: "\n")
-            .lowercased()
+        let text = request.message.lowercased()
         let hasCreateIntent = ["新建", "添加", "创建", "设置", "安排"].contains { text.contains($0) }
         let hasOpenIntent = ["查看", "打开", "查询", "管理"].contains { text.contains($0) }
         let hasScheduleIntent = ["日程", "提醒", "事项", "待办", "安排"].contains { text.contains($0) }
@@ -5156,6 +5156,14 @@ nonisolated struct CampusAIService {
                 payload: CampusAIActionPayload(route: route.rawValue)
             )
         ]
+    }
+
+    static func hasExplicitActionIntent(in message: String) -> Bool {
+        let text = message.lowercased()
+        let actionVerbs = ["新建", "添加", "创建", "设置", "安排", "查看", "打开", "查询", "管理"]
+        let supportedTargets = ["日程", "提醒", "事项", "待办", "安排", "考试", "考场"]
+        return actionVerbs.contains { text.contains($0) }
+            && supportedTargets.contains { text.contains($0) }
     }
 
     private static func actionDetail(for route: CampusAIAcademicRouteID) -> String {
@@ -5451,10 +5459,10 @@ nonisolated private struct CampusAIActionPlannerUserContent: Encodable {
 
 }
 
-nonisolated private struct CampusAIManagedFunctionRequest: Encodable {
+nonisolated struct CampusAIManagedFunctionRequest: Encodable {
     let requestID: String
-    let appTransactionID: String
-    let appTransactionJWS: String
+    let appTransactionID: String?
+    let appTransactionJWS: String?
     let serviceMode: String
     let message: String
     let context: CampusAIContextPayload
@@ -5490,8 +5498,8 @@ nonisolated private struct CampusAIManagedFunctionRequest: Encodable {
 
     init(
         request: CampusAIRequest,
-        appTransactionID: String,
-        appTransactionJWS: String,
+        appTransactionID: String?,
+        appTransactionJWS: String?,
         serviceMode: CampusAIServiceMode
     ) {
         self.requestID = request.requestID.uuidString

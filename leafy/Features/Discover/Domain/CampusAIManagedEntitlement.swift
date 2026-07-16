@@ -47,6 +47,15 @@ nonisolated enum CampusAIManagedEntitlementClient {
         )
     }
 
+    static func optionalAppTransactionPayload() async -> CampusAIAppTransactionPayload? {
+        do {
+            return try await appTransactionPayload()
+        } catch {
+            CampusAIDiagnostics.failure(error, stage: "app-transaction.optional")
+            return nil
+        }
+    }
+
     static func currentSubscriptionJWS() async -> String? {
         for await result in Transaction.currentEntitlements {
             guard let transaction = try? result.payloadValue,
@@ -68,7 +77,7 @@ nonisolated enum CampusAIManagedEntitlementClient {
         let client = try LeafySupabase.shared.requireClient()
         let config = try LeafySupabase.shared.requireConfig()
         let session = try await client.auth.session
-        let appTransaction = try await appTransactionPayload()
+        let appTransaction = await optionalAppTransactionPayload()
         let effectiveTransactionJWS: String?
         if let transactionJWS {
             effectiveTransactionJWS = transactionJWS
@@ -90,8 +99,8 @@ nonisolated enum CampusAIManagedEntitlementClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(
             SyncRequest(
-                appTransactionID: appTransaction.appTransactionID,
-                appTransactionJWS: appTransaction.jwsRepresentation,
+                appTransactionID: appTransaction?.appTransactionID,
+                appTransactionJWS: appTransaction?.jwsRepresentation,
                 transactionJWS: effectiveTransactionJWS
             )
         )
@@ -111,8 +120,8 @@ nonisolated enum CampusAIManagedEntitlementClient {
     }
 
     private struct SyncRequest: Encodable {
-        let appTransactionID: String
-        let appTransactionJWS: String
+        let appTransactionID: String?
+        let appTransactionJWS: String?
         let transactionJWS: String?
 
         enum CodingKeys: String, CodingKey {

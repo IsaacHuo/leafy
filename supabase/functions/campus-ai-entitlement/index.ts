@@ -42,23 +42,7 @@ export async function handler(request: Request): Promise<Response> {
   }
 
   const body = await readJSON<SyncRequest>(request);
-  let appTransaction;
-  try {
-    appTransaction = await verifyAppTransactionJWS(
-      body.app_transaction_jws,
-      body.app_transaction_id,
-    );
-  } catch (error) {
-    console.error(
-      "campus-ai-entitlement: app transaction verification failed",
-      errorMessage(error),
-    );
-    return json({ error: "App Store 安装记录验证失败，请稍后重试。" }, 401);
-  }
-
-  if (!appTransaction?.appTransactionID) {
-    return json({ error: "缺少 App Store 安装标识。" }, 400);
-  }
+  const appTransaction = await optionalVerifiedAppTransaction(body);
 
   let subscription = null;
   try {
@@ -66,10 +50,7 @@ export async function handler(request: Request): Promise<Response> {
       body.transaction_jws ?? undefined,
     );
   } catch (error) {
-    console.error(
-      "campus-ai-entitlement: transaction verification failed",
-      errorMessage(error),
-    );
+    logAppleVerificationFailure("subscription_transaction", error);
     return json({ error: "订阅交易验证失败，请稍后重试。" }, 401);
   }
 
@@ -81,7 +62,7 @@ export async function handler(request: Request): Promise<Response> {
     const snapshot = await quotaSnapshot(
       adminClient,
       authResult.userID,
-      appTransaction.appTransactionID,
+      appTransaction?.appTransactionID ?? null,
     );
     if (!snapshot.ok) {
       return json({ error: "额度状态同步失败，请稍后重试。" }, 500);
@@ -89,8 +70,12 @@ export async function handler(request: Request): Promise<Response> {
     return json({ quota: snapshot.data });
   }
 
+  if (!subscription.appTransactionID) {
+    return json({ error: "订阅交易缺少 App 安装标识。" }, 401);
+  }
+
   if (
-    subscription?.appTransactionID &&
+    appTransaction?.appTransactionID &&
     subscription.appTransactionID !== appTransaction.appTransactionID
   ) {
     return json({ error: "订阅交易与当前 App 安装不匹配。" }, 401);
@@ -98,11 +83,12 @@ export async function handler(request: Request): Promise<Response> {
 
   const sync = await syncEntitlement(adminClient, {
     authUserID: authResult.userID,
-    appTransactionID: appTransaction.appTransactionID,
+    appTransactionID: subscription.appTransactionID,
     productID: subscription.productID,
     originalTransactionID: subscription.originalTransactionID,
     transactionID: subscription.transactionID,
-    environment: subscription.environment ?? appTransaction.environment,
+    environment: subscription.environment ?? appTransaction?.environment ??
+      null,
     status: subscription.status,
     currentPeriodStart: subscription.currentPeriodStart,
     currentPeriodEnd: subscription.currentPeriodEnd,
@@ -132,8 +118,8 @@ async function syncEntitlement(adminClient: any, params: {
   currentPeriodEnd: string | null;
   signedAt: string | null;
 }) {
-  const { data, error } = await adminClient.schema("private").rpc(
-    "sync_campus_ai_entitlement",
+  const { data, error } = await adminClient.rpc(
+    "edge_campus_ai_sync_entitlement",
     {
       p_auth_user_id: params.authUserID,
       p_app_transaction_id: params.appTransactionID,
@@ -158,10 +144,10 @@ async function syncEntitlement(adminClient: any, params: {
 async function quotaSnapshot(
   adminClient: any,
   authUserID: string,
-  appTransactionID: string,
+  appTransactionID: string | null,
 ) {
-  const { data, error } = await adminClient.schema("private").rpc(
-    "campus_ai_quota_snapshot",
+  const { data, error } = await adminClient.rpc(
+    "edge_campus_ai_quota_snapshot",
     {
       p_auth_user_id: authUserID,
       p_app_transaction_id: appTransactionID,
@@ -175,6 +161,48 @@ async function quotaSnapshot(
     return { ok: false as const };
   }
   return { ok: true as const, data };
+}
+
+export async function optionalVerifiedAppTransaction(
+  body: Pick<SyncRequest, "app_transaction_id" | "app_transaction_jws">,
+  verify: typeof verifyAppTransactionJWS = verifyAppTransactionJWS,
+) {
+  if (!normalizeText(body.app_transaction_jws)) {
+    console.info(JSON.stringify({
+      event: "campus_ai_app_transaction_unavailable",
+      function: "campus-ai-entitlement",
+      fallback_identity: "supabase_auth_user",
+    }));
+    return null;
+  }
+
+  try {
+    return await verify(body.app_transaction_jws, body.app_transaction_id);
+  } catch (error) {
+    logAppleVerificationFailure("app_transaction", error);
+    return null;
+  }
+}
+
+function logAppleVerificationFailure(
+  verificationType: "app_transaction" | "subscription_transaction",
+  error: unknown,
+) {
+  const message = errorMessage(error);
+  const configurationFailure =
+    message.includes("APPLE_ROOT_CERTIFICATES_BASE64") ||
+    message.includes("APP_STORE_") || message.includes("certificate");
+  console.warn(JSON.stringify({
+    event: "campus_ai_apple_verification_failed",
+    function: "campus-ai-entitlement",
+    verification_type: verificationType,
+    error_code: configurationFailure
+      ? "apple_configuration_invalid"
+      : verificationType === "app_transaction"
+      ? "app_transaction_invalid"
+      : "subscription_jws_invalid",
+    error_name: error instanceof Error ? error.name : "UnknownError",
+  }));
 }
 
 async function authenticateUser(adminClient: any, request: Request) {
