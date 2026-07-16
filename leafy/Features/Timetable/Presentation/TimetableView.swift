@@ -51,6 +51,7 @@ struct TimetableView: View {
     @State private var reauthenticationRequest: SchoolReauthenticationRequest?
     @State private var selectedCourseContext: SelectedCourseContext?
     @State private var selectedCellReminderContext: TimetableCellReminderContext?
+    @State private var selectedCustomScheduleEditor: CustomScheduleEditorPresentation?
     @State private var courseNotePreview: CourseNotePreview?
     @State private var isExportSheetPresented = false
     @State private var isTimetableProcessingPresented = false
@@ -324,6 +325,10 @@ struct TimetableView: View {
         }
         .sheet(item: $selectedCellReminderContext) { context in
             TimetableCellReminderSheet(context: context)
+                .presentationDetents([.medium, .large])
+        }
+        .sheet(item: $selectedCustomScheduleEditor, onDismiss: reloadCustomCountdownEvents) { presentation in
+            CustomScheduleEditorSheet(presentation: presentation)
                 .presentationDetents([.medium, .large])
         }
         .sheet(item: $selectedDaySummary) { selection in
@@ -1127,17 +1132,24 @@ struct TimetableView: View {
             ForEach(Array(countdowns.enumerated()), id: \.element.id) { index, countdown in
                 let blockHeight = countdownBlockHeight(metrics: metrics)
                 let blockWidth = max(width - metrics.cardInset * 2, 1)
-                TimetableCountdownBlockView(
-                    projection: countdown,
-                    height: blockHeight,
-                    width: blockWidth
-                )
+                Button {
+                    presentCustomScheduleEditor(for: countdown)
+                } label: {
+                    TimetableCountdownBlockView(
+                        projection: countdown,
+                        height: blockHeight,
+                        width: blockWidth
+                    )
+                    .contentShape(
+                        RoundedRectangle(cornerRadius: AppRadius.small * 0.68, style: .continuous)
+                    )
+                }
+                .buttonStyle(.plain)
                 .position(
                     x: width * 0.5,
                     y: countdownYPosition(for: countdown.period, index: index, height: blockHeight, metrics: metrics)
                 )
                 .zIndex(3)
-                .onTapGesture {}
             }
 
             ForEach(Array(exams.enumerated()), id: \.element.id) { index, projection in
@@ -1386,13 +1398,42 @@ struct TimetableView: View {
                 totalPeriods: totalClasses,
                 reminder: reminder
             )
-        case .countdown, .exam:
+        case .countdown(let projection):
+            presentCustomScheduleEditor(for: projection)
+        case .exam:
             selectedDaySummary = TimetableDaySelection(
                 week: item.week,
                 day: item.day,
                 date: item.date
             )
         }
+    }
+
+    private func presentCustomScheduleEditor(for projection: TimetableCountdownProjection) {
+        guard let event = customCountdownEvents.first(where: { $0.id == projection.eventID }) else {
+            alertMessage = "该日程已更新，请刷新课表后重试。"
+            showAlert = true
+            return
+        }
+
+        let context = TimetableCellReminderContext(
+            week: projection.week,
+            day: projection.dayOfWeek,
+            period: projection.period,
+            date: event.startsAt,
+            occupiedPeriods: currentTimetableGridSnapshot().occupiedPeriods(
+                day: projection.dayOfWeek,
+                week: projection.week
+            ),
+            totalPeriods: totalClasses,
+            reminder: nil,
+            allowsDateSelection: true
+        )
+        selectedCustomScheduleEditor = .importantDate(
+            event,
+            defaultContext: context,
+            allowsModeSelection: false
+        )
     }
 
     private var agendaWeekRangeText: String {

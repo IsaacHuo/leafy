@@ -273,9 +273,35 @@ private struct CustomScheduleListRow: View {
                         .background(AppTheme.softFill, in: Capsule())
                 }
 
-                Text(timeText)
-                    .font(.subheadline)
-                    .foregroundStyle(AppTheme.secondaryText)
+                HStack(alignment: .center, spacing: AppSpacing.micro) {
+                    Text(timeText)
+                        .font(.subheadline)
+                        .foregroundStyle(AppTheme.secondaryText)
+
+                    Spacer(minLength: AppSpacing.micro)
+
+                    HStack(spacing: AppSpacing.micro) {
+                        Button(action: onEdit) {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(AppTheme.accentEmphasis)
+                                .frame(width: 34, height: 34)
+                                .background(AppTheme.softFill, in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("编辑自定日程")
+
+                        Button(role: .destructive, action: onDelete) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(AppTheme.danger)
+                                .frame(width: 34, height: 34)
+                                .background(AppTheme.danger.opacity(0.1), in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("删除自定日程")
+                    }
+                }
 
                 if !detailText.isEmpty {
                     Text(detailText)
@@ -284,33 +310,9 @@ private struct CustomScheduleListRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                if item.badge == "倒计时" {
-                    Text(CountdownEventRow.countdownDescription(for: item.startDate))
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(AppTheme.primaryText)
-                }
-            }
-
-            VStack(spacing: AppSpacing.micro) {
-                Button(action: onEdit) {
-                    Image(systemName: "pencil")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(AppTheme.accentEmphasis)
-                        .frame(width: 34, height: 34)
-                        .background(AppTheme.softFill, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("编辑自定日程")
-
-                Button(role: .destructive, action: onDelete) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(AppTheme.danger)
-                        .frame(width: 34, height: 34)
-                        .background(AppTheme.danger.opacity(0.1), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("删除自定日程")
+                Text(CountdownEventRow.countdownDescription(for: item.startDate))
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(AppTheme.primaryText)
             }
         }
     }
