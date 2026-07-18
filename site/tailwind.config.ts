@@ -5,6 +5,17 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        forest: {
+          DEFAULT: "#091611",
+          low: "#0D1D16",
+          elevated: "#13271D"
+        },
+        ivory: "#F0F4EF",
+        accent: {
+          DEFAULT: "#9BC8A2",
+          strong: "#B2D8B7",
+          muted: "#1C3B2A"
+        },
         primary: {
           DEFAULT: "#1F6A45",
           strong: "#155638",
@@ -49,6 +60,8 @@ const config: Config = {
         }
       },
       boxShadow: {
+        deep: "0 28px 80px rgba(2, 9, 6, 0.34)",
+        accent: "0 16px 44px rgba(120, 182, 132, 0.18)",
         soft: "0 10px 30px rgba(16, 32, 24, 0.07)",
         lift: "0 24px 70px rgba(16, 32, 24, 0.11)",
         primary: "0 18px 46px rgba(31, 106, 69, 0.22)",

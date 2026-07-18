@@ -34,8 +34,8 @@ export function CopyEmailButton({ email }: { email: string }) {
       : state === "error"
         ? "border border-danger bg-danger text-white hover:bg-danger"
         : state === "copying"
-          ? "border border-warning/40 bg-warning/10 text-text"
-          : "border border-black/10 bg-white text-text hover:border-black/30 hover:bg-paper";
+          ? "border border-warning/40 bg-warning/10 text-ivory"
+          : "border border-white/20 bg-forest-elevated/80 text-ivory shadow-deep hover:border-white/30 hover:bg-forest-elevated";
 
   return (
     <TapButton

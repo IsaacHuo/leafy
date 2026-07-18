@@ -48,9 +48,10 @@ export function ScrollReveal({ children, className }: PropsWithChildren<{ classN
   return (
     <motion.div
       className={className}
-      initial={shouldReduceMotion ? undefined : { opacity: 0, transform: "translate3d(0, 8px, 0)" }}
-      animate={{ opacity: 1, transform: "translate3d(0, 0, 0)" }}
-      transition={{ duration: shouldReduceMotion ? 0.2 : 0.46, ease: easeOut }}
+      initial={shouldReduceMotion ? false : { opacity: 0, transform: "translate3d(0, 18px, 0)" }}
+      whileInView={{ opacity: 1, transform: "translate3d(0, 0, 0)" }}
+      viewport={{ once: true, amount: 0.16 }}
+      transition={{ duration: shouldReduceMotion ? 0 : 0.62, ease: easeOut }}
     >
       {children}
     </motion.div>
@@ -127,7 +128,7 @@ export function TapButton({
   disabled?: boolean;
 }>) {
   const shouldReduceMotion = useReducedMotion();
-  const classes = `leafy-pressable inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 text-center text-sm font-medium transition-[background-color,border-color,color,box-shadow] duration-200 disabled:cursor-progress disabled:opacity-70 ${className ?? ""}`;
+  const classes = `leafy-pressable inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-full px-4 text-center text-sm font-medium transition-[background-color,border-color,color,box-shadow] duration-200 disabled:cursor-progress disabled:opacity-70 ${className ?? ""}`;
 
   if (href) {
     return (

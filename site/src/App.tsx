@@ -11,18 +11,19 @@ import {
   DeviceMobile,
   EnvelopeSimple,
   GraduationCap,
+  Headset,
   House,
-  Lifebuoy,
+  List,
   LockKey,
   ShieldCheck,
-  Sparkle
+  X
 } from "@phosphor-icons/react";
 import {
   appStoreLinks,
   appScreenshots,
   capabilityStats,
-  featureShowcases,
   featureBands,
+  featureShowcases,
   footerGroups,
   homeDataBoundaries,
   navItems,
@@ -50,28 +51,28 @@ const pageTitles: Record<string, string> = {
   "/share/community/post": "MyLeafy Community Post"
 };
 
-const primaryButtonClass = "border border-primary bg-primary text-white shadow-primary hover:bg-primary-strong";
-const secondaryButtonClass = "border border-black/10 bg-white text-text shadow-soft hover:border-black/20 hover:bg-primary-soft";
-const panelClass = "rounded-[24px] border border-black/[0.08] bg-white p-6 shadow-[0_18px_50px_rgba(16,32,24,0.055)]";
-const featuredPanelClass = "rounded-[24px] border border-primary/15 bg-primary-wash p-6 shadow-[0_18px_50px_rgba(31,106,69,0.07)]";
-const ruleStackClass = "overflow-hidden rounded-[24px] border border-black/[0.08] bg-white shadow-[0_18px_50px_rgba(16,32,24,0.05)]";
+const primaryButtonClass =
+  "border border-accent bg-accent text-forest shadow-accent hover:border-accent-strong hover:bg-accent-strong";
+const secondaryButtonClass =
+  "border border-white/20 bg-forest-elevated/80 text-ivory shadow-deep backdrop-blur-xl hover:border-white/30 hover:bg-forest-elevated";
+const panelClass =
+  "rounded-[24px] border border-white/10 bg-forest-elevated/80 p-6 shadow-deep backdrop-blur-xl";
+const featuredPanelClass =
+  "rounded-[24px] border border-accent/25 bg-accent-muted/50 p-6 shadow-deep";
+const ruleStackClass =
+  "overflow-hidden rounded-[24px] border border-white/10 bg-forest-elevated/70 shadow-deep";
 
 function normalizedPath(pathname: string) {
-  if (pathname === "/") {
-    return "/";
-  }
-
+  if (pathname === "/") return "/";
   return pathname.replace(/\/+$/, "");
 }
 
 function routeFromHref(href: string) {
-  if (href.startsWith("mailto:")) {
-    return href;
-  }
+  if (href.startsWith("mailto:")) return href;
 
   try {
     const url = new URL(href, window.location.origin);
-    return `${normalizedPath(url.pathname)}${url.hash}`;
+    return normalizedPath(url.pathname) + url.hash;
   } catch {
     return href;
   }
@@ -123,7 +124,6 @@ export default function App() {
       try {
         const url = new URL(href);
         const isLocalRoute = url.hostname === window.location.hostname || url.hostname === site.domain;
-
         if (!isLocalRoute) {
           window.location.href = href;
           return;
@@ -137,7 +137,7 @@ export default function App() {
     const next = routeFromHref(href);
     const [nextPath, hash = ""] = next.split("#");
     const targetPath = normalizedPath(nextPath || "/");
-    window.history.pushState({}, "", `${targetPath}${hash ? `#${hash}` : ""}`);
+    window.history.pushState({}, "", targetPath + (hash ? "#" + hash : ""));
     setPath(targetPath);
 
     window.setTimeout(() => {
@@ -158,7 +158,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-[100dvh] bg-paper text-text">
+    <div className="public-site min-h-[100dvh] bg-paper text-text">
       <Header activePath={activePath} navigate={navigate} />
       <main>
         {activePath === "/" && <HomePage navigate={navigate} />}
@@ -174,42 +174,47 @@ export default function App() {
 }
 
 function Header({ activePath, navigate }: { activePath: string; navigate: (href: string) => void }) {
-  const isHome = activePath === "/";
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => setMenuOpen(false), [activePath]);
+
+  function go(href: string) {
+    setMenuOpen(false);
+    navigate(href);
+  }
 
   return (
-    <header className={`${isHome ? "absolute" : "sticky border-b border-black/[0.06] bg-white/85 backdrop-blur-2xl"} top-0 z-40 w-full`}>
-      <div className={`${isHome ? "mt-3 rounded-[22px] border border-white/70 bg-white/72 shadow-[0_12px_40px_rgba(16,32,24,0.08)] backdrop-blur-2xl md:mt-5" : ""} mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3 md:px-5`}>
+    <header className="fixed top-0 z-40 w-full px-3 pt-3 md:px-5 md:pt-4">
+      <div className="mx-auto flex h-16 max-w-7xl items-center rounded-full border border-white/10 bg-forest/80 px-4 shadow-deep backdrop-blur-2xl md:px-5">
         <a
           href="/"
           onClick={(event) => {
             event.preventDefault();
-            navigate("/");
+            go("/");
           }}
-          className="leafy-pressable flex min-w-fit items-center gap-3 rounded-xl"
+          className="leafy-pressable flex min-w-fit items-center gap-3 rounded-full"
           aria-label="MyLeafy home"
         >
-          <img className="h-9 w-9 rounded-[10px] border border-black/[0.06] shadow-soft" src="/app-icon.png" alt="MyLeafy app icon" />
-          <strong className="text-xl font-semibold leading-none tracking-[-0.02em] text-text">MyLeafy</strong>
+          <img className="h-9 w-9 rounded-[11px] border border-white/10 shadow-deep" src="/app-icon.png" alt="MyLeafy app icon" />
+          <strong className="text-lg font-semibold leading-none tracking-[-0.025em] text-ivory">MyLeafy</strong>
         </a>
 
-        <nav className="leafy-scrollbar-none order-3 flex w-full min-w-0 gap-1 overflow-x-auto md:order-none md:ml-8 md:w-auto md:flex-1 md:items-center md:justify-center">
+        <nav className="ml-8 hidden flex-1 items-center justify-center gap-1 md:flex">
           {navItems.map((item) => {
             const route = routeFromHref(item.href).split("#")[0];
             const isActive = route === "/" ? activePath === "/" : activePath === route;
-
             return (
               <a
                 key={item.href}
                 href={item.href}
                 onClick={(event) => {
                   event.preventDefault();
-                  navigate(item.href);
+                  go(item.href);
                 }}
-                className={`leafy-pressable whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
-                  isActive
-                    ? "bg-primary-wash text-primary-ink"
-                    : "text-text/60 hover:bg-primary-soft hover:text-text"
-                }`}
+                className={
+                  "leafy-pressable whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition-colors " +
+                  (isActive ? "bg-white/10 text-ivory" : "text-ivory/60 hover:bg-white/[0.07] hover:text-ivory")
+                }
               >
                 {item.label}
               </a>
@@ -219,14 +224,46 @@ function Header({ activePath, navigate }: { activePath: string; navigate: (href:
 
         <div className="ml-auto flex items-center gap-2">
           <a
-            href={`mailto:${site.supportEmail}`}
-            className="leafy-pressable hidden rounded-xl px-3 py-2 text-sm font-medium text-text/60 transition-colors hover:bg-primary-soft hover:text-text sm:inline-flex"
+            href={"mailto:" + site.supportEmail}
+            className="leafy-pressable hidden rounded-full px-3 py-2 text-sm font-medium text-ivory/60 hover:bg-white/[0.07] hover:text-ivory lg:inline-flex"
           >
             Contact
           </a>
-          <AppStoreBadge compact />
+          <div className="hidden sm:block">
+            <AppStoreBadge compact />
+          </div>
+          <button
+            type="button"
+            className="leafy-pressable grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/[0.06] text-ivory md:hidden"
+            aria-label={menuOpen ? "Close navigation menu" : "Open navigation menu"}
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((value) => !value)}
+          >
+            {menuOpen ? <X size={21} weight="bold" aria-hidden /> : <List size={21} weight="bold" aria-hidden />}
+          </button>
         </div>
       </div>
+
+      {menuOpen && (
+        <nav className="mx-auto mt-2 grid max-w-7xl gap-1 rounded-[24px] border border-white/10 bg-forest/95 p-3 shadow-deep backdrop-blur-2xl md:hidden">
+          {navItems.map((item) => (
+            <a
+              key={item.href}
+              href={item.href}
+              onClick={(event) => {
+                event.preventDefault();
+                go(item.href);
+              }}
+              className="leafy-pressable rounded-2xl px-4 py-3 text-sm font-medium text-ivory/80 hover:bg-white/[0.07] hover:text-ivory"
+            >
+              {item.label}
+            </a>
+          ))}
+          <a className="leafy-pressable rounded-2xl px-4 py-3 text-sm font-medium text-accent" href={"mailto:" + site.supportEmail}>
+            Contact support
+          </a>
+        </nav>
+      )}
     </header>
   );
 }
@@ -234,21 +271,27 @@ function Header({ activePath, navigate }: { activePath: string; navigate: (href:
 function HomePage({ navigate }: { navigate: (href: string) => void }) {
   return (
     <>
-      <section className="relative isolate min-h-[880px] overflow-hidden bg-white pt-28 md:min-h-[min(960px,100svh)] md:pt-36">
-        <div className="absolute -right-40 top-8 -z-10 h-[620px] w-[620px] rounded-[44%_56%_64%_36%/52%_40%_60%_48%] bg-primary-wash opacity-90" aria-hidden />
-        <div className="absolute bottom-10 left-[42%] -z-10 h-72 w-72 rounded-[64%_36%_42%_58%/42%_58%_42%_58%] bg-[#f3f8e9]" aria-hidden />
-
-        <div className="mx-auto grid w-full max-w-7xl items-center gap-16 px-4 pb-20 md:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:gap-8 lg:pb-24">
-          <StaggerReveal className="relative z-10 max-w-2xl">
-            <h1 className="text-[clamp(3.7rem,7vw,6.8rem)] font-semibold leading-[0.92] tracking-[-0.065em] text-text">
+      <section className="hero-canvas relative isolate flex min-h-[100dvh] items-end overflow-hidden pt-24 lg:min-h-[760px]">
+        <img
+          className="absolute inset-0 -z-20 h-full w-full object-cover object-[48%_center]"
+          src="/media/campus/rainy-woodland-path.jpg"
+          alt=""
+          aria-hidden
+          decoding="async"
+        />
+        <div className="hero-scrim absolute inset-0 -z-10" aria-hidden />
+        <div className="mx-auto grid w-full max-w-7xl items-end gap-8 px-4 pb-10 md:px-6 md:pb-14 lg:grid-cols-[0.88fr_1.12fr] lg:gap-4">
+          <StaggerReveal className="relative z-10 max-w-xl pb-4 lg:pb-12">
+            <p className="mb-5 text-sm font-semibold text-accent">Built for BJFU students</p>
+            <h1 className="max-w-[720px] text-[clamp(3.4rem,7vw,6.6rem)] font-semibold leading-[0.91] tracking-[-0.065em] text-ivory">
               Campus life,<br />in one place.
             </h1>
-            <p className="mt-7 max-w-[620px] text-lg leading-relaxed text-text/64 md:text-xl">
-              Timetable, academics, community, and the everyday tools built for BJFU students.
+            <p className="mt-6 max-w-[500px] text-base leading-relaxed text-ivory/70 md:text-lg">
+              Timetable, academics, community, and campus answers in one focused iPhone app.
             </p>
-            <div className="mt-9 flex flex-col gap-3 sm:flex-row">
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <AppStoreBadge />
-              <TapButton onClick={() => navigate("/features")} className={`${secondaryButtonClass} px-5 text-[15px] font-semibold`}>
+              <TapButton onClick={() => navigate("/features")} className={secondaryButtonClass + " px-5 text-[15px] font-semibold"}>
                 Explore features
                 <ArrowRight size={17} weight="bold" aria-hidden />
               </TapButton>
@@ -259,64 +302,30 @@ function HomePage({ navigate }: { navigate: (href: string) => void }) {
         </div>
       </section>
 
-      <ProofRail />
-
-      <section className="overflow-hidden bg-white px-4 py-24 md:px-6 md:py-36">
-        <ScrollReveal className="mx-auto grid max-w-7xl items-center gap-14 lg:grid-cols-[0.9fr_1.1fr] lg:gap-24">
-          <div className="relative mx-auto w-full max-w-[500px]">
-            <div className="absolute inset-[12%_-8%_5%_-8%] -z-10 rounded-[50%_50%_42%_58%/52%_44%_56%_48%] bg-primary-wash" aria-hidden />
-            <PhoneFrame image={appScreenshots[0].image} alt={appScreenshots[0].alt} className="mx-auto w-[min(68vw,330px)]" />
-          </div>
-          <div className="max-w-xl">
-            <span className="mb-7 grid h-12 w-12 place-items-center rounded-2xl bg-primary-wash text-primary-ink">
-              <CalendarBlank size={24} weight="bold" aria-hidden />
-            </span>
-            <h2 className="text-4xl font-semibold leading-[1.04] tracking-[-0.045em] text-text md:text-6xl">Your timetable, beautifully simple.</h2>
-            <p className="mt-6 text-lg leading-relaxed text-text/64">
-              Open MyLeafy and see the week at a glance. Classes, rooms, reminders, and exam information stay close to the schedule you check every day.
-            </p>
-            <FeatureList items={["A clear week built around the school day", "Course details and reminders in context", "Calendar export when you need it elsewhere"]} />
-          </div>
-        </ScrollReveal>
-      </section>
-
-      <section className="border-y border-black/[0.05] bg-primary-soft px-4 py-24 md:px-6 md:py-36">
-        <ScrollReveal className="mx-auto grid max-w-7xl items-center gap-16 lg:grid-cols-[0.92fr_1.08fr] lg:gap-24">
-          <div className="max-w-xl lg:order-1">
-            <span className="mb-7 grid h-12 w-12 place-items-center rounded-2xl bg-white text-primary-ink shadow-soft">
-              <ChatsCircle size={24} weight="bold" aria-hidden />
-            </span>
-            <h2 className="text-4xl font-semibold leading-[1.04] tracking-[-0.045em] text-text md:text-6xl">More than a timetable.</h2>
-            <p className="mt-6 text-lg leading-relaxed text-text/64">
-              Academic tools and campus conversations have their own clear spaces, so checking grades never feels mixed up with browsing community posts.
-            </p>
-            <div className="mt-10 grid gap-0 border-y border-black/[0.08]">
-              <StoryRow icon={GraduationCap} title="Academics" body="Grades, exams, credits, study plans, and classroom lookup." />
-              <StoryRow icon={ChatsCircle} title="Community" body="Posts, notices, discussions, bookmarks, and notifications." />
-              <StoryRow icon={Sparkle} title="Personal" body="Themes, reminders, notes, sharing, and everyday preferences." />
-            </div>
-          </div>
-          <div className="relative min-h-[590px] lg:order-2">
-            <div className="absolute left-[5%] top-0 z-10 w-[min(56vw,285px)]">
-              <PhoneFrame image={appScreenshots[1].image} alt={appScreenshots[1].alt} />
-            </div>
-            <div className="absolute bottom-0 right-[3%] w-[min(56vw,285px)]">
-              <PhoneFrame image={appScreenshots[2].image} alt={appScreenshots[2].alt} />
-            </div>
-          </div>
-        </ScrollReveal>
-      </section>
-
+      <CampusIdentitySection />
+      <AppExperienceSection />
+      <CampusSeasonsSection />
       <HomeDataTrust />
 
-      <section className="bg-primary px-4 py-16 text-white md:px-6 md:py-20">
-        <ScrollReveal className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-8 md:flex-row md:items-center">
-          <div className="flex items-center gap-5">
-            <img className="h-20 w-20 rounded-[22px] border border-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.2)]" src="/app-icon.png" alt="MyLeafy app icon" />
-            <div>
-              <h2 className="text-3xl font-semibold tracking-[-0.035em] md:text-4xl">All set. Let’s get started.</h2>
-              <p className="mt-2 text-base text-white/70">Make the everyday parts of campus life simpler.</p>
-            </div>
+      <section className="relative isolate overflow-hidden px-4 py-24 md:px-6 md:py-32">
+        <img
+          className="absolute inset-0 -z-20 h-full w-full object-cover"
+          src="/media/campus/campus-skyline-dusk.jpg"
+          alt=""
+          aria-hidden
+          loading="lazy"
+          decoding="async"
+        />
+        <div className="absolute inset-0 -z-10 bg-forest/90" aria-hidden />
+        <ScrollReveal className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-9 md:flex-row md:items-end">
+          <div className="max-w-3xl">
+            <img className="h-16 w-16 rounded-[18px] border border-white/10 shadow-deep" src="/app-icon.png" alt="MyLeafy app icon" />
+            <h2 className="mt-8 text-4xl font-semibold leading-[0.98] tracking-[-0.045em] text-ivory md:text-6xl">
+              Your campus day,<br />within reach.
+            </h2>
+            <p className="mt-5 max-w-xl text-base leading-relaxed text-ivory/60">
+              Open MyLeafy and start with the week in front of you.
+            </p>
           </div>
           <AppStoreBadge />
         </ScrollReveal>
@@ -329,14 +338,10 @@ function AppStoreBadge({ compact = false }: { compact?: boolean }) {
   return (
     <a
       href={site.appStoreUrl}
-      className={`app-store-badge inline-flex shrink-0 ${compact ? "h-10" : "h-12"}`}
+      className={"app-store-badge leafy-pressable inline-flex shrink-0 " + (compact ? "h-10" : "h-12")}
       aria-label="Download MyLeafy on the App Store"
     >
-      <img
-        className="h-full w-auto max-w-none"
-        src="/media/download-on-the-app-store.svg"
-        alt="Download on the App Store"
-      />
+      <img className="h-full w-auto max-w-none" src="/media/download-on-the-app-store.svg" alt="Download on the App Store" />
     </a>
   );
 }
@@ -353,8 +358,8 @@ function PhoneFrame({
   loading?: "eager" | "lazy";
 }) {
   return (
-    <div className={`phone-frame relative aspect-[1350/2760] ${className}`}>
-      <div className="phone-screen absolute overflow-hidden bg-black">
+    <div className={"phone-frame relative aspect-[1350/2760] " + className}>
+      <div className="phone-screen absolute overflow-hidden bg-forest">
         <img className="h-full w-full bg-white object-fill" src={image} alt={alt} loading={loading} decoding="async" />
       </div>
       <img
@@ -371,99 +376,180 @@ function PhoneFrame({
 
 function HeroPhones() {
   return (
-    <div className="relative mx-auto min-h-[590px] w-full max-w-[650px] lg:min-h-[670px]" aria-label="MyLeafy app previews">
-      <div className="hero-phone absolute left-[3%] top-[10%] z-10 w-[min(53vw,310px)]">
+    <div className="relative mx-auto min-h-[500px] w-full max-w-[650px] sm:min-h-[590px] lg:min-h-[650px]" aria-label="MyLeafy app previews">
+      <div className="hero-phone absolute bottom-0 left-[3%] z-10 w-[min(48vw,292px)]">
         <PhoneFrame image={appScreenshots[0].image} alt={appScreenshots[0].alt} />
       </div>
-      <div className="hero-phone absolute bottom-[1%] right-[2%] w-[min(53vw,310px)]">
+      <div className="hero-phone absolute bottom-[-8%] right-[4%] w-[min(48vw,292px)]">
         <PhoneFrame image={appScreenshots[1].image} alt={appScreenshots[1].alt} />
       </div>
     </div>
   );
 }
 
-function ProofRail() {
+function CampusIdentitySection() {
+  return (
+    <section className="bg-paper px-4 py-16 md:px-6 md:py-20">
+      <ScrollReveal className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[0.65fr_1.35fr] lg:items-end">
+        <div className="lg:order-2">
+          <div className="overflow-hidden rounded-[28px] border border-white/10 bg-forest-elevated shadow-deep">
+            <img
+              className="aspect-[16/9] h-full w-full object-cover"
+              src="/media/campus/classroom-at-dusk.jpg"
+              alt="A quiet BJFU classroom framed by evening windows"
+              loading="lazy"
+              decoding="async"
+            />
+          </div>
+        </div>
+        <div className="grid gap-8 lg:order-1 lg:pb-5">
+          <div>
+            <h2 className="max-w-xl text-4xl font-semibold leading-[1.02] tracking-[-0.045em] text-ivory md:text-5xl">
+              Made from the life already happening here.
+            </h2>
+            <p className="mt-5 max-w-lg text-base leading-relaxed text-ivory/60">
+              MyLeafy brings school systems and everyday campus routines into one calmer experience.
+            </p>
+          </div>
+          <div className="overflow-hidden rounded-[24px] border border-white/10 shadow-deep">
+            <img
+              className="aspect-[3/2] w-full object-cover"
+              src="/media/campus/campus-entrance-bicycles.jpg"
+              alt="Bicycles beside a stone lion at a BJFU campus entrance"
+              loading="lazy"
+              decoding="async"
+            />
+          </div>
+        </div>
+      </ScrollReveal>
+    </section>
+  );
+}
+
+function AppExperienceSection() {
   const items = [
-    { icon: Buildings, title: "BJFU", body: "Made for Beijing Forestry University." },
-    { icon: CalendarBlank, title: "Timetable first", body: "The week you need, at a glance." },
-    { icon: ShieldCheck, title: "Privacy by design", body: "Clear boundaries and local control." },
-    { icon: DeviceMobile, title: "Built for iPhone", body: "Native, focused, and familiar." }
+    { icon: CalendarBlank, title: "Timetable first", body: "See the current week, classes, rooms, reminders, and exams at a glance." },
+    { icon: GraduationCap, title: "Academics together", body: "Grades, plans, credits, classrooms, and the academic calendar stay organized." },
+    { icon: ChatsCircle, title: "Community separate", body: "Campus posts and notices have their own space, away from school login data." }
   ];
 
   return (
-    <section className="border-y border-black/[0.05] bg-primary-soft px-4 md:px-6">
-      <div className="mx-auto grid max-w-7xl divide-y divide-black/[0.07] md:grid-cols-4 md:divide-x md:divide-y-0">
-        {items.map((item) => {
-          const Icon = item.icon;
-          return (
-            <div key={item.title} className="px-1 py-7 md:px-7 md:py-9 first:md:pl-0 last:md:pr-0">
-              <Icon size={25} weight="bold" className="text-primary-ink" aria-hidden />
-              <p className="mt-5 text-base font-semibold tracking-[-0.015em] text-text">{item.title}</p>
-              <p className="mt-2 text-sm leading-relaxed text-text/58">{item.body}</p>
-            </div>
-          );
-        })}
+    <section className="overflow-hidden border-y border-white/[0.07] bg-forest-low px-4 py-24 md:px-6 md:py-36">
+      <div className="mx-auto max-w-7xl">
+        <ScrollReveal className="max-w-3xl">
+          <p className="text-sm font-semibold text-accent">Inside MyLeafy</p>
+          <h2 className="mt-5 text-4xl font-semibold leading-[1] tracking-[-0.05em] text-ivory md:text-6xl">
+            The week comes first.<br />Everything else stays close.
+          </h2>
+        </ScrollReveal>
+
+        <div className="mt-16 grid gap-12 lg:grid-cols-[0.7fr_1.3fr] lg:items-center">
+          <div className="border-t border-white/10">
+            {items.map((item) => {
+              const Icon = item.icon;
+              return (
+                <ScrollReveal key={item.title} className="grid grid-cols-[44px_1fr] gap-4 border-b border-white/10 py-6">
+                  <span className="grid h-10 w-10 place-items-center rounded-xl bg-accent-muted text-accent">
+                    <Icon size={20} weight="bold" aria-hidden />
+                  </span>
+                  <div>
+                    <h3 className="text-base font-semibold text-ivory">{item.title}</h3>
+                    <p className="mt-2 text-sm leading-relaxed text-ivory/60">{item.body}</p>
+                  </div>
+                </ScrollReveal>
+              );
+            })}
+          </div>
+
+          <ScrollReveal className="leafy-scrollbar-none -mx-4 flex snap-x snap-mandatory gap-5 overflow-x-auto px-4 pb-6 md:-mx-6 md:px-6 lg:mx-0 lg:px-0">
+            {appScreenshots.slice(0, 3).map((shot, index) => (
+              <div
+                key={shot.label}
+                className={"shrink-0 snap-center " + (index === 1 ? "mt-14 w-[min(62vw,260px)]" : "w-[min(62vw,285px)]")}
+              >
+                <PhoneFrame image={shot.image} alt={shot.alt} loading={index === 0 ? "eager" : "lazy"} />
+              </div>
+            ))}
+          </ScrollReveal>
+        </div>
       </div>
     </section>
   );
 }
 
-function FeatureList({ items }: { items: string[] }) {
+function CampusSeasonsSection() {
   return (
-    <div className="mt-8 grid gap-4">
-      {items.map((item) => (
-        <div key={item} className="flex items-start gap-3 text-[15px] leading-relaxed text-text/72">
-          <CheckCircle className="mt-0.5 shrink-0 text-primary" size={19} weight="fill" aria-hidden />
-          <span>{item}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
+    <section className="bg-paper px-4 py-24 md:px-6 md:py-36">
+      <div className="mx-auto max-w-7xl">
+        <ScrollReveal className="max-w-3xl">
+          <h2 className="text-4xl font-semibold leading-[1.02] tracking-[-0.045em] text-ivory md:text-6xl">
+            One campus, through every season.
+          </h2>
+          <p className="mt-5 max-w-xl text-base leading-relaxed text-ivory/60">
+            The tools stay consistent while the campus around them keeps changing.
+          </p>
+        </ScrollReveal>
 
-function StoryRow({ icon: Icon, title, body }: { icon: IconComponent; title: string; body: string }) {
-  return (
-    <div className="grid grid-cols-[44px_1fr] gap-4 border-b border-black/[0.08] py-5 last:border-b-0">
-      <span className="grid h-10 w-10 place-items-center rounded-xl bg-white text-primary-ink shadow-soft">
-        <Icon size={20} weight="bold" aria-hidden />
-      </span>
-      <div>
-        <h3 className="text-base font-semibold text-text">{title}</h3>
-        <p className="mt-1 text-sm leading-relaxed text-text/58">{body}</p>
+        <div className="mt-14 grid gap-5 md:grid-cols-[1.08fr_0.92fr] md:grid-rows-2">
+          <ScrollReveal className="overflow-hidden rounded-[28px] border border-white/10 md:row-span-2">
+            <img
+              className="h-full min-h-[520px] w-full object-cover"
+              src="/media/campus/autumn-campus-canopy.jpg"
+              alt="Golden autumn trees framing a BJFU campus building"
+              loading="lazy"
+              decoding="async"
+            />
+          </ScrollReveal>
+          <ScrollReveal className="overflow-hidden rounded-[28px] border border-white/10">
+            <img
+              className="aspect-[16/10] h-full w-full object-cover object-[center_70%]"
+              src="/media/campus/spring-blossoms-cat.jpg"
+              alt="A campus cat under spring blossoms at BJFU"
+              loading="lazy"
+              decoding="async"
+            />
+          </ScrollReveal>
+          <ScrollReveal className="overflow-hidden rounded-[28px] border border-white/10">
+            <img
+              className="aspect-[16/10] h-full w-full object-cover object-[center_58%]"
+              src="/media/campus/snowy-campus-building.jpg"
+              alt="A BJFU campus building surrounded by snow-covered trees"
+              loading="lazy"
+              decoding="async"
+            />
+          </ScrollReveal>
+        </div>
       </div>
-    </div>
+    </section>
   );
 }
 
 function HomeDataTrust() {
-  const items = [
-    { icon: Buildings, title: "School data", body: "Timetable and academics come from the official school system." },
-    { icon: Database, title: "Local cache", body: "Recent information stays on your device for reliable everyday access." },
-    { icon: CloudCheck, title: "Community service", body: "Community content is separate from your school login session." }
-  ];
+  const icons = [Buildings, Database, CloudCheck, ShieldCheck];
 
   return (
-    <section className="bg-white px-4 py-24 md:px-6 md:py-32">
-      <ScrollReveal className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[0.72fr_1.28fr] lg:gap-20">
+    <section className="border-t border-white/[0.07] bg-forest-low px-4 py-24 md:px-6 md:py-32">
+      <ScrollReveal className="mx-auto grid max-w-7xl gap-14 lg:grid-cols-[0.72fr_1.28fr] lg:gap-24">
         <div>
-          <span className="grid h-12 w-12 place-items-center rounded-2xl bg-primary-wash text-primary-ink">
+          <span className="grid h-12 w-12 place-items-center rounded-2xl bg-accent-muted text-accent">
             <LockKey size={24} weight="bold" aria-hidden />
           </span>
-          <h2 className="mt-7 max-w-lg text-4xl font-semibold leading-[1.04] tracking-[-0.045em] text-text md:text-5xl">Your data, protected by design.</h2>
-          <p className="mt-6 max-w-lg text-base leading-relaxed text-text/62">
-            MyLeafy keeps school data, device storage, and community services understandable and separate.
+          <h2 className="mt-8 max-w-lg text-4xl font-semibold leading-[1.02] tracking-[-0.045em] text-ivory md:text-5xl">
+            Clear boundaries for every kind of data.
+          </h2>
+          <p className="mt-5 max-w-md text-base leading-relaxed text-ivory/60">
+            School data, local storage, community services, and the public website remain understandable and separate.
           </p>
         </div>
-        <div className="border-y border-black/[0.08]">
-          {items.map((item) => {
-            const Icon = item.icon;
+        <div className="grid gap-x-10 gap-y-9 sm:grid-cols-2">
+          {homeDataBoundaries.map((item, index) => {
+            const Icon = icons[index] ?? ShieldCheck;
             return (
-              <div key={item.title} className="grid gap-4 border-b border-black/[0.08] py-6 last:border-b-0 sm:grid-cols-[52px_0.42fr_1fr] sm:items-center">
-                <span className="grid h-11 w-11 place-items-center rounded-xl bg-primary-wash text-primary-ink">
-                  <Icon size={21} weight="bold" aria-hidden />
-                </span>
-                <h3 className="text-base font-semibold text-text">{item.title}</h3>
-                <p className="text-sm leading-relaxed text-text/58">{item.body}</p>
+              <div key={item.label} className="border-t border-white/10 pt-5">
+                <Icon size={22} weight="bold" className="text-accent" aria-hidden />
+                <p className="mt-5 text-sm font-semibold text-ivory/50">{item.label}</p>
+                <h3 className="mt-2 text-2xl font-semibold tracking-[-0.025em] text-ivory">{item.value}</h3>
+                <p className="mt-3 text-sm leading-relaxed text-ivory/50">{item.body}</p>
               </div>
             );
           })}
@@ -476,43 +562,48 @@ function HomeDataTrust() {
 function FeaturesPage({ navigate }: { navigate: (href: string) => void }) {
   return (
     <>
+      <section className="relative isolate overflow-hidden px-4 pb-20 pt-32 md:px-6 md:pb-28 md:pt-40">
+        <img
+          className="absolute inset-0 -z-20 h-full w-full object-cover object-[center_54%]"
+          src="/media/campus/autumn-campus-canopy.jpg"
+          alt=""
+          aria-hidden
+          decoding="async"
+        />
+        <div className="hero-scrim absolute inset-0 -z-10" aria-hidden />
+        <div className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[1fr_0.7fr] lg:items-end">
+          <StaggerReveal className="max-w-3xl">
+            <p className="text-sm font-semibold text-accent">Features</p>
+            <h1 className="mt-5 text-[clamp(3.4rem,7vw,6.4rem)] font-semibold leading-[0.92] tracking-[-0.06em] text-ivory">
+              Built around<br />campus rhythm.
+            </h1>
+            <p className="mt-6 max-w-xl text-base leading-relaxed text-ivory/70 md:text-lg">
+              From the first class to the last campus notice, MyLeafy keeps the day clear.
+            </p>
+          </StaggerReveal>
+          <div className="mx-auto w-[min(58vw,285px)] lg:mr-12">
+            <PhoneFrame image={appScreenshots[2].image} alt={appScreenshots[2].alt} />
+          </div>
+        </div>
+      </section>
+
       <CapabilityRail />
 
-      <SectionShell
-        id="product"
-        eyebrow="Product"
-        title="Built around the rhythm of campus life"
-      >
-        <div className="grid gap-4 md:grid-cols-2">
-          {featureBands.map((item) => (
-            <FeatureBandCard key={item.label} item={item} />
-          ))}
-        </div>
+      <SectionShell id="product" title="Four spaces, one daily flow" body="Each part has a clear job, so the app stays easy to scan.">
+        <FeatureBandList />
       </SectionShell>
 
       <FeatureImageShowcase />
 
-      <section id="data" className="border-y border-black/10 bg-surface-high/70">
-        <SectionShell
-          eyebrow="Data"
-          title="Data sources"
-          flush
-        >
+      <section id="data" className="scroll-mt-24 border-y border-white/[0.07] bg-forest-low">
+        <SectionShell title="Where your data lives" body="The source and purpose of each data group remain visible.">
           <DataBoundaryTable />
         </SectionShell>
       </section>
 
-      <section id="community" className="bg-paper">
-        <SectionShell
-          eyebrow="Workflow"
-          title="Daily paths"
-          flush
-        >
-          <div className="grid gap-4 lg:grid-cols-3">
-            {workflowCards.map((item) => (
-              <WorkflowCard key={item.title} item={item} />
-            ))}
-          </div>
+      <section id="community" className="scroll-mt-24 bg-paper">
+        <SectionShell title="Designed for frequent checks">
+          <WorkflowList />
         </SectionShell>
       </section>
 
@@ -523,15 +614,12 @@ function FeaturesPage({ navigate }: { navigate: (href: string) => void }) {
 
 function CapabilityRail() {
   return (
-    <section className="border-b border-black/10 bg-white/80 py-3 backdrop-blur">
-      <div className="leafy-scrollbar-none mx-auto flex max-w-7xl gap-3 overflow-x-auto px-4 md:px-6">
+    <section className="border-y border-white/[0.07] bg-forest">
+      <div className="leafy-scrollbar-none mx-auto flex max-w-7xl overflow-x-auto px-4 md:px-6">
         {capabilityStats.map((metric) => (
-          <div
-            key={metric.label}
-            className="flex min-w-52 items-center justify-between gap-7 rounded-lg border border-black/10 bg-paper/75 px-4 py-3"
-          >
-            <span className="text-sm font-medium text-text/60">{metric.label}</span>
-            <span className="text-sm font-semibold text-text">{metric.value}</span>
+          <div key={metric.label} className="min-w-[220px] flex-1 border-r border-white/[0.08] px-5 py-7 first:pl-0 last:border-r-0 last:pr-0">
+            <span className="block text-xs font-medium text-ivory/40">{metric.label}</span>
+            <span className="mt-2 block text-sm font-semibold text-ivory">{metric.value}</span>
           </div>
         ))}
       </div>
@@ -539,116 +627,117 @@ function CapabilityRail() {
   );
 }
 
+function FeatureBandList() {
+  return (
+    <div className="grid gap-x-10 gap-y-0 lg:grid-cols-2">
+      {featureBands.map((item) => {
+        const Icon = item.icon;
+        return (
+          <ScrollReveal key={item.label} className="grid grid-cols-[48px_1fr] gap-5 border-t border-white/10 py-8">
+            <span className="grid h-11 w-11 place-items-center rounded-xl bg-accent-muted text-accent">
+              <Icon size={22} weight="bold" aria-hidden />
+            </span>
+            <div>
+              <p className="text-sm font-semibold text-accent">{item.label}</p>
+              <h3 className="mt-3 text-2xl font-semibold leading-tight tracking-[-0.025em] text-ivory">{item.title}</h3>
+              <p className="mt-3 max-w-xl text-sm leading-relaxed text-ivory/60">{item.body}</p>
+            </div>
+          </ScrollReveal>
+        );
+      })}
+    </div>
+  );
+}
+
 function FeatureImageShowcase() {
   return (
-    <section id="screens" className="scroll-mt-24 border-y border-black/[0.06] bg-primary-soft">
-      <div className="mx-auto max-w-7xl px-4 py-16 md:px-6 md:py-24">
-        <div className="mb-12 max-w-4xl">
-          <p className="text-sm font-semibold text-primary-ink">Inside the app</p>
-          <h2 className="mt-4 text-4xl font-semibold leading-tight tracking-[-0.045em] text-text md:text-6xl">One focused place for campus routines.</h2>
-          <p className="mt-5 max-w-[720px] text-base leading-relaxed text-text/64">
-            Timetable, community, grades, credits, assessment, and timetable sharing.
+    <section id="screens" className="scroll-mt-24 overflow-hidden border-y border-white/[0.07] bg-forest-low py-24 md:py-32">
+      <div className="mx-auto max-w-7xl px-4 md:px-6">
+        <ScrollReveal className="max-w-3xl">
+          <p className="text-sm font-semibold text-accent">Inside the app</p>
+          <h2 className="mt-5 text-4xl font-semibold leading-[1] tracking-[-0.05em] text-ivory md:text-6xl">
+            A focused view for every routine.
+          </h2>
+          <p className="mt-5 max-w-xl text-base leading-relaxed text-ivory/60">
+            Timetable, community, grades, study materials, campus information, and Leafy AI.
           </p>
-        </div>
+        </ScrollReveal>
+      </div>
 
-        <div className="leafy-scrollbar-none -mx-4 flex snap-x snap-mandatory gap-5 overflow-x-auto px-4 pb-5 md:-mx-6 md:px-6">
-          {featureShowcases.map((shot, index) => (
-            <article
-              key={shot.label}
-              className="w-[min(82vw,340px)] shrink-0 snap-start overflow-hidden rounded-[28px] border border-black/[0.07] bg-white shadow-[0_18px_50px_rgba(16,32,24,0.07)]"
-            >
-              <div className="flex min-h-[600px] items-center justify-center bg-primary-wash px-6 py-8">
-                <PhoneFrame
-                  image={shot.image}
-                  alt={shot.alt}
-                  className="w-[82%]"
-                  loading={index < 2 ? "eager" : "lazy"}
-                />
-              </div>
-              <div className="p-6">
-                <p className="text-xs font-semibold text-primary-ink">{shot.label}</p>
-                <h3 className="mt-2 text-2xl font-semibold leading-tight tracking-[-0.025em] text-text">{shot.title}</h3>
-                <p className="mt-3 text-sm font-normal leading-relaxed text-text/62">{shot.body}</p>
-              </div>
-            </article>
-          ))}
-        </div>
+      <div className="leafy-scrollbar-none mt-14 flex snap-x snap-mandatory gap-5 overflow-x-auto px-[max(1rem,calc((100vw-80rem)/2))] pb-7 md:gap-7">
+        {featureShowcases.map((shot, index) => (
+          <article key={shot.label} className="w-[min(82vw,340px)] shrink-0 snap-start">
+            <div className="flex min-h-[590px] items-center justify-center rounded-[28px] border border-white/10 bg-forest p-6 shadow-deep">
+              <PhoneFrame image={shot.image} alt={shot.alt} className="w-[84%]" loading={index < 2 ? "eager" : "lazy"} />
+            </div>
+            <p className="mt-5 text-sm font-semibold text-accent">{shot.label}</p>
+            <h3 className="mt-2 text-2xl font-semibold leading-tight tracking-[-0.025em] text-ivory">{shot.title}</h3>
+            <p className="mt-3 text-sm leading-relaxed text-ivory/50">{shot.body}</p>
+          </article>
+        ))}
       </div>
     </section>
   );
 }
 
-function FeatureBandCard({
-  item
-}: {
-  item: {
-    icon: IconComponent;
-    label: string;
-    title: string;
-    body: string;
-  };
-}) {
-  const Icon = item.icon;
-
-  return (
-    <article className="rounded-[24px] border border-black/[0.07] bg-white p-7 shadow-[0_18px_50px_rgba(16,32,24,0.055)]">
-      <div className="mb-7 flex items-center justify-between gap-3">
-        <span className="grid h-11 w-11 place-items-center rounded-2xl bg-primary-wash text-primary-ink">
-          <Icon size={23} weight="bold" aria-hidden />
-        </span>
-        <span className="text-xs font-semibold text-primary-ink">{item.label}</span>
-      </div>
-      <h3 className="text-xl font-semibold leading-tight tracking-[-0.02em] text-text">{item.title}</h3>
-      <p className="mt-4 text-sm font-normal leading-relaxed text-text/62">{item.body}</p>
-    </article>
-  );
-}
-
 function DataBoundaryTable() {
   return (
-    <div className={ruleStackClass}>
+    <div className="grid gap-5 md:grid-cols-2">
       {homeDataBoundaries.map((item) => (
-        <div key={item.label} className="grid gap-3 border-b border-black/10 px-5 py-6 last:border-b-0 md:grid-cols-[0.7fr_0.65fr_1.65fr] md:items-start">
-          <p className="text-sm font-semibold text-text/60">{item.label}</p>
-          <p className="text-sm font-semibold text-text">{item.value}</p>
-          <p className="max-w-[72ch] text-sm font-normal leading-relaxed text-text/70">{item.body}</p>
+        <div key={item.label} className="rounded-[24px] border border-white/10 bg-forest-elevated/60 p-6">
+          <p className="text-sm font-semibold text-accent">{item.label}</p>
+          <h3 className="mt-4 text-3xl font-semibold tracking-[-0.03em] text-ivory">{item.value}</h3>
+          <p className="mt-4 text-sm leading-relaxed text-ivory/60">{item.body}</p>
         </div>
       ))}
     </div>
   );
 }
 
-function WorkflowCard({ item }: { item: { icon: IconComponent; title: string; body: string } }) {
-  const Icon = item.icon;
-
+function WorkflowList() {
   return (
-    <article className="rounded-lg border border-black/10 bg-white/90 p-6 shadow-soft">
-      <div className="grid h-11 w-11 place-items-center rounded-lg border border-black/10 bg-paper text-primary-ink">
-        <Icon size={23} weight="bold" aria-hidden />
+    <div className="grid gap-12 lg:grid-cols-[0.7fr_1.3fr]">
+      <div className="overflow-hidden rounded-[28px] border border-white/10">
+        <img
+          className="h-full min-h-[430px] w-full object-cover"
+          src="/media/campus/campus-entrance-bicycles.jpg"
+          alt="Bicycles parked beside a BJFU campus entrance"
+          loading="lazy"
+          decoding="async"
+        />
       </div>
-      <h3 className="mt-7 text-2xl font-semibold leading-tight text-text">{item.title}</h3>
-      <p className="mt-4 text-sm font-normal leading-relaxed text-text/70">{item.body}</p>
-    </article>
+      <div className="border-t border-white/10">
+        {workflowCards.map((item) => {
+          const Icon = item.icon;
+          return (
+            <div key={item.title} className="grid grid-cols-[48px_1fr] gap-5 border-b border-white/10 py-7">
+              <span className="grid h-11 w-11 place-items-center rounded-xl bg-accent-muted text-accent">
+                <Icon size={22} weight="bold" aria-hidden />
+              </span>
+              <div>
+                <h3 className="text-2xl font-semibold tracking-[-0.025em] text-ivory">{item.title}</h3>
+                <p className="mt-3 max-w-2xl text-sm leading-relaxed text-ivory/60">{item.body}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
 function ResourcesSection({ navigate }: { navigate: (href: string) => void }) {
   return (
-    <section className="border-t border-black/10 bg-surface-high/70">
-      <SectionShell
-        eyebrow="Resources"
-        title="Public support and App Store links"
-        flush
-      >
-        <div className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
+    <section className="border-t border-white/[0.07] bg-paper">
+      <SectionShell title="Support and public links">
+        <div className="grid gap-5 lg:grid-cols-[0.74fr_1.26fr]">
           <div className={featuredPanelClass}>
-            <LockKey size={25} weight="bold" className="text-primary-ink" aria-hidden />
-            <p className="mt-5 text-2xl font-semibold leading-tight text-text">Contact and policy links</p>
-            <p className="mt-4 text-sm font-normal leading-relaxed text-text/70">
+            <LockKey size={25} weight="bold" className="text-accent" aria-hidden />
+            <p className="mt-6 text-2xl font-semibold leading-tight text-ivory">Contact and policy links</p>
+            <p className="mt-4 text-sm leading-relaxed text-ivory/60">
               Support: {site.supportEmail}. Privacy policy: {site.privacyUrl}.
             </p>
           </div>
-
           <div className="grid gap-4 md:grid-cols-3">
             {resourceLinks.map((link) => (
               <a
@@ -658,11 +747,11 @@ function ResourcesSection({ navigate }: { navigate: (href: string) => void }) {
                   event.preventDefault();
                   navigate(link.href);
                 }}
-                className="group rounded-lg border border-black/10 bg-white/90 p-5 shadow-soft transition-colors hover:bg-primary-soft"
+                className="group rounded-[24px] border border-white/10 bg-forest-elevated/70 p-5 transition-colors hover:border-accent/30 hover:bg-forest-elevated"
               >
-                <p className="text-sm font-semibold text-text/60">{link.title}</p>
-                <p className="mt-3 min-h-24 text-sm font-normal leading-relaxed text-text/70">{link.body}</p>
-                <span className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-primary-ink">
+                <p className="text-sm font-semibold text-ivory/50">{link.title}</p>
+                <p className="mt-4 min-h-24 text-sm leading-relaxed text-ivory/60">{link.body}</p>
+                <span className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-accent">
                   {link.cta}
                   <ArrowRight size={16} weight="bold" className="transition-transform group-hover:translate-x-1" aria-hidden />
                 </span>
@@ -671,7 +760,7 @@ function ResourcesSection({ navigate }: { navigate: (href: string) => void }) {
           </div>
         </div>
 
-        <div className={`${ruleStackClass} mt-4`}>
+        <div className={ruleStackClass + " mt-5"}>
           {appStoreLinks.map((link) => (
             <a
               key={link.label}
@@ -682,11 +771,11 @@ function ResourcesSection({ navigate }: { navigate: (href: string) => void }) {
                   navigate(link.value);
                 }
               }}
-              className="group grid gap-2 border-b border-black/10 px-5 py-5 transition-colors last:border-b-0 hover:bg-primary-soft md:grid-cols-[0.9fr_1.4fr_auto] md:items-center"
+              className="group grid gap-2 border-b border-white/10 px-5 py-5 last:border-b-0 hover:bg-white/[0.035] md:grid-cols-[0.9fr_1.4fr_auto] md:items-center"
             >
-              <span className="text-sm font-semibold text-text/60">{link.label}</span>
-              <span className="break-all text-sm font-medium text-text">{link.value}</span>
-              <ArrowRight size={18} weight="bold" className="text-primary-ink transition-transform group-hover:translate-x-1" aria-hidden />
+              <span className="text-sm font-semibold text-ivory/50">{link.label}</span>
+              <span className="break-all text-sm font-medium text-ivory">{link.value}</span>
+              <ArrowRight size={18} weight="bold" className="text-accent transition-transform group-hover:translate-x-1" aria-hidden />
             </a>
           ))}
         </div>
@@ -696,15 +785,17 @@ function ResourcesSection({ navigate }: { navigate: (href: string) => void }) {
 }
 
 function SupportPage() {
-  const mailto = `mailto:${site.supportEmail}?subject=MyLeafy Support`;
+  const mailto = "mailto:" + site.supportEmail + "?subject=MyLeafy Support";
 
   return (
     <>
       <PageHero
-        icon={Lifebuoy}
+        icon={Headset}
         label="Support"
-        title="Support"
-        body="For login, sync, timetable parsing, community, shared timetable, or rating issues, contact support by email or through in-app feedback."
+        title="Help when campus data gets complicated."
+        body="For login, sync, timetable parsing, community, sharing, or ratings, contact support by email or through in-app feedback."
+        image="/media/campus/snowy-campus-building.jpg"
+        imageAlt="A snow-covered BJFU campus building"
       >
         <div className="mt-8 flex flex-col gap-3 sm:flex-row">
           <TapButton href={mailto} className={primaryButtonClass}>
@@ -715,32 +806,32 @@ function SupportPage() {
         </div>
       </PageHero>
 
-      <SectionShell eyebrow="Contact" title="Public contact" body="Email works for general support and privacy requests. In-app feedback is better for issues that need sync state, version, and device context.">
-        <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+      <SectionShell title="Public contact" body="Email works for general support and privacy requests. In-app feedback is better when an issue needs device and sync context.">
+        <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
           <div className={panelClass}>
-            <p className="text-sm font-semibold text-text/60">Support email</p>
-            <a className="mt-3 block break-all text-3xl font-semibold leading-tight text-text hover:text-primary-ink" href={mailto}>
+            <p className="text-sm font-semibold text-ivory/50">Support email</p>
+            <a className="mt-3 block break-all text-3xl font-semibold leading-tight text-ivory hover:text-accent" href={mailto}>
               {site.supportEmail}
             </a>
-            <p className="mt-4 max-w-[68ch] text-sm font-normal leading-relaxed text-text/70">
-              Use this address for App Store support, general feedback, feature requests, and privacy access, correction, or deletion requests.
+            <p className="mt-4 max-w-[68ch] text-sm leading-relaxed text-ivory/60">
+              Use this address for App Store support, general feedback, feature requests, and privacy requests.
             </p>
           </div>
-          <div id="in-app" className={`${featuredPanelClass} scroll-mt-24`}>
-            <CheckCircle size={24} weight="bold" className="text-primary-ink" aria-hidden />
-            <p className="mt-4 text-xl font-semibold text-text">In-app feedback is better for diagnostics</p>
-            <p className="mt-3 text-sm font-normal leading-relaxed text-text/70">
-              In-app feedback can include device model, system version, app version, login state, and latest sync time.
+          <div id="in-app" className={featuredPanelClass + " scroll-mt-24"}>
+            <CheckCircle size={24} weight="bold" className="text-accent" aria-hidden />
+            <p className="mt-4 text-xl font-semibold text-ivory">In-app feedback includes useful context</p>
+            <p className="mt-3 text-sm leading-relaxed text-ivory/60">
+              It can include device model, system version, app version, login state, and latest sync time.
             </p>
           </div>
         </div>
       </SectionShell>
 
-      <SectionShell eyebrow="Before sending" title="Information to include">
+      <SectionShell title="Information to include">
         <NumberedList items={supportChecklist} />
       </SectionShell>
 
-      <SectionShell eyebrow="Scope" title="Common support topics">
+      <SectionShell title="Common support topics">
         <AsymmetricIconGrid items={supportTopics} />
       </SectionShell>
     </>
@@ -753,26 +844,28 @@ function PrivacyPage() {
       <PageHero
         icon={ShieldCheck}
         label="Privacy"
-        title="Privacy Policy"
-        body={`This policy explains how MyLeafy handles school login, local cache, community, feedback, ratings, shared timetable, and website data. Last updated: ${site.updatedAt}.`}
+        title="Clear data boundaries, written plainly."
+        body={"How MyLeafy handles school login, local cache, community, feedback, ratings, sharing, and website data. Updated " + site.updatedAt + "."}
+        image="/media/campus/classroom-at-dusk.jpg"
+        imageAlt="A quiet BJFU classroom at dusk"
       >
         <div className="mt-8 flex flex-col gap-3 sm:flex-row">
           <TapButton href="#privacy-rights" className={primaryButtonClass}>
             <LockKey size={18} weight="bold" aria-hidden />
             View privacy choices
           </TapButton>
-          <TapButton href={`mailto:${site.supportEmail}?subject=MyLeafy Privacy Request`} className={secondaryButtonClass}>
+          <TapButton href={"mailto:" + site.supportEmail + "?subject=MyLeafy Privacy Request"} className={secondaryButtonClass}>
             <EnvelopeSimple size={18} weight="bold" aria-hidden />
             Send privacy request
           </TapButton>
         </div>
       </PageHero>
 
-      <SectionShell eyebrow="Quick read" title="Four things to know">
+      <SectionShell title="Four things to know">
         <AsymmetricIconGrid items={privacySummaryCards} />
       </SectionShell>
 
-      <article className="mx-auto max-w-5xl px-4 py-14 md:px-6">
+      <article className="mx-auto max-w-6xl px-4 pb-24 md:px-6 md:pb-32">
         <div className={ruleStackClass}>
           {privacySections.map((section) => (
             <PrivacySection key={section.title} section={section} />
@@ -798,25 +891,27 @@ function ShareTimetablePage({ code }: { code: string }) {
       <PageHero
         icon={CalendarBlank}
         label="Shared timetable"
-        title="Shared timetable invite"
-        body="Copy the invite code, then open MyLeafy and accept it from Profile -> Shared Timetable -> +."
+        title="Open a shared week in MyLeafy."
+        body="Copy the invite code, then accept it from Profile, Shared Timetable, and the add button."
+        image="/media/campus/spring-blossoms-cat.jpg"
+        imageAlt="Spring blossoms and a campus cat at BJFU"
       >
         <div className="mt-8 grid max-w-xl gap-4">
           <div className={featuredPanelClass}>
-            <p className="text-sm font-semibold text-text/60">Invite code</p>
-            <p className="mt-3 break-all text-5xl font-semibold tracking-normal text-text">{normalizedCode || "Not recognized"}</p>
-            <p className="mt-4 text-sm font-normal leading-relaxed text-text/70">
+            <p className="text-sm font-semibold text-ivory/50">Invite code</p>
+            <p className="mt-3 break-all text-5xl font-semibold tracking-[-0.03em] text-ivory">{normalizedCode || "Not recognized"}</p>
+            <p className="mt-4 text-sm leading-relaxed text-ivory/60">
               Invite codes are valid for seven days and can be accepted by one person. Access can be revoked later.
             </p>
           </div>
-          <button type="button" onClick={copyCode} className={`${primaryButtonClass} inline-flex min-h-11 w-fit items-center gap-2 rounded-lg px-5 text-sm font-medium`}>
+          <button type="button" onClick={copyCode} className={primaryButtonClass + " leafy-pressable inline-flex min-h-11 w-fit items-center gap-2 rounded-full px-5 text-sm font-medium"}>
             <CheckCircle size={18} weight="bold" aria-hidden />
             {copied ? "Copied" : "Copy invite code"}
           </button>
         </div>
       </PageHero>
 
-      <SectionShell eyebrow="Accept" title="Accept in the app">
+      <SectionShell title="Accept in the app">
         <NumberedList items={["Open MyLeafy.", "Go to Profile -> Shared Timetable.", "Tap + in the top-right corner.", "Paste the invite code and accept it."]} />
       </SectionShell>
     </>
@@ -825,15 +920,17 @@ function ShareTimetablePage({ code }: { code: string }) {
 
 function ShareCommunityPostPage({ postID }: { postID: string }) {
   const normalizedPostID = postID.match(/^[0-9a-fA-F-]{36}$/) ? postID : "";
-  const appURL = normalizedPostID ? `https://${site.domain}/share/community/post/${normalizedPostID}?open=1` : site.homeUrl;
+  const appURL = normalizedPostID ? "https://" + site.domain + "/share/community/post/" + normalizedPostID + "?open=1" : site.homeUrl;
 
   return (
     <>
       <PageHero
         icon={ChatsCircle}
         label="Community post"
-        title="MyLeafy community post"
-        body="This is a MyLeafy community share link. If the latest app is installed, it opens the post detail directly."
+        title="Continue the conversation in MyLeafy."
+        body="This share link opens the post detail in the latest version of the app."
+        image="/media/campus/campus-entrance-bicycles.jpg"
+        imageAlt="Bicycles parked at a BJFU campus entrance"
       >
         <div className="mt-8 flex flex-col gap-3 sm:flex-row">
           <TapButton href={appURL} className={primaryButtonClass}>
@@ -842,18 +939,18 @@ function ShareCommunityPostPage({ postID }: { postID: string }) {
           </TapButton>
           <TapButton href={site.appStoreUrl || site.supportUrl} className={secondaryButtonClass}>
             <ArrowRight size={18} weight="bold" aria-hidden />
-            Get or update MyLeafy
+            Get MyLeafy
           </TapButton>
         </div>
       </PageHero>
 
-      <SectionShell eyebrow="Privacy" title="Community content opens in the app">
+      <SectionShell title="Community content opens in the app">
         <NumberedList
           items={[
             "Share cards may show the post title and a short summary. Comments stay in the app.",
             "After signing in to MyLeafy, the app opens the post detail.",
             "If the app opens but does not show the post, update MyLeafy and try again.",
-            "If the post has been deleted or is no longer visible, the app will show that it cannot be opened."
+            "If the post has been deleted or is no longer visible, the app will explain that it cannot be opened."
           ]}
         />
       </SectionShell>
@@ -866,59 +963,56 @@ function PageHero({
   label,
   title,
   body,
+  image,
+  imageAlt,
   children
 }: {
   icon: IconComponent;
   label: string;
   title: string;
   body: string;
+  image: string;
+  imageAlt: string;
   children?: ReactNode;
 }) {
   return (
-    <section className="relative isolate overflow-hidden border-b border-black/[0.06] bg-primary-soft">
-      <div className="absolute -right-24 -top-40 -z-10 h-[520px] w-[520px] rounded-full bg-primary-wash" aria-hidden />
-      <div className="mx-auto grid max-w-7xl gap-10 px-4 py-16 md:px-6 lg:grid-cols-[0.42fr_1.58fr] lg:py-24">
-        <div>
-          <div className="inline-grid h-12 w-12 place-items-center rounded-2xl border border-primary/10 bg-white text-primary-ink shadow-soft">
-            <Icon size={24} weight="bold" aria-hidden />
-          </div>
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-primary-ink">{label}</p>
-          <h1 className="mt-4 text-5xl font-semibold leading-none tracking-[-0.05em] text-text md:text-7xl">{title}</h1>
-          <p className="mt-6 max-w-[76ch] text-lg font-normal leading-relaxed text-text/64">{body}</p>
+    <section className="overflow-hidden border-b border-white/[0.07] bg-forest-low px-4 pb-20 pt-32 md:px-6 md:pb-28 md:pt-40">
+      <div className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
+        <StaggerReveal className="max-w-2xl">
+          <span className="grid h-12 w-12 place-items-center rounded-2xl bg-accent-muted text-accent">
+            <Icon size={24} weight="regular" aria-hidden />
+          </span>
+          <p className="mt-7 text-sm font-semibold text-accent">{label}</p>
+          <h1 className="mt-5 text-5xl font-semibold leading-[0.96] tracking-[-0.055em] text-ivory md:text-7xl">{title}</h1>
+          <p className="mt-6 max-w-xl text-base leading-relaxed text-ivory/60 md:text-lg">{body}</p>
           {children}
-        </div>
+        </StaggerReveal>
+        <ScrollReveal className="overflow-hidden rounded-[28px] border border-white/10 shadow-deep">
+          <img className="aspect-[4/3] w-full object-cover" src={image} alt={imageAlt} decoding="async" />
+        </ScrollReveal>
       </div>
     </section>
   );
 }
 
 function SectionShell({
-  eyebrow,
   title,
   body,
   children,
-  id,
-  flush = false
+  id
 }: {
-  eyebrow: string;
   title: string;
   body?: string;
   children: ReactNode;
   id?: string;
-  flush?: boolean;
 }) {
   return (
-    <section id={id} className={`${flush ? "" : "mx-auto max-w-7xl"} scroll-mt-24 px-4 py-14 md:px-6 md:py-20`}>
-      <div className="mx-auto mb-9 grid max-w-7xl gap-4 md:grid-cols-[0.52fr_1.48fr] md:items-end">
-        <p className="text-sm font-semibold uppercase text-primary-ink">{eyebrow}</p>
-        <div>
-          <h2 className="max-w-4xl text-4xl font-semibold leading-tight tracking-normal text-text md:text-6xl">{title}</h2>
-          {body && <p className="mt-5 max-w-[760px] text-base font-normal leading-relaxed text-text/70">{body}</p>}
-        </div>
-      </div>
-      <div className="mx-auto max-w-7xl">{children}</div>
+    <section id={id} className="mx-auto max-w-7xl scroll-mt-24 px-4 py-20 md:px-6 md:py-28">
+      <ScrollReveal className="mb-12 max-w-4xl">
+        <h2 className="text-4xl font-semibold leading-[1.02] tracking-[-0.045em] text-ivory md:text-6xl">{title}</h2>
+        {body && <p className="mt-5 max-w-2xl text-base leading-relaxed text-ivory/60">{body}</p>}
+      </ScrollReveal>
+      {children}
     </section>
   );
 }
@@ -927,9 +1021,9 @@ function NumberedList({ items }: { items: string[] }) {
   return (
     <div className={ruleStackClass}>
       {items.map((item, index) => (
-        <div key={item} className="grid grid-cols-[48px_1fr] gap-4 border-b border-black/10 px-5 py-5 last:border-b-0">
-          <span className="text-sm font-semibold text-primary-ink">{String(index + 1).padStart(2, "0")}</span>
-          <p className="text-sm font-normal leading-relaxed text-text/70">{item}</p>
+        <div key={item} className="grid grid-cols-[48px_1fr] gap-4 border-b border-white/10 px-5 py-5 last:border-b-0">
+          <span className="text-sm font-semibold text-accent">{String(index + 1).padStart(2, "0")}</span>
+          <p className="text-sm leading-relaxed text-ivory/60">{item}</p>
         </div>
       ))}
     </div>
@@ -938,17 +1032,16 @@ function NumberedList({ items }: { items: string[] }) {
 
 function AsymmetricIconGrid({ items }: { items: Array<{ icon: IconComponent; title: string; body: string }> }) {
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid gap-5 lg:grid-cols-2">
       {items.map((item) => {
         const Icon = item.icon;
-
         return (
           <article key={item.title} className={panelClass}>
-            <div className="grid h-11 w-11 place-items-center rounded-lg border border-primary/20 bg-primary-wash text-primary-ink">
+            <span className="grid h-11 w-11 place-items-center rounded-xl bg-accent-muted text-accent">
               <Icon size={23} weight="bold" aria-hidden />
-            </div>
-            <h3 className="mt-6 text-xl font-semibold text-text">{item.title}</h3>
-            <p className="mt-3 max-w-[68ch] text-sm font-normal leading-relaxed text-text/70">{item.body}</p>
+            </span>
+            <h3 className="mt-6 text-xl font-semibold text-ivory">{item.title}</h3>
+            <p className="mt-3 max-w-[68ch] text-sm leading-relaxed text-ivory/60">{item.body}</p>
           </article>
         );
       })}
@@ -969,16 +1062,16 @@ function PrivacySection({
   const Icon = section.icon;
 
   return (
-    <section id={section.id} className="grid scroll-mt-24 gap-6 border-b border-black/10 px-5 py-8 last:border-b-0 md:grid-cols-[0.42fr_1fr]">
-      <div className="flex items-center gap-3 md:items-start">
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-primary/20 bg-primary-wash text-primary-ink">
+    <section id={section.id} className="grid scroll-mt-24 gap-7 border-b border-white/10 px-5 py-9 last:border-b-0 md:grid-cols-[0.42fr_1fr] md:px-8">
+      <div className="flex items-start gap-3">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent-muted text-accent">
           <Icon size={21} weight="bold" aria-hidden />
         </span>
-        <h2 className="text-2xl font-semibold leading-tight text-text">{section.title}</h2>
+        <h2 className="text-2xl font-semibold leading-tight text-ivory">{section.title}</h2>
       </div>
       <div className="space-y-4">
         {section.items.map((item) => (
-          <p key={item} className="text-sm font-normal leading-relaxed text-text/70">
+          <p key={item} className="text-sm leading-relaxed text-ivory/60">
             {item}
           </p>
         ))}
@@ -989,22 +1082,22 @@ function PrivacySection({
 
 function Footer({ navigate }: { navigate: (href: string) => void }) {
   return (
-    <footer className="border-t border-black/10 bg-white/80">
-      <div className="mx-auto grid max-w-7xl gap-10 px-4 py-12 md:px-6 lg:grid-cols-[1.05fr_1.95fr]">
+    <footer className="border-t border-white/[0.07] bg-forest-low">
+      <div className="mx-auto grid max-w-7xl gap-12 px-4 py-14 md:px-6 lg:grid-cols-[1.05fr_1.95fr]">
         <div>
           <div className="flex items-center gap-3">
-            <img className="h-10 w-10 rounded-lg border border-black/10 shadow-soft" src="/app-icon.png" alt="MyLeafy app icon" />
+            <img className="h-11 w-11 rounded-[13px] border border-white/10 shadow-deep" src="/app-icon.png" alt="MyLeafy app icon" />
             <div>
-              <p className="text-xl font-semibold leading-none text-text">MyLeafy</p>
-              <p className="mt-1 text-sm font-medium text-text/60">BJFU campus tool</p>
+              <p className="text-xl font-semibold leading-none text-ivory">MyLeafy</p>
+              <p className="mt-1 text-sm font-medium text-ivory/50">BJFU campus tool</p>
             </div>
           </div>
-          <p className="mt-6 max-w-[64ch] text-sm font-normal leading-relaxed text-text/60">
-            Currently supports Beijing Forestry University. Support: {site.supportEmail}.
+          <p className="mt-6 max-w-sm text-sm leading-relaxed text-ivory/50">
+            Currently supports Beijing Forestry University.
           </p>
           <a
-            href={`mailto:${site.supportEmail}`}
-            className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-lg border border-black/10 bg-paper px-4 text-sm font-semibold text-text transition-colors hover:bg-primary-soft"
+            href={"mailto:" + site.supportEmail}
+            className="leafy-pressable mt-6 inline-flex min-h-11 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-ivory hover:border-accent/30 hover:text-accent"
           >
             <EnvelopeSimple size={17} weight="bold" aria-hidden />
             {site.supportEmail}
@@ -1014,23 +1107,19 @@ function Footer({ navigate }: { navigate: (href: string) => void }) {
         <nav className="grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
           {footerGroups.map((group) => (
             <div key={group.title}>
-              <h2 className="text-sm font-semibold text-text">{group.title}</h2>
+              <h2 className="text-sm font-semibold text-ivory">{group.title}</h2>
               <div className="mt-4 grid gap-3">
                 {group.links.map((link) => (
                   <a
-                    key={`${group.title}-${link.label}`}
+                    key={group.title + "-" + link.label}
                     href={link.href}
                     onClick={(event) => {
-                      if (link.href.startsWith("http") && !link.href.includes(site.domain)) {
-                        return;
-                      }
-                      if (link.href.startsWith("mailto:")) {
-                        return;
-                      }
+                      if (link.href.startsWith("http") && !link.href.includes(site.domain)) return;
+                      if (link.href.startsWith("mailto:")) return;
                       event.preventDefault();
                       navigate(link.href);
                     }}
-                    className="break-words text-sm font-medium leading-relaxed text-text/60 hover:text-primary-ink"
+                    className="break-words text-sm font-medium leading-relaxed text-ivory/50 hover:text-accent"
                   >
                     {link.label}
                   </a>
@@ -1040,15 +1129,15 @@ function Footer({ navigate }: { navigate: (href: string) => void }) {
           ))}
         </nav>
       </div>
-      <div className="border-t border-black/10 px-4 py-4 md:px-6">
-        <div className="mx-auto flex max-w-7xl flex-col gap-2 text-xs font-medium text-text/60 md:flex-row md:items-center md:justify-between">
+      <div className="border-t border-white/[0.07] px-4 py-5 md:px-6">
+        <div className="mx-auto flex max-w-7xl flex-col gap-3 text-xs font-medium text-ivory/40 md:flex-row md:items-center md:justify-between">
           <div className="grid gap-1">
             <span>Last updated: {site.updatedAt}</span>
-            <span>Apple, the Apple logo, App Store, and iPhone are trademarks of Apple Inc., registered in the U.S. and other countries and regions.</span>
+            <span>Apple, the Apple logo, App Store, and iPhone are trademarks of Apple Inc.</span>
           </div>
           <div className="flex flex-wrap gap-x-5 gap-y-2">
             <a
-              className="inline-flex items-center gap-2 hover:text-primary-ink"
+              className="inline-flex items-center gap-2 hover:text-accent"
               href="/"
               onClick={(event) => {
                 event.preventDefault();
@@ -1058,7 +1147,7 @@ function Footer({ navigate }: { navigate: (href: string) => void }) {
               <House size={15} aria-hidden />
               Home
             </a>
-            <a className="inline-flex items-center gap-2 hover:text-primary-ink" href={`mailto:${site.supportEmail}`}>
+            <a className="inline-flex items-center gap-2 hover:text-accent" href={"mailto:" + site.supportEmail}>
               <EnvelopeSimple size={15} aria-hidden />
               Contact
             </a>
