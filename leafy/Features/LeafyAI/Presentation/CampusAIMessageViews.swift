@@ -26,6 +26,7 @@ struct CampusAIMessageRow: View {
 
     let message: CampusAIMessage
     let actions: [CampusAIActionRecord]
+    var displayText: String? = nil
     let isStreaming: Bool
     let interactionsDisabled: Bool
     let executeAction: (CampusAIActionRecord) -> Void
@@ -39,7 +40,11 @@ struct CampusAIMessageRow: View {
     }
 
     private var answerText: String {
-        message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        renderedText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var renderedText: String {
+        displayText ?? message.text
     }
 
     private var agentMetadata: CampusAIMessageAgentMetadata {
@@ -127,7 +132,7 @@ struct CampusAIMessageRow: View {
                         .background(AppTheme.softFill, in: Capsule())
                 } else {
                     CampusAIMessageMarkdown(
-                        markdown: message.text,
+                        markdown: renderedText,
                         citationURLs: agentMetadata.citations.map(\.url),
                         isStreaming: isStreaming
                     )
@@ -241,9 +246,9 @@ struct CampusAIMessageRow: View {
 
     private func copyMessage() {
         let copyText = isUser
-            ? message.text
+            ? renderedText
             : CampusAIMarkdownNormalizer.normalize(
-                message.text,
+                renderedText,
                 removingCitationURLs: agentMetadata.citations.map(\.url)
             )
         #if os(iOS)

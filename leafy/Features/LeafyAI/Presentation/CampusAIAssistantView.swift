@@ -63,19 +63,15 @@ struct CampusAIAssistantView: View {
         return messages.filter { $0.conversationID == key }
     }
 
-    private func actionRecords(for message: CampusAIMessage) -> [CampusAIActionRecord] {
-        actionRecords.filter {
-            $0.conversationID == message.conversationID &&
-                $0.messageID == message.id.uuidString
-        }
-    }
-
-    private var contextPayload: CampusAIContextPayload {
-        CampusAIContextBuilder.build(modelContext: modelContext, settings: userSettings.contextSettings)
-    }
-
     var body: some View {
-        assistantNavigation
+        let projection = CampusAIConversationProjection(
+            selectedConversationID: selectedConversationID,
+            conversations: conversations,
+            messages: messages,
+            actionRecords: actionRecords
+        )
+
+        assistantNavigation(projection: projection)
         .onAppear {
             selectInitialConversationIfNeeded()
             presentExperimentalNoticeIfNeeded()
@@ -92,7 +88,7 @@ struct CampusAIAssistantView: View {
             case .history:
                 CampusAIHistorySheet(
                     conversations: conversations,
-                    selectedConversationID: selectedConversation?.id,
+                    selectedConversationID: projection.conversation?.id,
                     selectConversation: selectConversationFromHistory,
                     deleteConversation: deleteConversation,
                     clearHistory: clearAllHistory
@@ -169,9 +165,9 @@ struct CampusAIAssistantView: View {
         .sensoryFeedback(.success, trigger: artifactCompletionSignal)
     }
 
-    private var assistantNavigation: some View {
+    private func assistantNavigation(projection: CampusAIConversationProjection) -> some View {
         NavigationStack {
-            conversationScroll
+            conversationScroll(projection: projection)
                 .background(AppTheme.cardElevated.ignoresSafeArea())
                 .toolbar(.hidden, for: .navigationBar)
                 .safeAreaInset(edge: .top, spacing: 0) {
@@ -181,7 +177,9 @@ struct CampusAIAssistantView: View {
                         selectedModelID: userSettings.selectedModelID,
                         allowsModelSelection: userSettings.serviceMode == .ownAPIKey,
                         isModelSelectionDisabled: isSending,
-                        isNewConversationDisabled: isNewConversationDisabled,
+                        isNewConversationDisabled: isNewConversationDisabled(
+                            messageCount: projection.messages.count
+                        ),
                         selectModel: selectModel,
                         startNewConversation: startNewConversation
                     )
@@ -204,10 +202,12 @@ struct CampusAIAssistantView: View {
         }
     }
 
-    private var conversationScroll: some View {
-        ScrollViewReader { proxy in
+    private func conversationScroll(projection: CampusAIConversationProjection) -> some View {
+        let projectedMessages = projection.messages
+
+        return ScrollViewReader { proxy in
             ScrollView {
-                if selectedMessages.isEmpty {
+                if projectedMessages.isEmpty {
                     CampusAIEmptyConversationPanel(
                         prompts: visibleSuggestionPrompts,
                         canUseService: canUseCurrentService,
@@ -224,12 +224,13 @@ struct CampusAIAssistantView: View {
                     .padding(.vertical, AppSpacing.card)
                 } else {
                     LazyVStack(alignment: .leading, spacing: AppSpacing.card) {
-                        ForEach(selectedMessages) { message in
+                        ForEach(projectedMessages) { message in
                             CampusAIMessageRow(
                                 message: message,
-                                actions: actionRecords(for: message),
+                                actions: projection.actionRecords(for: message),
+                                displayText: chatSession.displayText(for: message.id),
                                 isStreaming: isSending
-                                    && selectedMessages.last?.id == message.id
+                                    && projectedMessages.last?.id == message.id
                                     && message.roleRawValue == CampusAIMessageRole.assistant.rawValue,
                                 interactionsDisabled: isSending,
                                 executeAction: { action in
@@ -251,7 +252,7 @@ struct CampusAIAssistantView: View {
                                 .transition(.opacity)
                                 .id(message.id)
                         }
-                        if isSending, selectedMessages.last?.roleRawValue == CampusAIMessageRole.user.rawValue {
+                        if isSending, projectedMessages.last?.roleRawValue == CampusAIMessageRole.user.rawValue {
                             CampusAITypingRow()
                                 .id("campus-ai-typing")
                         }
@@ -265,18 +266,21 @@ struct CampusAIAssistantView: View {
                     .padding(.bottom, AppSpacing.card)
                     .animation(
                         accessibilityReduceMotion ? nil : .easeOut(duration: 0.18),
-                        value: selectedMessages.map(\.id)
+                        value: projectedMessages.map(\.id)
                     )
                 }
             }
             .campusAIKeyboardDismissBehavior()
-            .onChange(of: selectedMessages.map(\.id)) { _, _ in
+            .onChange(of: projectedMessages.map(\.id)) { _, _ in
                 scrollToBottom(proxy)
             }
-            .onChange(of: selectedMessages.map(\.text)) { _, _ in
+            .onChange(of: projectedMessages.map(\.text)) { _, _ in
                 scrollToBottom(proxy)
             }
-            .onChange(of: selectedMessages.map(\.agentMetadataJSON)) { _, _ in
+            .onChange(of: projectedMessages.map(\.agentMetadataJSON)) { _, _ in
+                scrollToBottom(proxy)
+            }
+            .onChange(of: chatSession.streamingText) { _, _ in
                 scrollToBottom(proxy)
             }
             .onChange(of: isSending) { _, _ in
@@ -292,9 +296,9 @@ struct CampusAIAssistantView: View {
         canUseCurrentService && !isSending && !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private var isNewConversationDisabled: Bool {
+    private func isNewConversationDisabled(messageCount: Int) -> Bool {
         !CampusAINewConversationPolicy.canStartNewConversation(
-            messageCount: selectedMessages.count,
+            messageCount: messageCount,
             isSending: isSending
         )
     }
@@ -372,7 +376,7 @@ struct CampusAIAssistantView: View {
     }
 
     private func startNewConversation() {
-        guard !isNewConversationDisabled else { return }
+        guard !isNewConversationDisabled(messageCount: selectedMessages.count) else { return }
         cancelEditingMessage()
         let conversation = CampusAIConversation()
         modelContext.insert(conversation)
@@ -534,8 +538,8 @@ struct CampusAIAssistantView: View {
             discardedStreamMessageIDs.remove(assistantMessage.id)
         }
 
+        var streamedAnswer = ""
         do {
-            var streamedAnswer = ""
             var agentMetadata = CampusAIMessageAgentMetadata.empty
             agentMetadata.statusText = "正在分析问题"
             persistAgentMetadata(agentMetadata, for: assistantMessage)
@@ -554,10 +558,10 @@ struct CampusAIAssistantView: View {
                         agentMetadata.statusText = "正在生成回答"
                         persistAgentMetadata(agentMetadata, for: assistantMessage)
                     }
-                    streamedAnswer += delta
-                    assistantMessage.text = streamedAnswer
-                    conversation.updatedAt = Date()
+                    streamedAnswer = chatSession.append(delta: delta, messageID: assistantMessage.id)
                     if Date().timeIntervalSince(lastSaveAt) > 0.35 {
+                        assistantMessage.text = streamedAnswer
+                        conversation.updatedAt = Date()
                         persistModelContext(operation: "message.stream.checkpoint", showsAlert: false)
                         lastSaveAt = Date()
                     }
@@ -601,8 +605,8 @@ struct CampusAIAssistantView: View {
                     if streamedAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                        let answer = response.answer.nonEmptyTrimmed {
                         streamedAnswer = answer
-                        assistantMessage.text = answer
                     }
+                    assistantMessage.text = streamedAnswer
                     if let notice = Self.completionNotice(for: response.finishReason),
                        !assistantMessage.text.contains(notice) {
                         assistantMessage.text = [
@@ -610,6 +614,7 @@ struct CampusAIAssistantView: View {
                             "> \(notice)"
                         ].filter { !$0.isEmpty }.joined(separator: "\n\n")
                     }
+                    streamedAnswer = assistantMessage.text
                     if let suggestedTitle = response.suggestedTitle?.nonEmptyTrimmed {
                         conversation.title = Self.conversationTitle(from: suggestedTitle)
                     }
@@ -640,6 +645,7 @@ struct CampusAIAssistantView: View {
                     throw CampusAIServiceError.providerRejected(message)
                 }
             }
+            assistantMessage.text = streamedAnswer
             guard assistantMessage.text.nonEmptyTrimmed != nil else {
                 throw CampusAIServiceError.invalidProviderResponse
             }
@@ -648,6 +654,7 @@ struct CampusAIAssistantView: View {
             persistModelContext(operation: "message.complete")
         } catch is CancellationError {
             guard !discardedStreamMessageIDs.contains(assistantMessage.id) else { return }
+            assistantMessage.text = streamedAnswer
             if assistantMessage.text.nonEmptyTrimmed == nil {
                 assistantMessage.text = "已停止生成。"
             } else {
@@ -656,6 +663,7 @@ struct CampusAIAssistantView: View {
             conversation.updatedAt = Date()
             persistModelContext(operation: "message.cancel")
         } catch {
+            assistantMessage.text = streamedAnswer
             if userSettings.serviceMode == .leafyManaged {
                 await subscriptionStore.refreshQuota()
             }

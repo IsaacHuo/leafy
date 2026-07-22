@@ -17,6 +17,7 @@ final class CampusAIChatSession {
     private(set) var activeRunID: UUID?
     private(set) var activeConversationID: UUID?
     private(set) var activeMessageID: UUID?
+    private(set) var streamingText = ""
     private var activeTask: Task<Void, Never>?
 
     func start(_ operation: @escaping @MainActor (UUID) async -> Void) {
@@ -35,7 +36,20 @@ final class CampusAIChatSession {
         isSending = true
         activeConversationID = conversationID
         activeMessageID = messageID
+        streamingText = ""
         stage = .streamingAnswer
+    }
+
+    @discardableResult
+    func append(delta: String, messageID: UUID) -> String {
+        guard activeMessageID == messageID else { return streamingText }
+        streamingText += delta
+        return streamingText
+    }
+
+    func displayText(for messageID: UUID) -> String? {
+        guard activeMessageID == messageID else { return nil }
+        return streamingText
     }
 
     func update(statusText: String) {
@@ -53,6 +67,7 @@ final class CampusAIChatSession {
         if activeMessageID == messageID {
             activeConversationID = nil
             activeMessageID = nil
+            streamingText = ""
         }
     }
 
@@ -62,6 +77,9 @@ final class CampusAIChatSession {
         activeRunID = nil
         isSending = false
         stage = .idle
+        activeConversationID = nil
+        activeMessageID = nil
+        streamingText = ""
     }
 
     private func completeRun(_ runID: UUID) {
