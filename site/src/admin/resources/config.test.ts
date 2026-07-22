@@ -30,4 +30,19 @@ describe("admin resource capabilities", () => {
       expect(resourceConfigs[resource].searchable).toBe(false);
     }
   });
+
+  it("does not expose moderation actions for terminal deleted records", () => {
+    for (const resource of ["posts", "polls", "comments"]) {
+      const visible = resourceConfigs[resource].actions?.filter((action) => !action.visible || action.visible({ status: "deleted" })) ?? [];
+      expect(visible).toHaveLength(0);
+    }
+  });
+
+  it("shows approval actions only while suggestions remain open", () => {
+    for (const resource of ["suggestions", "postgraduate-suggestions"]) {
+      const actions = resourceConfigs[resource].actions ?? [];
+      expect(actions.every((action) => action.visible?.({ status: "open" }) === true)).toBe(true);
+      expect(actions.every((action) => action.visible?.({ status: "approved" }) === false)).toBe(true);
+    }
+  });
 });

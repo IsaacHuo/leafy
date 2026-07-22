@@ -8,6 +8,7 @@ import {
 import { permissionsForRole } from "../_shared/admin-permissions.ts";
 
 Deno.serve(async (request) => {
+  const requestId = request.headers.get("x-request-id") || crypto.randomUUID();
   if (request.method === "OPTIONS") {
     return okOptions();
   }
@@ -28,6 +29,6 @@ Deno.serve(async (request) => {
       session: { expires_at: context.sessionExpiresAt },
     });
   } catch (error) {
-    return mapFunctionError(error);
+    return mapFunctionError(error, requestId);
   }
 });

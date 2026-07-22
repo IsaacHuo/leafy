@@ -3,6 +3,7 @@ import {
   actionMeta,
   appendAuditLog,
   authenticateAdmin,
+  databaseError,
   HttpError,
   errorCodeFor,
   exclusiveDateEndISO,
@@ -292,7 +293,7 @@ async function overview(context: AdminContext, params: Record<string, unknown>) 
   const { data: recentFeedback, error: feedbackError } = await recentFeedbackQuery;
 
   if (feedbackError) {
-    throw new HttpError(500, feedbackError.message);
+    throw databaseError(feedbackError);
   }
 
   const recentPosts = await listPosts(context, { page: 0, pageSize: 6, status: "all", campusID: campusID ?? "all" });
@@ -473,7 +474,7 @@ async function buildAnalytics(context: AdminContext, days: number, timezone: str
 async function callRPC(client: any, functionName: string, params: Record<string, unknown>) {
   const { data, error } = await client.rpc(functionName, params);
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
   return data ?? [];
 }
@@ -491,7 +492,7 @@ async function feedbackAgingAnalytics(context: AdminContext, campusID: string | 
   const { data, error } = await query;
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   const buckets = [
@@ -524,7 +525,7 @@ async function teacherRatingAnalytics(context: AdminContext, campusID: string | 
   const { data, error } = await query;
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   const stars = [1, 2, 3, 4, 5].map((star) => ({
@@ -558,7 +559,7 @@ async function lowScoreTeacherAnalytics(context: AdminContext, campusID: string 
   const { data, error } = await query;
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return data ?? [];
@@ -633,7 +634,7 @@ async function recentModerationLogs(context: AdminContext, since: string) {
     .limit(8);
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   const adminMap = await fetchAdminMap(context.adminClient, (data ?? []).map((item: any) => item.admin_id).filter(Boolean));
@@ -657,7 +658,7 @@ async function listCampuses(context: AdminContext, params: Record<string, unknow
 
   const { data, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return { items: data ?? [], total: data?.length ?? 0 };
@@ -691,7 +692,7 @@ async function listCampusRequests(context: AdminContext, params: Record<string, 
 
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   const profiles = await fetchProfileMap(context.adminClient, (data ?? []).map((item: any) => item.requester_profile_id));
@@ -709,30 +710,18 @@ async function listCampusRequests(context: AdminContext, params: Record<string, 
 async function approveCampusRequest(context: AdminContext, params: Record<string, unknown>) {
   const id = requiredText(params, "id");
   const note = normalizeText(params.note ?? params.adminNote ?? params.admin_note);
-
-  const { data: request, error: requestError } = await context.adminClient
-    .from("campus_membership_requests")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
-
-  if (requestError) {
-    throw new HttpError(500, requestError.message);
-  }
-  if (!request) {
-    throw new HttpError(404, "Campus request not found.");
-  }
-
-  const campusID = await resolveCampusIDForApproval(context, params, request);
-  const { data, error } = await context.adminClient.rpc("approve_campus_membership_request", {
+  const { data, error } = await context.adminClient.rpc("admin_approve_campus_request_v1", {
     p_request_id: id,
-    p_campus_id: campusID,
     p_admin_id: context.admin.id,
+    p_campus_id: normalizeText(params.campusID ?? params.campus_id),
+    p_display_name: normalizeText(params.displayName ?? params.display_name),
+    p_short_name: normalizeText(params.shortName ?? params.short_name),
+    p_new_campus_id: normalizeText(params.newCampusID ?? params.new_campus_id),
     p_admin_note: note,
   });
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error, { notFoundMessage: "未找到该学校申请或目标学校。" });
   }
 
   return Array.isArray(data) ? data[0] : data;
@@ -749,82 +738,10 @@ async function rejectCampusRequest(context: AdminContext, params: Record<string,
   });
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return Array.isArray(data) ? data[0] : data;
-}
-
-async function resolveCampusIDForApproval(context: AdminContext, params: Record<string, unknown>, request: any) {
-  if (request.request_type === "school_change") {
-    const requestedCampusID = normalizeText(request.requested_campus_id);
-    if (!requestedCampusID) {
-      throw new HttpError(400, "学校更换申请缺少目标学校。");
-    }
-    return requestedCampusID;
-  }
-
-  const explicitCampusID = normalizeText(params.campusID ?? params.campus_id);
-  if (explicitCampusID && explicitCampusID !== "new") {
-    if (isBJFUCampusReference(explicitCampusID)) {
-      throw new HttpError(400, "北京林业大学用户请使用北林专属入口，通用入口申请不能关联到 bjfu。");
-    }
-    const { data, error } = await context.adminClient
-      .from("campuses")
-      .select("id")
-      .eq("id", explicitCampusID.toLowerCase())
-      .maybeSingle();
-    if (error) throw new HttpError(500, error.message);
-    if (!data) throw new HttpError(404, "Campus not found.");
-    return data.id;
-  }
-
-  const displayName = normalizeText(params.displayName ?? params.display_name) ?? request.school_name;
-  const normalizedName = normalizeSchoolName(displayName);
-  if (isBJFUCampusReference(displayName) || isBJFUCampusReference(normalizedName)) {
-    throw new HttpError(400, "北京林业大学用户请使用北林专属入口，通用入口申请不能批准为北林社区身份。");
-  }
-  const { data: existing, error: existingError } = await context.adminClient
-    .from("campuses")
-    .select("id")
-    .eq("normalized_name", normalizedName)
-    .maybeSingle();
-
-  if (existingError) {
-    throw new HttpError(500, existingError.message);
-  }
-  if (existing) {
-    if (existing.id === "bjfu") {
-      throw new HttpError(400, "北京林业大学用户请使用北林专属入口，通用入口申请不能关联到 bjfu。");
-    }
-    return existing.id;
-  }
-
-  const campusID = normalizeText(params.newCampusID ?? params.new_campus_id)
-    ?? campusIDFromRequest(request.id, displayName);
-  if (isBJFUCampusReference(campusID)) {
-    throw new HttpError(400, "北京林业大学用户请使用北林专属入口，通用入口申请不能创建为 bjfu。");
-  }
-  const shortName = normalizeText(params.shortName ?? params.short_name) ?? displayName.slice(0, 6);
-  const { data: campus, error: campusError } = await context.adminClient
-    .from("campuses")
-    .insert({
-      id: campusID,
-      display_name: displayName,
-      short_name: shortName,
-      connector_kind: "custom",
-      status: "active",
-      normalized_name: normalizedName,
-      is_community_enabled: true,
-      is_system: false,
-    })
-    .select("id")
-    .single();
-
-  if (campusError) {
-    throw new HttpError(500, campusError.message);
-  }
-  return campus.id;
 }
 
 async function listPosts(context: AdminContext, params: Record<string, unknown>) {
@@ -861,7 +778,7 @@ async function listPosts(context: AdminContext, params: Record<string, unknown>)
 
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return {
@@ -887,7 +804,7 @@ async function previewCommunityFeed(context: AdminContext, params: Record<string
   });
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   const posts = Array.isArray(data?.posts) ? data.posts : [];
@@ -909,7 +826,7 @@ async function getPost(context: AdminContext, params: Record<string, unknown>) {
     .maybeSingle();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
   if (!data) {
     throw new HttpError(404, "Post not found.");
@@ -925,61 +842,29 @@ async function moderatePost(context: AdminContext, params: Record<string, unknow
   const status = requiredStatus(params, ["published", "hidden"]);
   const reason = normalizeText(params.reason);
 
-  const { data: current, error: currentError } = await context.adminClient
-    .from("posts")
-    .select("id, status")
-    .eq("id", id)
-    .maybeSingle();
-
-  if (currentError) {
-    throw new HttpError(500, currentError.message);
-  }
-  if (!current) {
-    throw new HttpError(404, "Post not found.");
-  }
-  if (current.status === "deleted" && status === "published") {
-    throw new HttpError(400, "Cannot restore a post deleted by its author.");
-  }
-
-  const { data, error } = await context.adminClient
-    .from("posts")
-    .update({
-      status,
-      moderated_by: context.admin.id,
-      moderated_at: new Date().toISOString(),
-      moderation_reason: status === "hidden" ? reason ?? "Hidden by admin" : null,
-    })
-    .eq("id", id)
-    .select()
-    .single();
+  const { data, error } = await context.adminClient.rpc("admin_moderate_posts_v1", {
+    p_post_ids: [id], p_status: status, p_reason: reason, p_admin_id: context.admin.id,
+  });
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error, { notFoundMessage: "未找到该帖子。" });
   }
-
-  return (await hydratePosts(context, [data]))[0];
+  if (!data?.length) {
+    throw new HttpError(409, "作者已删除该帖子，不能修改其状态。", { code: "conflict" });
+  }
+  return (await hydratePosts(context, [data[0]]))[0];
 }
 
 async function bulkModeratePosts(context: AdminContext, params: Record<string, unknown>) {
   const ids = idsParam(params, "ids");
   const status = requiredStatus(params, ["published", "hidden"]);
   const reason = normalizeText(params.reason);
-  const payload = {
-    status,
-    moderated_by: context.admin.id,
-    moderated_at: new Date().toISOString(),
-    moderation_reason: status === "hidden" ? reason ?? "Hidden by admin" : null,
-  };
-
-  const { data, error } = await context.adminClient
-    .from("posts")
-    .update(payload)
-    .in("id", ids)
-    .neq("status", "deleted")
-    .select();
+  const { data, error } = await context.adminClient.rpc("admin_moderate_posts_v1", {
+    p_post_ids: ids, p_status: status, p_reason: reason, p_admin_id: context.admin.id,
+  });
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return {
@@ -1025,7 +910,7 @@ async function listPolls(context: AdminContext, params: Record<string, unknown>)
 
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return {
@@ -1045,7 +930,7 @@ async function getPoll(context: AdminContext, params: Record<string, unknown>) {
     .maybeSingle();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
   if (!data) {
     throw new HttpError(404, "Poll not found.");
@@ -1066,7 +951,7 @@ async function moderatePoll(context: AdminContext, params: Record<string, unknow
     .maybeSingle();
 
   if (currentError) {
-    throw new HttpError(500, currentError.message);
+    throw databaseError(currentError);
   }
   if (!current) {
     throw new HttpError(404, "Poll not found.");
@@ -1089,7 +974,7 @@ async function moderatePoll(context: AdminContext, params: Record<string, unknow
     .single();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return (await hydratePolls(context, [data]))[0];
@@ -1108,7 +993,7 @@ async function reviewPollDeletion(context: AdminContext, params: Record<string, 
     .maybeSingle();
 
   if (currentError) {
-    throw new HttpError(500, currentError.message);
+    throw databaseError(currentError);
   }
   if (!current) {
     throw new HttpError(404, "Poll not found.");
@@ -1141,7 +1026,7 @@ async function reviewPollDeletion(context: AdminContext, params: Record<string, 
     .single();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return (await hydratePolls(context, [data]))[0];
@@ -1175,7 +1060,7 @@ async function listPostPins(context: AdminContext, params: Record<string, unknow
   query = applyCampusIDFilter(query, params);
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return {
@@ -1210,57 +1095,16 @@ async function pinPost(context: AdminContext, params: Record<string, unknown>) {
     throw new HttpError(400, "Pin end time must be after start time.");
   }
 
-  const { data: post, error: postError } = await context.adminClient
-    .from("posts")
-    .select("id, status, campus_id")
-    .eq("id", postID)
-    .maybeSingle();
-
-  if (postError) {
-    throw new HttpError(500, postError.message);
-  }
-  if (!post) {
-    throw new HttpError(404, "Post not found.");
-  }
-  if (post.status !== "published") {
-    throw new HttpError(400, "Only published posts can be pinned.");
-  }
-
-  const campusID = normalizeText(post.campus_id) ?? "bjfu";
-
-  const { error: deactivateError } = await context.adminClient
-    .from("community_post_pins")
-    .update({ status: "inactive" })
-    .eq("campus_id", campusID)
-    .eq("status", "active");
-  if (deactivateError) {
-    throw new HttpError(500, deactivateError.message);
-  }
-
-  const payload = {
-    post_id: postID,
-    campus_id: campusID,
-    scope,
-    category,
-    priority,
-    starts_at: startsAt,
-    ends_at: endsAt,
-    status: "active",
-    reason,
-    created_by: context.admin.id,
-  };
-
-  const { data, error } = await context.adminClient
-    .from("community_post_pins")
-    .insert(payload)
-    .select()
-    .single();
+  const { data, error } = await context.adminClient.rpc("admin_pin_post_v1", {
+    p_post_id: postID, p_scope: scope, p_category: category, p_priority: priority,
+    p_starts_at: startsAt, p_ends_at: endsAt, p_reason: reason, p_admin_id: context.admin.id,
+  });
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error, { notFoundMessage: "未找到该帖子。" });
   }
-
-  return (await hydratePostPins(context, [data]))[0];
+  const row = Array.isArray(data) ? data[0] : data;
+  return (await hydratePostPins(context, [row]))[0];
 }
 
 async function unpinPost(context: AdminContext, params: Record<string, unknown>) {
@@ -1294,7 +1138,7 @@ async function unpinPost(context: AdminContext, params: Record<string, unknown>)
 
   const { data, error } = await query.select();
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return {
@@ -1344,7 +1188,7 @@ async function listComments(context: AdminContext, params: Record<string, unknow
 
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return {
@@ -1404,7 +1248,7 @@ async function listModerationReports(context: AdminContext, params: Record<strin
 
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return {
@@ -1419,85 +1263,22 @@ async function resolveModerationReport(context: AdminContext, params: Record<str
   const id = requiredText(params, "id");
   const status = requiredStatus(params, ["reviewed", "resolved", "rejected"]);
   const resolutionNote = normalizeText(params.resolutionNote ?? params.resolution_note) ?? statusLabelForReport(status);
-  const hideContent = booleanParam(params, "hideContent") ?? booleanParam(params, "hide_content") ?? status === "resolved";
+  const hideContent = booleanParam(params, "hideContent") ?? booleanParam(params, "hide_content") ?? false;
   const muteUser = booleanParam(params, "muteUser") ?? booleanParam(params, "mute_user") ?? false;
   const mutedUntil = normalizeDate(params.mutedUntil ?? params.muted_until);
   const mutedReason = normalizeText(params.mutedReason ?? params.muted_reason) ?? "Community report upheld";
 
-  const { data: report, error: reportError } = await context.adminClient
-    .from("community_reports")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
-
-  if (reportError) {
-    throw new HttpError(500, reportError.message);
-  }
-  if (!report) {
-    throw new HttpError(404, "Moderation report not found.");
-  }
-
-  if (hideContent) {
-    if (report.target_type === "post" && report.post_id) {
-      const { error } = await context.adminClient
-        .from("posts")
-        .update({
-          status: "hidden",
-          moderated_by: context.admin.id,
-          moderated_at: new Date().toISOString(),
-          moderation_reason: resolutionNote,
-        })
-        .eq("id", report.post_id)
-        .neq("status", "deleted");
-      if (error) throw new HttpError(500, error.message);
-    }
-
-    if (report.target_type === "comment" && report.comment_id) {
-      const { error } = await context.adminClient
-        .from("comments")
-        .update({
-          status: "hidden",
-          moderated_by: context.admin.id,
-          moderated_at: new Date().toISOString(),
-          moderation_reason: resolutionNote,
-        })
-        .eq("id", report.comment_id)
-        .neq("status", "deleted");
-      if (error) throw new HttpError(500, error.message);
-    }
-  }
-
-  if (muteUser && report.reported_user_id) {
-    const until = mutedUntil ?? new Date(Date.now() + 365 * 24 * 36e5).toISOString();
-    const { error } = await context.adminClient
-      .from("profiles")
-      .update({
-        muted_until: until,
-        muted_reason: mutedReason,
-        muted_by: context.admin.id,
-        muted_at: new Date().toISOString(),
-      })
-      .eq("id", report.reported_user_id);
-    if (error) throw new HttpError(500, error.message);
-  }
-
-  const { data, error } = await context.adminClient
-    .from("community_reports")
-    .update({
-      status,
-      resolved_by: context.admin.id,
-      resolved_at: new Date().toISOString(),
-      resolution_note: resolutionNote,
-    })
-    .eq("id", id)
-    .select()
-    .single();
+  const { data, error } = await context.adminClient.rpc("admin_resolve_moderation_report_v1", {
+    p_report_id: id, p_status: status, p_resolution_note: resolutionNote,
+    p_hide_content: hideContent, p_mute_user: muteUser, p_muted_until: mutedUntil,
+    p_muted_reason: mutedReason, p_admin_id: context.admin.id,
+  });
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error, { notFoundMessage: "未找到该举报。" });
   }
-
-  return (await hydrateReports(context, [data]))[0];
+  const row = Array.isArray(data) ? data[0] : data;
+  return (await hydrateReports(context, [row]))[0];
 }
 
 async function moderateComment(context: AdminContext, params: Record<string, unknown>) {
@@ -1512,13 +1293,13 @@ async function moderateComment(context: AdminContext, params: Record<string, unk
     .maybeSingle();
 
   if (currentError) {
-    throw new HttpError(500, currentError.message);
+    throw databaseError(currentError);
   }
   if (!current) {
     throw new HttpError(404, "Comment not found.");
   }
-  if (current.status === "deleted" && status === "published") {
-    throw new HttpError(400, "Cannot restore a comment deleted by its author.");
+  if (current.status === "deleted") {
+    throw new HttpError(409, "作者已删除该评论，不能修改其状态。", { code: "conflict" });
   }
 
   const { data, error } = await context.adminClient
@@ -1530,11 +1311,12 @@ async function moderateComment(context: AdminContext, params: Record<string, unk
       moderation_reason: status === "hidden" ? reason ?? "Hidden by admin" : null,
     })
     .eq("id", id)
+    .neq("status", "deleted")
     .select()
     .single();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return (await hydrateComments(context, [data]))[0];
@@ -1559,7 +1341,7 @@ async function bulkModerateComments(context: AdminContext, params: Record<string
     .select();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return {
@@ -1573,7 +1355,7 @@ async function listProfiles(context: AdminContext, params: Record<string, unknow
   const { from, to, page, pageSize } = pagination(params);
   let query: any = context.adminClient
     .from("profiles")
-    .select("*", { count: "exact" })
+    .select(profileAdminProjection(context), { count: "exact" })
     .order("created_at", { ascending: false })
     .range(from, to);
 
@@ -1598,7 +1380,7 @@ async function listProfiles(context: AdminContext, params: Record<string, unknow
 
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   const profiles = data ?? [];
@@ -1625,12 +1407,12 @@ async function getProfile(context: AdminContext, params: Record<string, unknown>
   const id = requiredText(params, "id");
   const { data: profile, error } = await context.adminClient
     .from("profiles")
-    .select("*")
+    .select(profileAdminProjection(context))
     .eq("id", id)
     .maybeSingle();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
   if (!profile) {
     throw new HttpError(404, "Profile not found.");
@@ -1667,7 +1449,7 @@ async function listAuditLogsForTarget(context: AdminContext, targetType: string,
     .limit(8);
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   const adminMap = await fetchAdminMap(context.adminClient, (data ?? []).map((item: any) => item.admin_id).filter(Boolean));
@@ -1693,11 +1475,12 @@ async function muteProfile(context: AdminContext, params: Record<string, unknown
     })
     .eq("id", id)
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
+  if (!data) throw new HttpError(404, "Profile not found.");
 
   return data;
 }
@@ -1714,11 +1497,12 @@ async function unmuteProfile(context: AdminContext, params: Record<string, unkno
     })
     .eq("id", id)
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
+  if (!data) throw new HttpError(404, "Profile not found.");
 
   return data;
 }
@@ -1757,7 +1541,7 @@ async function listFeedback(context: AdminContext, params: Record<string, unknow
 
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   const profiles = await fetchProfileMap(context.adminClient, (data ?? []).map((item: any) => item.user_id).filter(Boolean));
@@ -1787,7 +1571,7 @@ async function updateFeedback(context: AdminContext, params: Record<string, unkn
     .single();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return data;
@@ -1815,7 +1599,7 @@ async function listAnnouncements(context: AdminContext, params: Record<string, u
   query = applyCampusIDFilter(query, params);
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return { items: data ?? [], total: count ?? 0, page, pageSize };
@@ -1834,7 +1618,7 @@ async function createAnnouncement(context: AdminContext, params: Record<string, 
     .single();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return data;
@@ -1849,7 +1633,7 @@ async function updateAnnouncement(context: AdminContext, params: Record<string, 
     .maybeSingle();
 
   if (currentError) {
-    throw new HttpError(500, currentError.message);
+    throw databaseError(currentError);
   }
   if (!current) {
     throw new HttpError(404, "Announcement not found.");
@@ -1864,7 +1648,7 @@ async function updateAnnouncement(context: AdminContext, params: Record<string, 
     .single();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return data;
@@ -1902,7 +1686,7 @@ async function listPostgraduateSources(context: AdminContext, params: Record<str
 
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return { items: data ?? [], total: count ?? 0, page, pageSize };
@@ -1922,7 +1706,7 @@ async function upsertPostgraduateSource(context: AdminContext, params: Record<st
 
   const { data, error } = await query.select().single();
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return data;
@@ -1939,7 +1723,7 @@ async function setPostgraduateSourceStatus(context: AdminContext, params: Record
     .single();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return data;
@@ -1972,7 +1756,7 @@ async function listPostgraduateSuggestions(context: AdminContext, params: Record
 
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return {
@@ -1987,57 +1771,15 @@ async function approvePostgraduateSuggestion(context: AdminContext, params: Reco
   const id = requiredText(params, "id");
   const adminNote = normalizeText(params.adminNote ?? params.admin_note);
   const summary = normalizeText(params.summary);
-  const suggestion = await fetchPostgraduateSuggestion(context, id);
-  if (suggestion.status !== "open") {
-    throw new HttpError(400, "Suggestion has already been reviewed.");
-  }
-
-  const sourcePayload = normalizePostgraduateSourcePayload({
-    title: suggestion.title,
-    summary: summary ?? suggestion.note ?? "",
-    source_url: suggestion.source_url,
-    sourceKind: suggestion.source_kind,
-    trustLevel: "verified_user",
-    school: suggestion.school,
-    unit: suggestion.unit,
-    major: suggestion.major,
-    examYear: suggestion.exam_year,
-    status: "published",
-    verifiedAt: new Date().toISOString(),
-  }, false);
-
-  const { data: source, error: sourceError } = await context.adminClient
-    .from("postgraduate_sources")
-    .insert({
-      ...sourcePayload,
-      created_by: context.admin.id,
-      updated_by: context.admin.id,
-    })
-    .select()
-    .single();
-
-  if (sourceError) {
-    throw new HttpError(500, sourceError.message);
-  }
-
-  const { data, error } = await context.adminClient
-    .from("postgraduate_source_suggestions")
-    .update({
-      status: "approved",
-      approved_source_id: source.id,
-      admin_note: adminNote,
-      reviewed_by: context.admin.id,
-      reviewed_at: new Date().toISOString(),
-    })
-    .eq("id", id)
-    .select()
-    .single();
+  const { data, error } = await context.adminClient.rpc("admin_approve_postgraduate_suggestion_v1", {
+    p_suggestion_id: id, p_admin_id: context.admin.id, p_summary: summary, p_admin_note: adminNote,
+  });
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error, { notFoundMessage: "未找到该考研线索。" });
   }
-
-  return (await hydratePostgraduateSuggestions(context, [data]))[0];
+  const row = Array.isArray(data) ? data[0] : data;
+  return (await hydratePostgraduateSuggestions(context, [row]))[0];
 }
 
 async function rejectPostgraduateSuggestion(context: AdminContext, params: Record<string, unknown>) {
@@ -2057,11 +1799,15 @@ async function rejectPostgraduateSuggestion(context: AdminContext, params: Recor
       reviewed_at: new Date().toISOString(),
     })
     .eq("id", id)
+    .eq("status", "open")
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
+  }
+  if (!data) {
+    throw new HttpError(409, "该考研线索已被其他管理员处理。", { code: "conflict" });
   }
 
   return (await hydratePostgraduateSuggestions(context, [data]))[0];
@@ -2075,7 +1821,7 @@ async function fetchPostgraduateSuggestion(context: AdminContext, id: string) {
     .maybeSingle();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
   if (!data) {
     throw new HttpError(404, "Postgraduate suggestion not found.");
@@ -2111,7 +1857,7 @@ async function listCatalogSuggestions(context: AdminContext, params: Record<stri
 
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return {
@@ -2125,51 +1871,15 @@ async function listCatalogSuggestions(context: AdminContext, params: Record<stri
 async function approveCatalogSuggestion(context: AdminContext, params: Record<string, unknown>) {
   const id = requiredText(params, "id");
   const adminNote = normalizeText(params.adminNote ?? params.admin_note);
-  const suggestion = await fetchCatalogSuggestion(context, id);
-  if (suggestion.status !== "open") {
-    throw new HttpError(400, "Suggestion has already been reviewed.");
-  }
-
-  let approvedTeacherID: number | null = null;
-  let approvedCourseID: number | null = null;
-  let approvedDishID: number | null = null;
-
-  if (suggestion.suggestion_type === "teacher") {
-    const teacher = await approveTeacherSuggestion(context, suggestion);
-    approvedTeacherID = Number(teacher.id);
-    await applyInitialTeacherRating(context, suggestion, approvedTeacherID);
-  } else if (suggestion.suggestion_type === "course") {
-    const course = await approveCourseSuggestion(context, suggestion);
-    approvedCourseID = Number(course.id);
-    await applyInitialCourseRating(context, suggestion, approvedCourseID);
-  } else if (suggestion.suggestion_type === "dish") {
-    const dish = await approveDishSuggestion(context, suggestion);
-    approvedDishID = Number(dish.id);
-    await applyInitialDishRating(context, suggestion, approvedDishID);
-  } else {
-    throw new HttpError(400, "Invalid suggestion type.");
-  }
-
-  const { data, error } = await context.adminClient
-    .from("catalog_suggestions")
-    .update({
-      status: "approved",
-      approved_teacher_id: approvedTeacherID,
-      approved_course_id: approvedCourseID,
-      approved_dish_id: approvedDishID,
-      admin_note: adminNote,
-      reviewed_by: context.admin.id,
-      reviewed_at: new Date().toISOString(),
-    })
-    .eq("id", id)
-    .select()
-    .single();
+  const { data, error } = await context.adminClient.rpc("admin_approve_catalog_suggestion_v1", {
+    p_suggestion_id: id, p_admin_id: context.admin.id, p_admin_note: adminNote,
+  });
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error, { notFoundMessage: "未找到该名录建议。" });
   }
-
-  return (await hydrateCatalogSuggestions(context, [data]))[0];
+  const row = Array.isArray(data) ? data[0] : data;
+  return (await hydrateCatalogSuggestions(context, [row]))[0];
 }
 
 async function rejectCatalogSuggestion(context: AdminContext, params: Record<string, unknown>) {
@@ -2189,11 +1899,15 @@ async function rejectCatalogSuggestion(context: AdminContext, params: Record<str
       reviewed_at: new Date().toISOString(),
     })
     .eq("id", id)
+    .eq("status", "open")
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
+  }
+  if (!data) {
+    throw new HttpError(409, "该名录建议已被其他管理员处理。", { code: "conflict" });
   }
 
   return (await hydrateCatalogSuggestions(context, [data]))[0];
@@ -2207,209 +1921,13 @@ async function fetchCatalogSuggestion(context: AdminContext, id: string) {
     .maybeSingle();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
   if (!data) {
     throw new HttpError(404, "Suggestion not found.");
   }
 
   return data;
-}
-
-async function approveTeacherSuggestion(context: AdminContext, suggestion: any) {
-  const campusID = normalizeText(suggestion.campus_id) ?? "bjfu";
-  const { data: existing, error: findError } = await context.adminClient
-    .from("teachers")
-    .select("*")
-    .eq("campus_id", campusID)
-    .eq("name", suggestion.name)
-    .eq("unit", suggestion.unit)
-    .maybeSingle();
-
-  if (findError) {
-    throw new HttpError(500, findError.message);
-  }
-
-  if (existing) {
-    const { data, error } = await context.adminClient
-      .from("teachers")
-      .update({ status: "published" })
-      .eq("id", existing.id)
-      .select()
-      .single();
-    if (error) {
-      throw new HttpError(500, error.message);
-    }
-    return data;
-  }
-
-  const { data, error } = await context.adminClient
-    .from("teachers")
-    .insert({ campus_id: campusID, name: suggestion.name, unit: suggestion.unit, status: "published" })
-    .select()
-    .single();
-
-  if (error) {
-    throw new HttpError(500, error.message);
-  }
-  return data;
-}
-
-async function approveCourseSuggestion(context: AdminContext, suggestion: any) {
-  const campusID = normalizeText(suggestion.campus_id) ?? "bjfu";
-  const category = normalizeText(suggestion.category) ?? "公选课";
-  const { data: existing, error: findError } = await context.adminClient
-    .from("course_catalog")
-    .select("*")
-    .eq("campus_id", campusID)
-    .eq("name", suggestion.name)
-    .eq("unit", suggestion.unit)
-    .eq("category", category)
-    .maybeSingle();
-
-  if (findError) {
-    throw new HttpError(500, findError.message);
-  }
-
-  if (existing) {
-    const payload: Record<string, unknown> = { status: "published" };
-    if (suggestion.credit !== null && suggestion.credit !== undefined) {
-      payload.credit = suggestion.credit;
-    }
-
-    const { data, error } = await context.adminClient
-      .from("course_catalog")
-      .update(payload)
-      .eq("id", existing.id)
-      .select()
-      .single();
-    if (error) {
-      throw new HttpError(500, error.message);
-    }
-    return data;
-  }
-
-  const { data, error } = await context.adminClient
-    .from("course_catalog")
-    .insert({
-      campus_id: campusID,
-      name: suggestion.name,
-      unit: suggestion.unit,
-      category,
-      credit: suggestion.credit ?? 0,
-      status: "published",
-    })
-    .select()
-    .single();
-
-  if (error) {
-    throw new HttpError(500, error.message);
-  }
-  return data;
-}
-
-async function approveDishSuggestion(context: AdminContext, suggestion: any) {
-  const campusID = normalizeText(suggestion.campus_id) ?? "bjfu";
-  const { data: existing, error: findError } = await context.adminClient
-    .from("dish_catalog")
-    .select("*")
-    .eq("campus_id", campusID)
-    .eq("name", suggestion.name)
-    .eq("location", suggestion.unit)
-    .maybeSingle();
-
-  if (findError) {
-    throw new HttpError(500, findError.message);
-  }
-
-  if (existing) {
-    const { data, error } = await context.adminClient
-      .from("dish_catalog")
-      .update({ status: "published" })
-      .eq("id", existing.id)
-      .select()
-      .single();
-    if (error) {
-      throw new HttpError(500, error.message);
-    }
-    return data;
-  }
-
-  const { data, error } = await context.adminClient
-    .from("dish_catalog")
-    .insert({ campus_id: campusID, name: suggestion.name, location: suggestion.unit, status: "published" })
-    .select()
-    .single();
-
-  if (error) {
-    throw new HttpError(500, error.message);
-  }
-  return data;
-}
-
-async function applyInitialTeacherRating(context: AdminContext, suggestion: any, teacherID: number) {
-  const stars = initialStarsFromSuggestion(suggestion);
-  if (stars === null || !suggestion.user_id) {
-    return;
-  }
-
-  const { error } = await context.adminClient
-    .from("teacher_ratings")
-    .upsert(
-      { teacher_id: teacherID, user_id: suggestion.user_id, stars },
-      { onConflict: "teacher_id,user_id" },
-    );
-
-  if (error) {
-    throw new HttpError(500, error.message);
-  }
-}
-
-async function applyInitialCourseRating(context: AdminContext, suggestion: any, courseID: number) {
-  const stars = initialStarsFromSuggestion(suggestion);
-  if (stars === null || !suggestion.user_id) {
-    return;
-  }
-
-  const { error } = await context.adminClient
-    .from("course_ratings")
-    .upsert(
-      { course_id: courseID, user_id: suggestion.user_id, stars },
-      { onConflict: "course_id,user_id" },
-    );
-
-  if (error) {
-    throw new HttpError(500, error.message);
-  }
-}
-
-async function applyInitialDishRating(context: AdminContext, suggestion: any, dishID: number) {
-  const stars = initialStarsFromSuggestion(suggestion);
-  if (stars === null || !suggestion.user_id) {
-    return;
-  }
-
-  const { error } = await context.adminClient
-    .from("dish_ratings")
-    .upsert(
-      { dish_id: dishID, user_id: suggestion.user_id, stars },
-      { onConflict: "dish_id,user_id" },
-    );
-
-  if (error) {
-    throw new HttpError(500, error.message);
-  }
-}
-
-function initialStarsFromSuggestion(suggestion: any) {
-  const stars = Number(suggestion.initial_stars);
-  if (!Number.isInteger(stars)) {
-    return null;
-  }
-  if (stars < 1 || stars > 5) {
-    throw new HttpError(400, "Invalid initial stars.");
-  }
-  return stars;
 }
 
 async function listTeachers(context: AdminContext, params: Record<string, unknown>) {
@@ -2436,7 +1954,7 @@ async function listTeachers(context: AdminContext, params: Record<string, unknow
   query = applyCampusIDFilter(query, params);
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return { items: data ?? [], total: count ?? 0, page, pageSize };
@@ -2452,6 +1970,9 @@ async function upsertTeacher(context: AdminContext, params: Record<string, unkno
   }
 
   const campusID = scopedCampusID(params);
+  if (!id && !campusID) {
+    throw new HttpError(400, "新增老师前必须选择具体学校。");
+  }
   const payload = campusID ? { name, unit, status, campus_id: campusID } : { name, unit, status };
   const query = id
     ? context.adminClient.from("teachers").update(payload).eq("id", id)
@@ -2459,7 +1980,7 @@ async function upsertTeacher(context: AdminContext, params: Record<string, unkno
 
   const { data, error } = await query.select().single();
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error, { duplicateMessage: "该学校下已存在同名、同单位的老师。", notFoundMessage: "未找到该老师。" });
   }
 
   return data;
@@ -2476,7 +1997,7 @@ async function setTeacherStatus(context: AdminContext, params: Record<string, un
     .single();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return data;
@@ -2511,7 +2032,7 @@ async function listCourses(context: AdminContext, params: Record<string, unknown
   query = applyCampusIDFilter(query, params);
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return { items: data ?? [], total: count ?? 0, page, pageSize };
@@ -2532,6 +2053,9 @@ async function upsertCourse(context: AdminContext, params: Record<string, unknow
   }
 
   const campusID = scopedCampusID(params);
+  if (!id && !campusID) {
+    throw new HttpError(400, "新增课程前必须选择具体学校。");
+  }
   const payload = campusID
     ? { name, unit, category, credit, status, campus_id: campusID }
     : { name, unit, category, credit, status };
@@ -2541,7 +2065,7 @@ async function upsertCourse(context: AdminContext, params: Record<string, unknow
 
   const { data, error } = await query.select().single();
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error, { duplicateMessage: "该学校下已存在同名、同单位、同分类的课程。", notFoundMessage: "未找到该课程。" });
   }
 
   return data;
@@ -2558,7 +2082,7 @@ async function setCourseStatus(context: AdminContext, params: Record<string, unk
     .single();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return data;
@@ -2578,7 +2102,7 @@ async function listSemesterRuntimeConfigs(context: AdminContext, params: Record<
   const { data, count, error } = await query;
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return { items: data ?? [], total: count ?? 0, page, pageSize };
@@ -2609,7 +2133,7 @@ async function upsertSemesterRuntimeConfig(context: AdminContext, params: Record
     p_is_active: isActive,
     p_actor_id: context.admin.id,
   });
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw databaseError(error);
   return data;
 }
 
@@ -2642,7 +2166,7 @@ async function listDishes(context: AdminContext, params: Record<string, unknown>
   query = applyCampusIDFilter(query, params);
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return { items: data ?? [], total: count ?? 0, page, pageSize };
@@ -2658,6 +2182,9 @@ async function upsertDish(context: AdminContext, params: Record<string, unknown>
   }
 
   const campusID = scopedCampusID(params);
+  if (!id && !campusID) {
+    throw new HttpError(400, "新增菜品前必须选择具体学校。");
+  }
   const payload = campusID ? { name, location, status, campus_id: campusID } : { name, location, status };
   const query = id
     ? context.adminClient.from("dish_catalog").update(payload).eq("id", id)
@@ -2665,7 +2192,7 @@ async function upsertDish(context: AdminContext, params: Record<string, unknown>
 
   const { data, error } = await query.select().single();
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error, { duplicateMessage: "该学校下已存在同名、同地点的菜品。", notFoundMessage: "未找到该菜品。" });
   }
 
   return data;
@@ -2682,7 +2209,7 @@ async function setDishStatus(context: AdminContext, params: Record<string, unkno
     .single();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return data;
@@ -2727,7 +2254,7 @@ async function listTeacherRatings(context: AdminContext, params: Record<string, 
 
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   const teacherMap = await fetchTeacherMap(context.adminClient, (data ?? []).map((item: any) => item.teacher_id));
@@ -2786,7 +2313,7 @@ async function listDishRatings(context: AdminContext, params: Record<string, unk
 
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   const dishMap = await fetchDishMap(context.adminClient, (data ?? []).map((item: any) => item.dish_id));
@@ -2818,7 +2345,7 @@ async function deleteTeacherRating(context: AdminContext, params: Record<string,
     .maybeSingle();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   const deleted = requireDeletedRecord(data, "该教师评分不存在或已被删除。");
@@ -2837,7 +2364,7 @@ async function deleteDishRating(context: AdminContext, params: Record<string, un
     .maybeSingle();
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   const deleted = requireDeletedRecord(data, "该菜品评分不存在或已被删除。");
@@ -2863,7 +2390,7 @@ async function listAdmins(context: AdminContext, params: Record<string, unknown>
 
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return { items: data ?? [], total: count ?? 0, page, pageSize };
@@ -2923,7 +2450,7 @@ async function listAdminSessions(context: AdminContext, params: Record<string, u
   if (adminID) query = query.eq("admin_id", adminID);
 
   const { data, count, error } = await query;
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw databaseError(error);
   const admins = await fetchAdminMap(context.adminClient, (data ?? []).map((item: any) => item.admin_id));
   return {
     items: (data ?? []).map((item: any) => ({
@@ -2951,7 +2478,7 @@ async function revokeAdminSession(context: AdminContext, params: Record<string, 
     .is("revoked_at", null)
     .select("token_hash, admin_id, revoked_at")
     .maybeSingle();
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw databaseError(error);
   if (!data) throw new HttpError(404, "Admin session not found or already revoked.");
   return { id: data.token_hash, admin_id: data.admin_id, revoked_at: data.revoked_at };
 }
@@ -2964,7 +2491,7 @@ async function listNationalCalendarRuntimeConfigs(context: AdminContext, params:
     .order("is_active", { ascending: false })
     .order("year", { ascending: false })
     .range(from, to);
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw databaseError(error);
   return { items: data ?? [], total: count ?? 0, page, pageSize };
 }
 
@@ -2981,7 +2508,7 @@ async function upsertNationalCalendarRuntimeConfig(context: AdminContext, params
     p_is_active: booleanParam(params, "isActive") ?? booleanParam(params, "is_active") ?? false,
     p_actor_id: context.admin.id,
   });
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw databaseError(error);
   return data;
 }
 
@@ -3034,7 +2561,7 @@ async function createAdmin(context: AdminContext, params: Record<string, unknown
   });
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return Array.isArray(data) ? data[0] : data;
@@ -3053,7 +2580,7 @@ async function updateAdmin(context: AdminContext, params: Record<string, unknown
   });
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return Array.isArray(data) ? data[0] : data;
@@ -3068,7 +2595,7 @@ async function disableAdmin(context: AdminContext, params: Record<string, unknow
   });
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return Array.isArray(data) ? data[0] : data;
@@ -3099,7 +2626,7 @@ async function listAuditLogs(context: AdminContext, params: Record<string, unkno
 
   const { data, count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   const adminMap = await fetchAdminMap(context.adminClient, (data ?? []).map((item: any) => item.admin_id).filter(Boolean));
@@ -3216,14 +2743,25 @@ async function fetchProfileMap(client: any, ids: string[]) {
 
   const { data, error } = await client
     .from("profiles")
-    .select("*")
+    .select("id, community_campus_id, nickname, display_name, avatar_path, is_profile_complete, muted_until")
     .in("id", uniqueIDs);
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return new Map((data ?? []).map((item: any) => [item.id, item]));
+}
+
+function profileAdminProjection(context: AdminContext) {
+  if (context.admin.role === "super_admin") {
+    return "*";
+  }
+  return [
+    "id", "community_campus_id", "community_access_status", "community_school_name",
+    "nickname", "display_name", "avatar_path", "bio", "is_profile_complete",
+    "muted_until", "muted_reason", "muted_at", "created_at", "updated_at",
+  ].join(",");
 }
 
 async function fetchAdminMap(client: any, ids: string[]) {
@@ -3238,7 +2776,7 @@ async function fetchAdminMap(client: any, ids: string[]) {
     .in("id", uniqueIDs);
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return new Map((data ?? []).map((item: any) => [item.id, item]));
@@ -3256,7 +2794,7 @@ async function fetchTeacherMap(client: any, ids: Array<string | number>) {
     .in("id", uniqueIDs);
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return new Map((data ?? []).map((item: any) => [String(item.id), item]));
@@ -3274,7 +2812,7 @@ async function fetchCourseMap(client: any, ids: Array<string | number>) {
     .in("id", uniqueIDs);
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return new Map((data ?? []).map((item: any) => [String(item.id), item]));
@@ -3292,7 +2830,7 @@ async function fetchDishMap(client: any, ids: Array<string | number>) {
     .in("id", uniqueIDs);
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return new Map((data ?? []).map((item: any) => [String(item.id), item]));
@@ -3310,7 +2848,7 @@ async function fetchPostgraduateSourceMap(client: any, ids: string[]) {
     .in("id", uniqueIDs);
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return new Map((data ?? []).map((item: any) => [item.id, item]));
@@ -3328,7 +2866,7 @@ async function fetchPostTitleMap(client: any, ids: string[]) {
     .in("id", uniqueIDs);
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return new Map((data ?? []).map((item: any) => [item.id, item]));
@@ -3346,7 +2884,7 @@ async function fetchPostMap(client: any, ids: string[]) {
     .in("id", uniqueIDs);
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return new Map((data ?? []).map((item: any) => [item.id, item]));
@@ -3364,7 +2902,7 @@ async function fetchCommentMap(client: any, ids: string[]) {
     .in("id", uniqueIDs);
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return new Map((data ?? []).map((item: any) => [item.id, item]));
@@ -3383,7 +2921,7 @@ async function fetchPostImageMap(client: any, postIDs: string[], includeSignedIm
     .order("sort_order", { ascending: true });
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   const images = data ?? [];
@@ -3423,7 +2961,7 @@ async function fetchPollOptionMap(client: any, pollIDs: string[]) {
     .order("sort_order", { ascending: true });
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   for (const option of data ?? []) {
@@ -3447,7 +2985,7 @@ async function countPostLikes(client: any, postIDs: string[]) {
     .in("post_id", uniqueIDs);
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   for (const like of data ?? []) {
@@ -3475,7 +3013,7 @@ async function fetchPostPinMap(client: any, postIDs: string[]) {
     if (String(error.message ?? "").includes("community_post_pins")) {
       return new Map<string, any>();
     }
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   const now = Date.now();
@@ -3504,7 +3042,7 @@ async function countRowsByAuthor(client: any, table: string, authorIDs: string[]
     .in("author_id", uniqueIDs);
 
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   for (const row of data ?? []) {
@@ -3521,7 +3059,7 @@ async function countRows(client: any, table: string, configure?: (query: any) =>
 
   const { count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return count ?? 0;
@@ -3567,7 +3105,7 @@ async function countModerationReports(context: AdminContext, campusID: string | 
 
   const { count, error } = await query;
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
 
   return count ?? 0;
@@ -3796,7 +3334,7 @@ function requiredURL(value: unknown, field: string) {
 
 function requiredDateOnly(params: Record<string, unknown>, primary: string, fallback?: string) {
   const value = requiredText(params, primary, fallback);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(new Date(`${value}T00:00:00Z`).getTime())) {
+  if (!isValidDateOnly(value)) {
     throw new HttpError(400, `${primary} must be a YYYY-MM-DD date.`);
   }
   return value;
@@ -3841,7 +3379,7 @@ async function idsForColumn(client: any, table: string, column: string, value: s
     .select("id")
     .eq(column, value);
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
   return (data ?? []).map((item: any) => item.id);
 }
@@ -3853,28 +3391,9 @@ async function idsInColumn(client: any, table: string, column: string, values: u
     .select("id")
     .in(column, values);
   if (error) {
-    throw new HttpError(500, error.message);
+    throw databaseError(error);
   }
   return (data ?? []).map((item: any) => item.id);
-}
-
-function normalizeSchoolName(value: string) {
-  return value.trim().replace(/\s+/g, "").toLowerCase();
-}
-
-function isBJFUCampusReference(value: string) {
-  const normalized = normalizeSchoolName(value);
-  return normalized === "bjfu" || normalized === "北京林业大学" || normalized === "北林";
-}
-
-function campusIDFromRequest(requestID: string, displayName: string) {
-  const ascii = displayName
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40);
-  return ascii || `school-${requestID.replace(/-/g, "").slice(0, 10)}`;
 }
 
 function calendarEventsParam(params: Record<string, unknown>) {
@@ -3922,6 +3441,12 @@ function calendarEventsParam(params: Record<string, unknown>) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(startDateString) || !/^\d{4}-\d{2}-\d{2}$/.test(endDateString)) {
       throw new HttpError(400, `calendarEvents[${index}] dates must use YYYY-MM-DD.`);
     }
+    if (!isValidDateOnly(startDateString) || !isValidDateOnly(endDateString)) {
+      throw new HttpError(400, `calendarEvents[${index}] contains an invalid calendar date.`);
+    }
+    if (startDateString > endDateString) {
+      throw new HttpError(400, `calendarEvents[${index}] ends before it starts.`);
+    }
 
     return {
       id,
@@ -3936,14 +3461,21 @@ function calendarEventsParam(params: Record<string, unknown>) {
 
 function numberParam(params: Record<string, unknown>, key: string) {
   const raw = params[key];
-  if (typeof raw === "number" && Number.isFinite(raw)) {
-    return Math.trunc(raw);
+  if (raw === null || raw === undefined || raw === "") {
+    return null;
   }
-  if (typeof raw === "string" && raw.trim() !== "") {
-    const parsed = Number(raw);
-    return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+  const parsed = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : Number.NaN;
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    throw new HttpError(400, `${key} must be an integer.`);
   }
-  return null;
+  return parsed;
+}
+
+function isValidDateOnly(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
 function decimalParam(params: Record<string, unknown>, key: string) {

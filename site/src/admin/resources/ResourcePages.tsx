@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   BooleanField,
   Button,
@@ -45,13 +45,14 @@ import Visibility from "@mui/icons-material/Visibility";
 import type { AdminDataProvider } from "../providers/dataProvider";
 import type { ColumnConfig, FormFieldConfig, ResourceConfig, RowActionConfig } from "./config";
 import { resourceConfigs } from "./config";
+import { readCampusScope } from "../providers/session";
 
 export function createResourcePages(resource: string) {
   const config = resourceConfigs[resource];
   if (!config) throw new Error(`Missing resource UI config for ${resource}`);
   return {
     list: () => <ResourceList resource={resource} config={config} />,
-    create: config.createForm ? () => <ResourceCreate config={config} /> : undefined,
+    create: config.createForm ? () => <ResourceCreate resource={resource} config={config} /> : undefined,
   };
 }
 
@@ -139,10 +140,12 @@ function renderColumn(config: ColumnConfig) {
 
 function ListActions({ resource, config }: { resource: string; config: ResourceConfig }) {
   const { canAccess: canCreate } = useCanAccess({ resource, action: "create" });
+  const campusID = useCampusScope();
+  const createRequiresCampus = campusScopedCreateResources.has(resource);
   return (
     <TopToolbar>
       <FilterButton />
-      {config.createForm && canCreate && <CreateButton />}
+      {config.createForm && canCreate && (!createRequiresCampus || campusID !== "all") && <CreateButton />}
       {config.exportable && <ExportResourceButton resource={resource} />}
     </TopToolbar>
   );
@@ -184,11 +187,14 @@ function ActionDialogButton({ resource, record, action }: { resource: string; re
   const refresh = useRefresh();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const runningRef = useRef(false);
   const [values, setValues] = useState<Record<string, unknown>>({});
   const { canAccess } = useCanAccess({ resource, action: action.permissionAction ?? "edit", record });
   if (!canAccess) return null;
 
   async function run() {
+    if (runningRef.current) return;
+    runningRef.current = true;
     setLoading(true);
     try {
       if (action.action === "__deleteRating") {
@@ -204,6 +210,7 @@ function ActionDialogButton({ resource, record, action }: { resource: string; re
     } catch (error) {
       notify(error instanceof Error ? error.message : `${action.label}失败。`, { type: "error" });
     } finally {
+      runningRef.current = false;
       setLoading(false);
     }
   }
@@ -255,12 +262,32 @@ function RecordFormDialog({ resource, config, record }: { resource: string; conf
   );
 }
 
-function ResourceCreate({ config }: { config: ResourceConfig }) {
+function ResourceCreate({ resource, config }: { resource: string; config: ResourceConfig }) {
+  const campusID = useCampusScope();
+  if (campusScopedCreateResources.has(resource) && campusID === "all") {
+    return <Create title={`新增${config.label}`}><Card sx={{ p: 3 }}><Typography>请先在顶部选择具体学校，再新增{config.label}。</Typography></Card></Create>;
+  }
   return (
     <Create title={`新增${config.label}`}>
       <SimpleForm>{config.createForm?.map((field) => <AdminInput key={field.source} field={field} />)}</SimpleForm>
     </Create>
   );
+}
+
+const campusScopedCreateResources = new Set(["teachers", "courses", "dishes"]);
+
+function useCampusScope() {
+  const [campusID, setCampusID] = useState(readCampusScope());
+  useEffect(() => {
+    const update = () => setCampusID(readCampusScope());
+    window.addEventListener("leafy-admin-campus-change", update);
+    window.addEventListener("storage", update);
+    return () => {
+      window.removeEventListener("leafy-admin-campus-change", update);
+      window.removeEventListener("storage", update);
+    };
+  }, []);
+  return campusID;
 }
 
 function AdminInput({ field }: { field: FormFieldConfig }) {

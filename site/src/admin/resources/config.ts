@@ -60,7 +60,7 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
     statusChoices: status("published", "pending_review", "hidden", "deleted", "all"),
     exportable: true,
     actions: [
-      { label: "下架", action: "moderatePost", tone: "danger", visible: (r) => r.status !== "hidden", fields: [reasonField("下架原因")], fixed: { status: "hidden" }, build: idParams },
+      { label: "下架", action: "moderatePost", tone: "danger", visible: (r) => r.status === "published" || r.status === "pending_review", fields: [reasonField("下架原因")], fixed: { status: "hidden" }, build: idParams },
       { label: "恢复", action: "moderatePost", visible: (r) => r.status === "hidden", fixed: { status: "published" }, build: idParams },
       { label: "全局置顶", action: "pinPost", visible: (r) => r.status === "published" && !r.pin, fields: [{ source: "priority", label: "优先级", kind: "number" }, { source: "startsAt", label: "开始时间", kind: "datetime" }, { source: "endsAt", label: "结束时间", kind: "datetime" }, reasonField("置顶原因")], fixed: { scope: "global" }, build: (r, v) => ({ postID: r.id, ...v }) },
       { label: "分类置顶", action: "pinPost", visible: (r) => r.status === "published" && !r.pin, fields: [{ source: "category", label: "分类", required: true }, { source: "priority", label: "优先级", kind: "number" }, { source: "startsAt", label: "开始时间", kind: "datetime" }, { source: "endsAt", label: "结束时间", kind: "datetime" }, reasonField("置顶原因")], fixed: { scope: "category" }, build: (r, v) => ({ postID: r.id, ...v }) },
@@ -73,7 +73,7 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
     statusChoices: status("published", "pending_review", "hidden", "deleted", "all"),
     exportable: true,
     actions: [
-      { label: "下架", action: "moderatePoll", tone: "danger", fields: [reasonField()], fixed: { status: "hidden" }, build: idParams },
+      { label: "下架", action: "moderatePoll", tone: "danger", visible: (r) => r.status === "published" || r.status === "pending_review", fields: [reasonField()], fixed: { status: "hidden" }, build: idParams },
       { label: "恢复", action: "moderatePoll", visible: (r) => r.status === "hidden", fixed: { status: "published" }, build: idParams },
       { label: "批准删除", action: "reviewPollDeletion", tone: "danger", visible: (r) => r.deletion_status === "pending", fields: [reasonField()], fixed: { decision: "approved" }, build: idParams },
       { label: "拒绝删除", action: "reviewPollDeletion", visible: (r) => r.deletion_status === "pending", fields: [reasonField()], fixed: { decision: "rejected" }, build: idParams },
@@ -85,7 +85,7 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
     statusChoices: status("published", "hidden", "deleted", "all"),
     exportable: true,
     actions: [
-      { label: "下架", action: "moderateComment", tone: "danger", fields: [reasonField()], fixed: { status: "hidden" }, build: idParams },
+      { label: "下架", action: "moderateComment", tone: "danger", visible: (r) => r.status === "published" || r.status === "pending_review", fields: [reasonField()], fixed: { status: "hidden" }, build: idParams },
       { label: "恢复", action: "moderateComment", visible: (r) => r.status === "hidden", fixed: { status: "published" }, build: idParams },
     ],
   },
@@ -96,10 +96,10 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
     filters: [{ source: "targetType", label: "对象类型", kind: "select", choices: [{ id: "all", name: "全部" }, { id: "post", name: "帖子" }, { id: "comment", name: "评论" }, { id: "user", name: "用户" }] }],
     exportable: true,
     actions: [
-      { label: "标记已看", action: "resolveModerationReport", fields: [{ source: "resolutionNote", label: "处理备注", kind: "longtext", required: true }], fixed: { status: "reviewed", hideContent: false }, build: idParams },
-      { label: "下架并关闭", action: "resolveModerationReport", tone: "danger", fields: [{ source: "resolutionNote", label: "处理备注", kind: "longtext", required: true }], fixed: { status: "resolved", hideContent: true }, build: idParams },
-      { label: "下架并禁言", action: "resolveModerationReport", tone: "danger", fields: [{ source: "resolutionNote", label: "处理备注", kind: "longtext", required: true }, { source: "mutedUntil", label: "禁言截止（留空默认一年）", kind: "datetime" }, { source: "mutedReason", label: "禁言原因", kind: "longtext" }], fixed: { status: "resolved", hideContent: true, muteUser: true }, build: idParams },
-      { label: "驳回", action: "resolveModerationReport", fields: [{ source: "resolutionNote", label: "处理备注", kind: "longtext", required: true }], fixed: { status: "rejected", hideContent: false }, build: idParams },
+      { label: "标记已看", action: "resolveModerationReport", visible: (r) => r.status === "open", fields: [{ source: "resolutionNote", label: "处理备注", kind: "longtext", required: true }], fixed: { status: "reviewed", hideContent: false }, build: idParams },
+      { label: "下架并关闭", action: "resolveModerationReport", tone: "danger", visible: (r) => r.status === "open" || r.status === "reviewed", fields: [{ source: "resolutionNote", label: "处理备注", kind: "longtext", required: true }], fixed: { status: "resolved", hideContent: true }, build: idParams },
+      { label: "下架并禁言", action: "resolveModerationReport", tone: "danger", visible: (r) => r.status === "open" || r.status === "reviewed", fields: [{ source: "resolutionNote", label: "处理备注", kind: "longtext", required: true }, { source: "mutedUntil", label: "禁言截止（留空默认一年）", kind: "datetime" }, { source: "mutedReason", label: "禁言原因", kind: "longtext" }], fixed: { status: "resolved", hideContent: true, muteUser: true }, build: idParams },
+      { label: "驳回", action: "resolveModerationReport", visible: (r) => r.status === "open" || r.status === "reviewed", fields: [{ source: "resolutionNote", label: "处理备注", kind: "longtext", required: true }], fixed: { status: "rejected", hideContent: false }, build: idParams },
     ],
   },
   profiles: {
@@ -142,8 +142,8 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
   "postgraduate-suggestions": {
     label: "考研信息线索", columns: columns(["title", "标题"], ["source_kind", "类型"], ["school", "学校"], ["exam_year", "年份", "number"], ["status", "状态"], ["created_at", "提交时间", "date"]), statusChoices: status("open", "approved", "rejected", "all"),
     actions: [
-      { label: "通过并入库", action: "approvePostgraduateSuggestion", fields: [{ source: "summary", label: "入库摘要", kind: "longtext" }, { source: "adminNote", label: "审核备注", kind: "longtext" }], build: idParams },
-      { label: "驳回", action: "rejectPostgraduateSuggestion", tone: "danger", fields: [{ source: "adminNote", label: "驳回原因", kind: "longtext", required: true }], build: idParams },
+      { label: "通过并入库", action: "approvePostgraduateSuggestion", visible: (r) => r.status === "open", fields: [{ source: "summary", label: "入库摘要", kind: "longtext" }, { source: "adminNote", label: "审核备注", kind: "longtext" }], build: idParams },
+      { label: "驳回", action: "rejectPostgraduateSuggestion", tone: "danger", visible: (r) => r.status === "open", fields: [{ source: "adminNote", label: "驳回原因", kind: "longtext", required: true }], build: idParams },
     ],
     filters: [{ source: "kind", label: "来源类型" }],
   },
@@ -153,8 +153,8 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
     statusChoices: status("open", "approved", "rejected", "all"), exportable: true,
     filters: [{ source: "type", label: "建议类型", kind: "select", choices: [{ id: "all", name: "全部" }, { id: "teacher", name: "教师" }, { id: "course", name: "课程" }, { id: "dish", name: "菜品" }] }],
     actions: [
-      { label: "通过", action: "approveCatalogSuggestion", fields: [{ source: "adminNote", label: "审核备注", kind: "longtext" }], build: idParams },
-      { label: "驳回", action: "rejectCatalogSuggestion", tone: "danger", fields: [{ source: "adminNote", label: "驳回原因", kind: "longtext", required: true }], build: idParams },
+      { label: "通过", action: "approveCatalogSuggestion", visible: (r) => r.status === "open", fields: [{ source: "adminNote", label: "审核备注", kind: "longtext" }], build: idParams },
+      { label: "驳回", action: "rejectCatalogSuggestion", tone: "danger", visible: (r) => r.status === "open", fields: [{ source: "adminNote", label: "驳回原因", kind: "longtext", required: true }], build: idParams },
     ],
   },
   teachers: catalog("教师", [["name", "姓名"], ["unit", "单位"], ["rating_average", "评分", "number"], ["rating_count", "人数", "number"], ["status", "状态"]], [{ source: "name", label: "姓名", required: true }, { source: "unit", label: "单位", required: true }, statusField()]),

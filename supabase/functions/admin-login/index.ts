@@ -7,6 +7,7 @@ import {
   normalizeText,
   okOptions,
   readJSON,
+  requireAdminProxy,
 } from "../_shared/admin-core.ts";
 import { permissionsForRole } from "../_shared/admin-permissions.ts";
 
@@ -26,10 +27,8 @@ Deno.serve(async (request) => {
     return errorResponse(405, "method_not_allowed", "Method not allowed.", { retryable: false });
   }
 
-  const expectedProxySecret = Deno.env.get("ADMIN_PROXY_SECRET");
-  if (!expectedProxySecret || request.headers.get("x-leafy-admin-proxy") !== expectedProxySecret) {
-    return errorResponse(403, "forbidden", "Admin login must use the same-origin proxy.");
-  }
+  const proxyError = requireAdminProxy(request);
+  if (proxyError) return proxyError;
 
   try {
     const body = await readJSON<LoginRequest>(request);

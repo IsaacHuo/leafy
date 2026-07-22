@@ -55,4 +55,16 @@ describe("admin data provider campus scope", () => {
     });
     expect(mockedAction).toHaveBeenCalledWith("listFeedback", expect.objectContaining({ start: "2026-07-01", end: "2026-07-13" }));
   });
+
+  it("requires an explicit campus before creating catalog records", async () => {
+    saveCampusScope("all");
+    await expect(dataProvider.create("teachers", { data: { name: "测试", unit: "学院" } }))
+      .rejects.toThrow("新增前必须先选择具体学校");
+    expect(mockedAction).not.toHaveBeenCalled();
+
+    saveCampusScope("campus-a");
+    mockedAction.mockResolvedValue({ data: { id: 1, name: "测试", unit: "学院" }, meta: {} });
+    await dataProvider.create("teachers", { data: { name: "测试", unit: "学院" } });
+    expect(mockedAction).toHaveBeenCalledWith("upsertTeacher", expect.objectContaining({ campusID: "campus-a" }));
+  });
 });

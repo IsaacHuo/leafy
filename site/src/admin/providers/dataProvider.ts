@@ -83,6 +83,9 @@ const providerImplementation = {
   getMany: async () => ({ data: [] }),
   getManyReference: async (resource: string, params: GetListParams) => dataProvider.getList(resource, params),
   create: async (resource: string, params: CreateParams) => {
+    if (campusScopedCreateResources.has(resource) && readCampusScope() === "all") {
+      throw new Error("新增前必须先选择具体学校。");
+    }
     const action = createAction(resource);
     const response = await actionRequest<RaRecord>(action, withCampus(action, params.data));
     return { data: ensureID(response.data) };
@@ -134,6 +137,8 @@ const providerImplementation = {
     URL.revokeObjectURL(url);
   },
 };
+
+const campusScopedCreateResources = new Set(["teachers", "courses", "dishes"]);
 
 export const dataProvider = providerImplementation as unknown as AdminDataProvider;
 

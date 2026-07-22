@@ -3,6 +3,7 @@ import {
   appendAuditLog,
   authenticateAdmin,
   corsHeaders,
+  databaseError,
   errorCodeFor,
   HttpError,
   mapFunctionError,
@@ -50,6 +51,7 @@ const configs: Record<string, ExportConfig> = {
 };
 
 Deno.serve(async (request) => {
+  const requestId = request.headers.get("x-request-id") || crypto.randomUUID();
   const methodResponse = requirePost(request);
   if (methodResponse) return methodResponse;
 
@@ -88,7 +90,7 @@ Deno.serve(async (request) => {
         errorCode: errorCodeFor(error),
       });
     }
-    return mapFunctionError(error);
+    return mapFunctionError(error, context && !(context instanceof Response) ? context.requestId : requestId);
   }
 });
 
@@ -124,7 +126,7 @@ async function loadRows(client: any, resource: string, cfg: ExportConfig, filter
   if (end && effective.dateColumn) query = query.lte(effective.dateColumn, end);
 
   const { data, error } = await query;
-  if (error) throw new HttpError(500, error.message);
+  if (error) throw databaseError(error);
   let rows = (data ?? []) as Record<string, unknown>[];
   if (resource === "ratings") rows = rows.map((row) => ({ ...row, target: ratingTarget }));
   if (resource === "reports" && campusID && campusID !== "all") {
@@ -155,7 +157,7 @@ async function fetchInChunks(client: any, table: string, select: string, column:
   const rows: any[] = [];
   for (let index = 0; index < ids.length; index += 200) {
     const { data, error } = await client.from(table).select(select).in(column, ids.slice(index, index + 200));
-    if (error) throw new HttpError(500, error.message);
+    if (error) throw databaseError(error);
     rows.push(...(data ?? []));
   }
   return rows;

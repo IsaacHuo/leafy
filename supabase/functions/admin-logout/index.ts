@@ -3,6 +3,7 @@ import {
   actionMeta,
   AdminContext,
   authenticateAdmin,
+  databaseError,
   errorCodeFor,
   HttpError,
   json,
@@ -11,6 +12,7 @@ import {
 } from "../_shared/admin-core.ts";
 
 Deno.serve(async (request) => {
+  const requestId = request.headers.get("x-request-id") || crypto.randomUUID();
   const methodResponse = requirePost(request);
   if (methodResponse) {
     return methodResponse;
@@ -30,7 +32,7 @@ Deno.serve(async (request) => {
       .eq("token_hash", context.tokenHash)
       .select("token_hash")
       .maybeSingle();
-    if (error) throw new HttpError(500, error.message);
+    if (error) throw databaseError(error);
     if (!data) throw new HttpError(404, "Admin session not found.");
 
     const auditLogged = await appendAuditLog(context, "logout", {});
@@ -42,6 +44,6 @@ Deno.serve(async (request) => {
         errorCode: errorCodeFor(error),
       });
     }
-    return mapFunctionError(error);
+    return mapFunctionError(error, context?.requestId ?? requestId);
   }
 });

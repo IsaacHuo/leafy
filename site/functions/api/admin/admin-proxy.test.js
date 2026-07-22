@@ -41,6 +41,15 @@ describe("admin BFF security helpers", () => {
     expect(__test.clearSessionCookie()).toContain("Max-Age=0");
   });
 
+  it("requires JSON and rejects declared oversized bodies", () => {
+    expect(__test.validateJSONRequest(new Request("https://myleafy.space/api/admin/actions", {
+      method: "POST", headers: { "Content-Type": "text/plain" }, body: "{}",
+    }))?.code).toBe("bad_request");
+    expect(__test.validateJSONRequest(new Request("https://myleafy.space/api/admin/actions", {
+      method: "POST", headers: { "Content-Type": "application/json", "Content-Length": String(300_000) }, body: "{}",
+    }))?.code).toBe("payload_too_large");
+  });
+
   it("moves the login token into the HttpOnly cookie and strips it from JSON", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       token: "upstream-secret",
@@ -68,6 +77,7 @@ function apiRequest(route, method, cookie) {
     headers: {
       Origin: "https://myleafy.space",
       "X-Leafy-Admin-CSRF": "1",
+      ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
       ...(cookie ? { Cookie: cookie } : {}),
     },
     ...(method === "POST" ? { body: "{}" } : {}),

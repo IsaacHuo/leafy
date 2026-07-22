@@ -40,6 +40,7 @@ export type BackendErrorCode =
   | "method_not_allowed"
   | "conflict"
   | "rate_limited"
+  | "payload_too_large"
   | "backend_unavailable"
   | "internal_error";
 
@@ -102,12 +103,49 @@ export function errorResponse(
   return json({ error: message, errorEnvelope }, status);
 }
 
-export async function readJSON<T>(request: Request): Promise<T> {
-  try {
-    return (await request.json()) as T;
-  } catch {
-    return {} as T;
+export async function readJSON<T>(request: Request, maxBytes = 256 * 1024): Promise<T> {
+  const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (contentType !== "application/json") {
+    throw new HttpError(400, "Content-Type must be application/json.");
   }
+
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new HttpError(413, "Request body is too large.", { code: "payload_too_large" });
+  }
+
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (bytes.byteLength > maxBytes) {
+    throw new HttpError(413, "Request body is too large.", { code: "payload_too_large" });
+  }
+
+  const text = new TextDecoder().decode(bytes).trim();
+  if (!text) {
+    throw new HttpError(400, "Request body must be valid JSON.");
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new HttpError(400, "Request body must be valid JSON.");
+  }
+}
+
+export function requireAdminProxy(request: Request): Response | null {
+  const requestId = request.headers.get("x-request-id") || crypto.randomUUID();
+  const expected = Deno.env.get("ADMIN_PROXY_SECRET");
+  if (!expected) {
+    console.error(JSON.stringify({ event: "admin_proxy_secret_missing", request_id: requestId }));
+    return errorResponse(500, "backend_unavailable", "后台暂时不可用，请稍后重试。", {
+      details: { request_id: requestId },
+    });
+  }
+  if (request.headers.get("x-leafy-admin-proxy") !== expected) {
+    return errorResponse(403, "forbidden", "Admin requests must use the same-origin proxy.", {
+      details: { request_id: requestId },
+    });
+  }
+  return null;
 }
 
 export function createAdminClient(): any {
@@ -124,6 +162,10 @@ export function createAdminClient(): any {
 
 export async function authenticateAdmin(request: Request): Promise<AdminContext | Response> {
   const requestId = request.headers.get("x-request-id") || crypto.randomUUID();
+  const proxyError = requireAdminProxy(request);
+  if (proxyError) {
+    return proxyError;
+  }
   const token = bearerToken(request);
   if (!token) {
     return errorResponse(401, "unauthorized", "Missing admin session token.");
@@ -163,10 +205,17 @@ export async function authenticateAdmin(request: Request): Promise<AdminContext 
     return errorResponse(403, "forbidden", "Admin account is disabled.");
   }
 
-  await adminClient
+  const { error: lastSeenError } = await adminClient
     .from("admin_sessions")
     .update({ last_seen_at: new Date().toISOString() })
     .eq("token_hash", tokenHash);
+  if (lastSeenError) {
+    console.error(JSON.stringify({
+      event: "admin_session_last_seen_failed",
+      request_id: requestId,
+      error: lastSeenError.message,
+    }));
+  }
 
   return {
     adminClient,
@@ -333,7 +382,12 @@ export function mapFunctionError(error: unknown, requestId?: string) {
       error.status,
       error.code ?? statusToErrorCode(error.status),
       error.message,
-      { retryable: error.retryable, details: error.details },
+      {
+        retryable: error.retryable,
+        details: requestId
+          ? { ...(isPlainObject(error.details) ? error.details : {}), request_id: requestId }
+          : error.details,
+      },
     );
   }
 
@@ -351,6 +405,33 @@ export function errorCodeFor(error: unknown): BackendErrorCode {
   return "internal_error";
 }
 
+export function databaseError(
+  error: { code?: string | null; message?: string | null; details?: unknown } | null | undefined,
+  options: { duplicateMessage?: string; notFoundMessage?: string } = {},
+): HttpError {
+  const code = error?.code ?? "";
+  const message = error?.message ?? "Unknown database error.";
+  if (code === "23505") {
+    return new HttpError(409, options.duplicateMessage ?? "该记录已存在。", { code: "conflict" });
+  }
+  if (code === "23503") {
+    return new HttpError(409, "该记录仍被其他数据引用，无法完成操作。", { code: "conflict" });
+  }
+  if (code === "PGRST116") {
+    return new HttpError(404, options.notFoundMessage ?? "Record not found.");
+  }
+  if (code === "23514" || code === "22023" || code === "P0001") {
+    if (/_NOT_FOUND\b/.test(message)) {
+      return new HttpError(404, options.notFoundMessage ?? "Record not found.");
+    }
+    if (/(ALREADY|CONFLICT|MISMATCH|CANNOT|NOT_PENDING|DELETED)/.test(message)) {
+      return new HttpError(409, humanizeDatabaseMessage(message), { code: "conflict" });
+    }
+    return new HttpError(400, humanizeDatabaseMessage(message));
+  }
+  return new HttpError(500, message, { details: error?.details });
+}
+
 function statusToErrorCode(status: number): BackendErrorCode {
   if (status === 400) return "bad_request";
   if (status === 401) return "unauthorized";
@@ -359,8 +440,31 @@ function statusToErrorCode(status: number): BackendErrorCode {
   if (status === 405) return "method_not_allowed";
   if (status === 409) return "conflict";
   if (status === 429) return "rate_limited";
+  if (status === 413) return "payload_too_large";
   if (status >= 500) return "backend_unavailable";
   return "internal_error";
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function humanizeDatabaseMessage(message: string) {
+  const token = message.match(/[A-Z][A-Z0-9_]{2,}/)?.[0];
+  if (!token) return message;
+  const known: Record<string, string> = {
+    ADMIN_CATALOG_SUGGESTION_ALREADY_REVIEWED: "该建议已被审核。",
+    ADMIN_CATALOG_SUGGESTION_NOT_FOUND: "未找到该名录建议。",
+    ADMIN_POSTGRADUATE_SUGGESTION_ALREADY_REVIEWED: "该线索已被审核。",
+    ADMIN_POSTGRADUATE_SUGGESTION_NOT_FOUND: "未找到该考研线索。",
+    ADMIN_REPORT_ALREADY_REVIEWED: "该举报已被处理。",
+    ADMIN_REPORT_NOT_FOUND: "未找到该举报。",
+    ADMIN_POST_DELETED: "作者已删除该帖子，不能修改其状态。",
+    ADMIN_COMMENT_DELETED: "作者已删除该评论，不能修改其状态。",
+    ADMIN_POST_NOT_FOUND: "未找到该帖子。",
+    ADMIN_CAMPUS_REQUEST_ALREADY_REVIEWED: "该学校申请已被处理。",
+  };
+  return known[token] ?? token;
 }
 
 function defaultRetryable(status: number) {

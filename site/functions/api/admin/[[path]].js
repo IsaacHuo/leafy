@@ -1,5 +1,6 @@
 const cookieName = "leafy_admin_session";
 const csrfHeader = "x-leafy-admin-csrf";
+const maxRequestBodyBytes = 256 * 1024;
 
 export async function onRequest(context) {
   const requestID = context.request.headers.get("x-request-id") || crypto.randomUUID();
@@ -25,7 +26,20 @@ export async function onRequest(context) {
   const token = readCookie(context.request.headers.get("cookie"), cookieName);
   if (route !== "login" && !token) return unauthorized(requestID);
 
-  const body = expectedMethod === "POST" ? await context.request.text() : undefined;
+  let body;
+  if (expectedMethod === "POST") {
+    const bodyError = validateJSONRequest(context.request);
+    if (bodyError) return apiError(bodyError.status, bodyError.code, bodyError.message, requestID);
+    body = await context.request.text();
+    if (new TextEncoder().encode(body).byteLength > maxRequestBodyBytes) {
+      return apiError(413, "payload_too_large", "Request body is too large.", requestID);
+    }
+    try {
+      JSON.parse(body);
+    } catch {
+      return apiError(400, "bad_request", "Request body must be valid JSON.", requestID);
+    }
+  }
   let upstream;
   try {
     upstream = await fetch(`${String(supabaseURL).replace(/\/+$/, "")}/functions/v1/${functionName}`, {
@@ -68,6 +82,18 @@ function validateSameOrigin(request) {
     }
   }
   if (request.headers.get(csrfHeader) !== "1") return "Missing admin CSRF header.";
+  return null;
+}
+
+function validateJSONRequest(request) {
+  const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (contentType !== "application/json") {
+    return { status: 400, code: "bad_request", message: "Content-Type must be application/json." };
+  }
+  const contentLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maxRequestBodyBytes) {
+    return { status: 413, code: "payload_too_large", message: "Request body is too large." };
+  }
   return null;
 }
 
@@ -164,4 +190,4 @@ function jsonResponse(payload, status, requestID) {
   });
 }
 
-export const __test = { routeName, validateSameOrigin, sessionCookie, clearSessionCookie, readCookie };
+export const __test = { routeName, validateSameOrigin, validateJSONRequest, sessionCookie, clearSessionCookie, readCookie };
