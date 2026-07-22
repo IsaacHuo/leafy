@@ -11,7 +11,7 @@
 5. [Supabase 接入](supabase.md)：身份、数据域、RLS、Storage、Edge Functions 与本地环境。
 6. [Leafy AI 免费额度鉴权](leafy-ai-quota-authentication.md)：免费身份、订阅权益、额度 RPC、安全边界与排查方法。
 7. [运营后台](admin-console.md)：管理请求链路、角色、资源、安全与测试。
-8. [贡献规范](contributing.md)：Issue、分支、PR、验证与敏感信息要求。
+8. [未来功能展望](future-features.md)：用户侧候选能力、优先级、边界与验证标准。\n9. [贡献规范](contributing.md)：Issue、分支、PR、验证与敏感信息要求。
 
 ## 文档目录
 
@@ -27,7 +27,7 @@
 | [leafy-ai-quota-authentication.md](leafy-ai-quota-authentication.md) | Leafy AI 免费/订阅身份、额度 RPC、故障排查与验证 | iOS/后端开发者 |
 | [admin-console.md](admin-console.md) | Web 后台、RBAC、代理、安全、开发和测试 | Web/后端开发者 |
 | [contributing.md](contributing.md) | 协作流程、测试与安全要求 | 贡献者 |
-| [roadmap.md](roadmap.md) | 非承诺式发展方向和工程优先级 | 贡献者 |
+| [roadmap.md](roadmap.md) | 非承诺式发展方向和工程优先级 | 贡献者 |\n| [future-features.md](future-features.md) | 用户侧未来功能、建议优先级、边界与验证标准 | 产品、设计与贡献者 |
 | [release-notes.md](release-notes.md) | 对外版本更新文案归档 | 维护者与用户 |
 | Mermaid 图表 | 直接嵌入对应 Markdown 文档，由 GitHub 原生渲染 | 文档维护者 |
 | [archive/](archive/) | 仍有参考价值的历史复盘和问题分析 | 维护者 |
@@ -53,7 +53,7 @@ Wiki 源文件位于仓库 `wiki/`，由 `Sync Wiki` 工作流同步到 GitHub W
 ## 维护规则
 
 - 文档默认使用中文，代码标识、命令和协议名保留原文。
-- 当前实现写入总览、架构和对应接入文档；未来方向写入路线图。
+- 当前实现写入总览、架构和对应接入文档；工程治理方向写入路线图，用户侧候选能力写入未来功能展望。
 - README 负责快速理解和入口，不复制所有实施细节。
 - 链接使用仓库相对路径，不写本机绝对路径。
 - 用户可见能力必须注明数据来源、可用条件和失败边界。
