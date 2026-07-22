@@ -99,16 +99,6 @@ actor CommunityService {
         }
     }
 
-    func replaceAnonymousSession() async throws {
-        activeEnsureSessionTask?.cancel()
-        activeEnsureSessionTask = nil
-        let client = try LeafySupabase.shared.requireClient()
-        if client.auth.currentSession != nil {
-            try await client.auth.signOut()
-        }
-        _ = try await client.auth.signInAnonymously()
-    }
-
     private static func performEnsureAnonymousSession() async throws {
         try Task.checkCancellation()
         let client = try LeafySupabase.shared.requireClient()
@@ -383,6 +373,12 @@ extension CommunityService {
         guard CommunityEmailBinding.isValidEmail(email) else {
             throw CommunityServiceError.invalidEmail
         }
+        if CommunityEmailBinding.isAlreadyBound(
+            boundEmail: currentProfile.boundEmail,
+            requestedEmail: email
+        ) {
+            return currentProfile
+        }
 
         do {
             if CommunityEmailBinding.shouldResendVerification(
@@ -473,56 +469,6 @@ extension CommunityService {
             throw CommunityServiceError.missingAuthenticatedUser
         }
 
-        return profile
-    }
-
-    func requestCommunityRecovery(email rawEmail: String) async throws {
-        let email = CommunityEmailBinding.normalizedEmail(rawEmail)
-        guard CommunityEmailBinding.isValidEmail(email) else {
-            throw CommunityServiceError.invalidEmail
-        }
-        let client = try LeafySupabase.shared.requireClient()
-        do {
-            try await client.auth.signInWithOTP(
-                email: email,
-                redirectTo: LeafySupabase.authCallbackURL,
-                shouldCreateUser: false
-            )
-        } catch {
-            throw mapEmailAuthError(error)
-        }
-    }
-
-    func verifyCommunityRecovery(email rawEmail: String, code: String) async throws -> CommunityProfile {
-        let email = CommunityEmailBinding.normalizedEmail(rawEmail)
-        guard CommunityEmailBinding.isValidEmail(email) else {
-            throw CommunityServiceError.invalidEmail
-        }
-        guard CommunityEmailBinding.isCompleteVerificationCode(code) else {
-            throw CommunityServiceError.edgeFunctionRejected("请输入邮件中的 8 位验证码。")
-        }
-
-        let client = try LeafySupabase.shared.requireClient()
-        do {
-            let response = try await client.auth.verifyOTP(
-                email: email,
-                token: code,
-                type: .magiclink,
-                redirectTo: LeafySupabase.authCallbackURL
-            )
-            guard response.session != nil else {
-                throw CommunityServiceError.missingAuthenticatedUser
-            }
-        } catch let error as CommunityServiceError {
-            throw error
-        } catch {
-            throw mapEmailAuthError(error)
-        }
-
-        guard let profile = try await fetchCurrentProfile() else {
-            try? await client.auth.signOut()
-            throw CommunityServiceError.edgeFunctionRejected("该邮箱没有可恢复的社区账号。")
-        }
         return profile
     }
 

@@ -12,7 +12,7 @@ type BootstrapRequest = {
   campus_id?: string | null;
 };
 
-Deno.serve(async (request) => {
+export async function handler(request: Request): Promise<Response> {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -107,7 +107,9 @@ Deno.serve(async (request) => {
     const message = error instanceof Error ? error.message : "Unknown error";
     return json({ error: message }, 500);
   }
-});
+}
+
+if (import.meta.main) Deno.serve(handler);
 
 async function readRequestBody(request: Request): Promise<BootstrapRequest> {
   try {
@@ -117,35 +119,26 @@ async function readRequestBody(request: Request): Promise<BootstrapRequest> {
   }
 }
 
-function normalizeText(value: string | null | undefined): string | null {
+export function normalizeText(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function normalizeCampusID(value: string | null | undefined): string {
+export function normalizeCampusID(value: string | null | undefined): string {
   const normalized = normalizeText(value)?.toLowerCase() ?? "bjfu";
   return normalized.length > 0 ? normalized : "bjfu";
 }
 
-function communityIdentityErrorCode(message: string): string | null {
+export function communityIdentityErrorCode(message: string): string | null {
   const codes = [
-    "COMMUNITY_AUTH_IDENTITY_MISMATCH",
-    "COMMUNITY_ACCOUNT_RECOVERY_REQUIRED",
     "COMMUNITY_AUTH_SESSION_REQUIRED",
     "COMMUNITY_EDU_ID_REQUIRED",
   ];
   return codes.find((code) => message.includes(code)) ?? null;
 }
 
-function communityIdentityErrorMessage(code: string): string {
-  switch (code) {
-    case "COMMUNITY_ACCOUNT_RECOVERY_REQUIRED":
-      return "该教务身份已绑定社区账号，请使用已验证邮箱恢复。";
-    case "COMMUNITY_AUTH_IDENTITY_MISMATCH":
-      return "当前社区会话已绑定其他教务身份，请先切换账号。";
-    default:
-      return "登录身份无效，请重新登录后再试。";
-  }
+export function communityIdentityErrorMessage(_code: string): string {
+  return "登录身份无效，请重新登录后再试。";
 }
 
 function json(payload: unknown, status = 200) {

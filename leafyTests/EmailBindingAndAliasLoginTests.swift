@@ -46,4 +46,25 @@ final class EmailBindingTests: XCTestCase {
         )
     }
 
+    func testEmailBindingTreatsCurrentNotificationEmailAsAlreadyBound() {
+        XCTAssertTrue(
+            CommunityEmailBinding.isAlreadyBound(
+                boundEmail: " Student@Example.com ",
+                requestedEmail: "student@example.com"
+            )
+        )
+        XCTAssertFalse(
+            CommunityEmailBinding.isAlreadyBound(
+                boundEmail: "old@example.com",
+                requestedEmail: "new@example.com"
+            )
+        )
+        XCTAssertFalse(
+            CommunityEmailBinding.isAlreadyBound(
+                boundEmail: nil,
+                requestedEmail: "new@example.com"
+            )
+        )
+    }
+
 }

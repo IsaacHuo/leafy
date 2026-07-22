@@ -27,11 +27,19 @@ struct ProfileEmailBindingView: View {
         CommunityEmailBinding.normalizedCode(code)
     }
 
+    private var isRequestedEmailAlreadyBound: Bool {
+        CommunityEmailBinding.isAlreadyBound(
+            boundEmail: profile?.boundEmail,
+            requestedEmail: normalizedEmail
+        )
+    }
+
     private var canSendCode: Bool {
         !isSendingCode
             && cooldownRemaining == 0
             && !normalizedEmail.isEmpty
             && !isVerifyingCode
+            && !isRequestedEmailAlreadyBound
     }
 
     private var canVerifyCode: Bool {
@@ -144,6 +152,9 @@ struct ProfileEmailBindingView: View {
     }
 
     private var sendCodeButtonTitle: String {
+        if isRequestedEmailAlreadyBound {
+            return "已绑定"
+        }
         if cooldownRemaining > 0 {
             return "\(cooldownRemaining) 秒后重发"
         }
@@ -155,7 +166,7 @@ struct ProfileEmailBindingView: View {
         let pendingEmail = profile?.pendingBoundEmail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         if !boundEmail.isEmpty, !pendingEmail.isEmpty {
-            return "当前可用于登录的邮箱仍是 \(boundEmail)。\(pendingEmail) 验证成功后会替换旧邮箱。"
+            return "当前通知邮箱仍是 \(boundEmail)。\(pendingEmail) 验证成功后会替换旧邮箱。"
         }
         if !boundEmail.isEmpty {
             return "此邮箱仅用于接收服务异常和重要通知，不会改变北林登录方式。"
@@ -256,6 +267,10 @@ struct ProfileEmailBindingView: View {
         guard !isSendingCode else { return }
         guard CommunityEmailBinding.isValidEmail(normalizedEmail) else {
             alertMessage = CommunityServiceError.invalidEmail.localizedDescription
+            return
+        }
+        if isRequestedEmailAlreadyBound {
+            alertMessage = "此通知邮箱已绑定，无需重复验证。"
             return
         }
 

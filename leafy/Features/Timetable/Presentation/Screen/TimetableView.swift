@@ -1660,7 +1660,7 @@ struct TimetableView: View {
     }
 
     private var renderedTimetableWeeks: ClosedRange<Int> {
-        max(1, currentWeek - 1)...min(totalWeeks, currentWeek + 1)
+        1...totalWeeks
     }
 
     private func timetableContentWidth(metrics: TimetableLayoutMetrics) -> CGFloat {

@@ -1,6 +1,6 @@
 # MyLeafy Supabase Schema Ledger
 
-Last updated: 2026-07-10
+Last updated: 2026-07-22
 
 This ledger records the deployed schema facts that the app relies on. It is not
 a replacement for migrations, and existing migration history should not be
@@ -60,7 +60,7 @@ The RPC also exposes an `rpcs` object for versioned RPC availability and an
 
 | Domain | Tables |
 | --- | --- |
-| `community-social` | `profiles`, `posts`, `post_images`, `comments`, `community_images`, `post_likes`, `post_favorites`, `community_blocks`, `community_notifications`, `community_post_pins` |
+| `community-social` | `profiles`, `profile_auth_links`, `posts`, `post_images`, `comments`, `community_images`, `post_likes`, `post_favorites`, `community_blocks`, `community_notifications`, `community_post_pins` |
 | `moderation` | `community_reports`, content status fields on posts/comments/polls/profiles |
 | `catalog-ratings` | `teachers`, `teacher_ratings`, `course_catalog`, `course_ratings`, `dish_catalog`, `dish_ratings`, `catalog_suggestions`, `postgraduate_sources`, `postgraduate_source_suggestions` |
 | `timetable-sharing` | `timetable_snapshots`, `timetable_invites`, `timetable_share_members` |
@@ -155,6 +155,19 @@ The RPC also exposes an `rpcs` object for versioned RPC availability and an
 - `20260704090000_campus_email_lookup.sql`
 - `20260710121000_admin_security_runtime.sql`
 - `20260713190000_fix_next_semester_week_capacity.sql`
+- `20260722090000_community_identity_hardening.sql`
+- `20260722092000_community_mutation_hardening.sql`
+- `20260722094000_campus_ai_entitlement_monotonicity.sql`
+- `20260722100000_community_upload_receipts.sql`
+- `20260722113000_community_school_identity_inheritance.sql`
+
+## Community Identity Invariants
+
+- `(campus_id, edu_id)` uniquely identifies one durable `profiles` row.
+- `profiles.id` is independent from the lifetime of `auth.users`; existing IDs and all content ownership foreign keys remain unchanged.
+- `profile_auth_links.auth_user_id` is unique, while multiple device Auth users may link to the same profile and school identity.
+- `edge_claim_community_identity` is service-role-only, serializes claims per school identity, and moves only the current Auth link when the local school account changes.
+- Notification email binding does not grant, recover, or select a community profile.
 
 ## Admin Security and Runtime Invariants
 

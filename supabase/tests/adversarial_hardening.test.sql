@@ -6,8 +6,16 @@ set local search_path = public, extensions;
 select plan(20);
 
 select ok(to_regclass('private.community_identity_link_conflicts') is not null, 'identity conflicts are auditable');
-select ok(to_regclass('public.idx_profile_auth_links_profile_id_unique') is not null, 'one auth link per profile is enforced');
-select ok(to_regclass('public.idx_profile_auth_links_campus_edu_id_unique') is not null, 'one auth link per campus identity is enforced');
+select ok(
+  to_regclass('public.idx_profile_auth_links_profile_id_unique') is null
+    and to_regclass('public.idx_profile_auth_links_profile_id') is not null,
+  'a profile can retain multiple indexed device Auth links'
+);
+select ok(
+  to_regclass('public.idx_profile_auth_links_campus_edu_id_unique') is null
+    and to_regclass('public.idx_profile_auth_links_campus_edu_id') is not null,
+  'a school identity can retain multiple indexed device Auth links'
+);
 select ok(
   has_function_privilege('service_role', 'public.edge_claim_community_identity(uuid,text,text,text)', 'EXECUTE')
     and not has_function_privilege('authenticated', 'public.edge_claim_community_identity(uuid,text,text,text)', 'EXECUTE'),

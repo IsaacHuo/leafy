@@ -10,7 +10,7 @@ Core stack:
 - Swift Package Manager
 
 Timetable direction:
-- The BJFU timetable always renders a 20-week container. Course occurrences come only from the school response; unused weeks remain empty.
+- The BJFU timetable always renders a 20-week container, keeps all 20 weeks of indexed data and SwiftUI week views resident, and limits only off-screen accessibility exposure. Course occurrences come only from the school response; unused weeks remain empty.
 - Semester end dates and winter/summer break ranges come from semantic runtime calendar events, never from the 20-week timetable container.
 - Runtime semester configuration selects the undergraduate semester ID, graduate term code, and first-week date without requiring an App Store release.
 - Undergraduate and graduate timetable refreshes must use the same observable cache and error semantics.
@@ -23,10 +23,10 @@ Campus heatmap direction:
 - User-facing copy says “更新数据” and “上次更新”; avoid unfamiliar implementation terminology.
 
 Community security direction:
-- One `(campus_id, edu_id)` maps to exactly one community profile and one active Supabase Auth user. Bootstrap may claim an unbound identity but must never take over an existing binding.
-- Email is recovery-only for a verified bound community profile; it is not part of normal school login. Recovery must re-check the current local school identity.
+- One `(campus_id, edu_id)` maps to exactly one durable community profile. Multiple replaceable device Supabase Auth sessions may link to that profile, while one Auth session maps to at most one profile.
+- School login automatically inherits the matching community profile and content. A verified bound email is notification-only and never participates in school login or community recovery.
 - Posts and comments are created through validated RPCs, reports never auto-hide content, and post images require a short-lived single-use server validation receipt.
-- School logout clears school credentials and personal caches but does not destroy the recoverable community account. Switching school identities isolates the previous community session before bootstrap.
+- School logout clears school credentials and personal caches but does not destroy the durable community profile. Switching school identities hides the previous profile immediately and remaps the current device Auth link through bootstrap.
 
 Leafy AI direction:
 - Leafy AI defaults to the server-backed Flash service: free users receive 10 requests per Beijing day; the current weekly subscription receives 120 requests per Apple billing period with a 40-request Beijing daily cap.

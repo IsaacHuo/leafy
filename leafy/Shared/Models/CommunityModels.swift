@@ -1510,6 +1510,13 @@ nonisolated enum CommunityEmailBinding {
         return !normalizedPendingEmail.isEmpty && normalizedPendingEmail == normalizedRequestedEmail
     }
 
+    static func isAlreadyBound(boundEmail: String?, requestedEmail: String) -> Bool {
+        guard let boundEmail else { return false }
+        let normalizedBoundEmail = normalizedEmail(boundEmail)
+        let normalizedRequestedEmail = normalizedEmail(requestedEmail)
+        return !normalizedBoundEmail.isEmpty && normalizedBoundEmail == normalizedRequestedEmail
+    }
+
     static func isValidEmail(_ email: String) -> Bool {
         let pattern = #"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$"#
         return email.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil

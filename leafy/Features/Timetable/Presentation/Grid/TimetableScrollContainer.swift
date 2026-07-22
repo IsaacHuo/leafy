@@ -297,8 +297,7 @@ struct TimetableScrollContainer<Corner: View, Header: View, Axis: View, GridBody
                     x: xOffset(for: targetWeek),
                     y: clampedYOffset(bodyScrollView.contentOffset.y)
                 )
-                let visibleWeek = week(for: bodyScrollView.contentOffset.x)
-                let shouldAnimateScroll = hasAppliedInitialScrollRequest && abs(visibleWeek - targetWeek) <= 1
+                let shouldAnimateScroll = hasAppliedInitialScrollRequest
 
                 if bodyScrollView.contentOffset == targetOffset {
                     isAnimatingToTarget = false
