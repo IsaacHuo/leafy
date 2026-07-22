@@ -7,7 +7,7 @@ select plan(18);
 
 select ok(to_regclass('public.dish_catalog') is not null, 'dish catalog is part of migration history');
 select ok(to_regclass('public.dish_ratings') is not null, 'dish ratings are part of migration history');
-select like(
+select alike(
   pg_get_indexdef('public.idx_catalog_suggestions_open_unique'::regclass),
   '%campus_id%',
   'open catalog suggestion uniqueness is campus scoped'

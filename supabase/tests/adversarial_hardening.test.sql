@@ -34,12 +34,12 @@ select ok(
   'direct community inserts are revoked'
 );
 select ok(to_regclass('public.idx_community_reports_open_post_unique') is not null, 'duplicate open post reports are prevented');
-select unlike(
+select unalike(
   pg_get_functiondef('public.report_community_content(text,uuid,uuid,uuid,text,text)'::regprocedure),
   '%update public.posts%',
   'reporting does not hide posts'
 );
-select unlike(
+select unalike(
   pg_get_functiondef('public.report_community_content(text,uuid,uuid,uuid,text,text)'::regprocedure),
   '%update public.comments%',
   'reporting does not hide comments'

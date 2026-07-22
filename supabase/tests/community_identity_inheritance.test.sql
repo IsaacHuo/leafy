@@ -219,7 +219,10 @@ values (
   'duplicate_profile_link'
 );
 
-\ir ../migrations/20260722113000_community_school_identity_inheritance.sql
+-- supabase test db mounts only this directory into pg_prove. The repository
+-- test runner materializes this include from the canonical migration so the
+-- replay test never drifts from production SQL.
+\ir .community_school_identity_inheritance.replay.inc
 
 select is(
   (select profile_id from public.profile_auth_links where auth_user_id = '10000000-0000-0000-0000-000000000005'),
