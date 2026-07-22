@@ -2,6 +2,7 @@ import Combine
 import QuickLook
 import Supabase
 import SwiftUI
+import os
 import SwiftData
 import UniformTypeIdentifiers
 #if canImport(UIKit)
@@ -28,6 +29,7 @@ struct RatingSectionContainerView: View {
     let dishRefreshID: UUID
 
     @State private var mode: RatingSectionMode = .teachers
+    @State private var workspace = RatingCatalogWorkspace()
 
     private var shouldShowRatingSections: Bool {
         if ActiveCampusContext.descriptor.id == .bjfu && ActiveCampusContext.identity?.isCustom != true {
@@ -49,7 +51,9 @@ struct RatingSectionContainerView: View {
                 ZStack(alignment: .topLeading) {
                     TeacherSectionView(
                         selectedTeacher: $selectedTeacher,
-                        refreshID: teacherRefreshID
+                        refreshID: teacherRefreshID,
+                        isActive: mode == .teachers,
+                        lifecycleStore: workspace.teachers
                     )
                     .opacity(mode == .teachers ? 1 : 0)
                     .allowsHitTesting(mode == .teachers)
@@ -57,7 +61,9 @@ struct RatingSectionContainerView: View {
 
                     CourseSectionView(
                         selectedCourse: $selectedCourse,
-                        refreshID: courseRefreshID
+                        refreshID: courseRefreshID,
+                        isActive: mode == .courses,
+                        lifecycleStore: workspace.courses
                     )
                     .opacity(mode == .courses ? 1 : 0)
                     .allowsHitTesting(mode == .courses)
@@ -65,7 +71,9 @@ struct RatingSectionContainerView: View {
 
                     DishSectionView(
                         selectedDish: $selectedDish,
-                        refreshID: dishRefreshID
+                        refreshID: dishRefreshID,
+                        isActive: mode == .dishes,
+                        lifecycleStore: workspace.dishes
                     )
                     .opacity(mode == .dishes ? 1 : 0)
                     .allowsHitTesting(mode == .dishes)
@@ -207,6 +215,8 @@ private struct TeacherSectionView: View {
 
     @Binding var selectedTeacher: TeacherRatingSummary?
     let refreshID: UUID
+    let isActive: Bool
+    let lifecycleStore: RatingCatalogSectionStore
 
     private let pageSize = 50
 
@@ -229,28 +239,35 @@ private struct TeacherSectionView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppSpacing.card) {
-            HStack(alignment: .top, spacing: 12) {
-                LeafySectionTitle("评教", subtitle: "按老师打星评分，结果只统计星级。")
-                Spacer(minLength: 8)
-                CatalogSuggestionPromptButton(title: "缺老师", systemName: "person.badge.plus") {
-                    openTeacherSuggestion()
+        Group {
+            if isActive {
+                VStack(alignment: .leading, spacing: AppSpacing.card) {
+                    HStack(alignment: .top, spacing: 12) {
+                        LeafySectionTitle("评教", subtitle: "按老师打星评分，结果只统计星级。")
+                        Spacer(minLength: 8)
+                        CatalogSuggestionPromptButton(title: "缺老师", systemName: "person.badge.plus") {
+                            openTeacherSuggestion()
+                        }
+                    }
+
+                    TeacherFilterToolbar(
+                        search: $search,
+                        selectedUnit: $selectedUnit,
+                        selectedStars: $selectedStars,
+                        isExpanded: $isFilterExpanded,
+                        availableUnits: availableUnits,
+                        hasActiveFilters: hasActiveFilters,
+                        clearFilters: clearFilters
+                    )
+
+                    teacherContent
                 }
+            } else {
+                Color.clear.frame(height: 0)
             }
-
-            TeacherFilterToolbar(
-                search: $search,
-                selectedUnit: $selectedUnit,
-                selectedStars: $selectedStars,
-                isExpanded: $isFilterExpanded,
-                availableUnits: availableUnits,
-                hasActiveFilters: hasActiveFilters,
-                clearFilters: clearFilters
-            )
-
-            teacherContent
         }
-        .task {
+        .task(id: isActive) {
+            guard isActive, lifecycleStore.beginInitialLoad() else { return }
             await loadTeachers(reset: true)
         }
         .onChange(of: search) { _, _ in
@@ -354,6 +371,9 @@ private struct TeacherSectionView: View {
 
     @MainActor
     private func loadTeachers(reset: Bool) async {
+        let signpostState = LeafyPerformanceSignposter.ratings.beginInterval("teachers-load")
+        defer { LeafyPerformanceSignposter.ratings.endInterval("teachers-load", signpostState) }
+
         if reset {
             isLoading = true
         } else {
@@ -454,6 +474,8 @@ private struct CourseSectionView: View {
 
     @Binding var selectedCourse: CourseRatingSummary?
     let refreshID: UUID
+    let isActive: Bool
+    let lifecycleStore: RatingCatalogSectionStore
 
     private let pageSize = 50
 
@@ -476,28 +498,35 @@ private struct CourseSectionView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppSpacing.card) {
-            HStack(alignment: .top, spacing: 12) {
-                LeafySectionTitle("评课", subtitle: "公选课课程库由后台维护，每个账号对每门课保留一条星级评分。")
-                Spacer(minLength: 8)
-                CatalogSuggestionPromptButton(title: "缺课程", systemName: "plus.circle.fill") {
-                    openCourseSuggestion()
+        Group {
+            if isActive {
+                VStack(alignment: .leading, spacing: AppSpacing.card) {
+                    HStack(alignment: .top, spacing: 12) {
+                        LeafySectionTitle("评课", subtitle: "公选课课程库由后台维护，每个账号对每门课保留一条星级评分。")
+                        Spacer(minLength: 8)
+                        CatalogSuggestionPromptButton(title: "缺课程", systemName: "plus.circle.fill") {
+                            openCourseSuggestion()
+                        }
+                    }
+
+                    CourseFilterToolbar(
+                        search: $search,
+                        selectedCategory: $selectedCategory,
+                        selectedStars: $selectedStars,
+                        isExpanded: $isFilterExpanded,
+                        availableCategories: availableCategories,
+                        hasActiveFilters: hasActiveFilters,
+                        clearFilters: clearFilters
+                    )
+
+                    courseContent
                 }
+            } else {
+                Color.clear.frame(height: 0)
             }
-
-            CourseFilterToolbar(
-                search: $search,
-                selectedCategory: $selectedCategory,
-                selectedStars: $selectedStars,
-                isExpanded: $isFilterExpanded,
-                availableCategories: availableCategories,
-                hasActiveFilters: hasActiveFilters,
-                clearFilters: clearFilters
-            )
-
-            courseContent
         }
-        .task {
+        .task(id: isActive) {
+            guard isActive, lifecycleStore.beginInitialLoad() else { return }
             await loadCourses(reset: true)
         }
         .onChange(of: search) { _, _ in
@@ -603,6 +632,9 @@ private struct CourseSectionView: View {
 
     @MainActor
     private func loadCourses(reset: Bool) async {
+        let signpostState = LeafyPerformanceSignposter.ratings.beginInterval("courses-load")
+        defer { LeafyPerformanceSignposter.ratings.endInterval("courses-load", signpostState) }
+
         if reset {
             isLoading = true
         } else {
@@ -715,6 +747,8 @@ private struct DishSectionView: View {
 
     @Binding var selectedDish: DishRatingSummary?
     let refreshID: UUID
+    let isActive: Bool
+    let lifecycleStore: RatingCatalogSectionStore
 
     private let pageSize = 50
 
@@ -740,28 +774,35 @@ private struct DishSectionView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppSpacing.card) {
-            HStack(alignment: .top, spacing: 12) {
-                LeafySectionTitle("评菜", subtitle: "按食堂和餐厅筛选菜品，每个账号对每道菜保留一条星级评分。")
-                Spacer(minLength: 8)
-                CatalogSuggestionPromptButton(title: "缺菜品", systemName: "fork.knife.circle.fill") {
-                    openDishSuggestion()
+        Group {
+            if isActive {
+                VStack(alignment: .leading, spacing: AppSpacing.card) {
+                    HStack(alignment: .top, spacing: 12) {
+                        LeafySectionTitle("评菜", subtitle: "按食堂和餐厅筛选菜品，每个账号对每道菜保留一条星级评分。")
+                        Spacer(minLength: 8)
+                        CatalogSuggestionPromptButton(title: "缺菜品", systemName: "fork.knife.circle.fill") {
+                            openDishSuggestion()
+                        }
+                    }
+
+                    DishFilterToolbar(
+                        search: $search,
+                        selectedCanteen: $selectedCanteen,
+                        selectedLocation: $selectedLocation,
+                        selectedStars: $selectedStars,
+                        isExpanded: $isFilterExpanded,
+                        hasActiveFilters: hasActiveFilters,
+                        clearFilters: clearFilters
+                    )
+
+                    dishContent
                 }
+            } else {
+                Color.clear.frame(height: 0)
             }
-
-            DishFilterToolbar(
-                search: $search,
-                selectedCanteen: $selectedCanteen,
-                selectedLocation: $selectedLocation,
-                selectedStars: $selectedStars,
-                isExpanded: $isFilterExpanded,
-                hasActiveFilters: hasActiveFilters,
-                clearFilters: clearFilters
-            )
-
-            dishContent
         }
-        .task {
+        .task(id: isActive) {
+            guard isActive, lifecycleStore.beginInitialLoad() else { return }
             await loadDishes(reset: true)
         }
         .onChange(of: search) { _, _ in
@@ -870,6 +911,9 @@ private struct DishSectionView: View {
 
     @MainActor
     private func loadDishes(reset: Bool) async {
+        let signpostState = LeafyPerformanceSignposter.ratings.beginInterval("dishes-load")
+        defer { LeafyPerformanceSignposter.ratings.endInterval("dishes-load", signpostState) }
+
         if reset {
             isLoading = true
         } else {

@@ -1,4 +1,23 @@
+import Foundation
+import os
 import SwiftUI
+
+enum CommunityCompactTimestampFormatter {
+    private static let lock = NSLock()
+    private static let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = "M/d HH:mm"
+        return formatter
+    }()
+
+    static func string(from date: Date) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return formatter.string(from: date)
+    }
+}
 
 struct CommunityMasonryPostCard: View {
     let post: CommunityPost
@@ -175,12 +194,7 @@ struct CommunityMasonryPostCard: View {
         guard let date = CommunityTimestampFormatter.parse(post.createdAt) else {
             return post.relativeTimestamp
         }
-
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.dateFormat = "M/d HH:mm"
-        return formatter.string(from: date)
+        return CommunityCompactTimestampFormatter.string(from: date)
     }
 
     private var categoryBadge: some View {
@@ -211,14 +225,48 @@ struct CommunityMasonryPostCard: View {
     }
 }
 
-struct CommunityMasonryGrid<Item: Identifiable, Content: View>: View {
+struct CommunityMasonryColumns<Item> {
+    let left: [Item]
+    let right: [Item]
+
+    init(items: [Item]) {
+        let state = LeafyPerformanceSignposter.community.beginInterval("masonry-projection")
+        defer { LeafyPerformanceSignposter.community.endInterval("masonry-projection", state) }
+
+        var left: [Item] = []
+        var right: [Item] = []
+        left.reserveCapacity((items.count + 1) / 2)
+        right.reserveCapacity(items.count / 2)
+        for (index, item) in items.enumerated() {
+            if index.isMultiple(of: 2) {
+                left.append(item)
+            } else {
+                right.append(item)
+            }
+        }
+        self.left = left
+        self.right = right
+    }
+}
+
+struct CommunityMasonryGrid<Item: Identifiable & Equatable, Content: View>: View {
     let items: [Item]
     var spacing: CGFloat = 10
     @ViewBuilder let content: (Item) -> Content
+    @State private var columns: CommunityMasonryColumns<Item>
+
+    init(
+        items: [Item],
+        spacing: CGFloat = 10,
+        @ViewBuilder content: @escaping (Item) -> Content
+    ) {
+        self.items = items
+        self.spacing = spacing
+        self.content = content
+        _columns = State(initialValue: CommunityMasonryColumns(items: items))
+    }
 
     var body: some View {
-        let columns = masonryColumns
-
         HStack(alignment: .top, spacing: spacing) {
             LazyVStack(alignment: .leading, spacing: spacing) {
                 ForEach(Array(columns.left.enumerated()), id: \.element.id) { index, item in
@@ -238,15 +286,8 @@ struct CommunityMasonryGrid<Item: Identifiable, Content: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .top)
         }
-    }
-
-    private var masonryColumns: (left: [Item], right: [Item]) {
-        items.enumerated().reduce(into: (left: [Item](), right: [Item]())) { result, pair in
-            if pair.offset.isMultiple(of: 2) {
-                result.left.append(pair.element)
-            } else {
-                result.right.append(pair.element)
-            }
+        .onChange(of: items) { _, newItems in
+            columns = CommunityMasonryColumns(items: newItems)
         }
     }
 }

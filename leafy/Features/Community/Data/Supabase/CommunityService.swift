@@ -126,7 +126,11 @@ actor CommunityService {
         try Task.checkCancellation()
         _ = try await client.auth.signInAnonymously()
     }
+}
 
+// MARK: - Identity and Profile
+
+extension CommunityService {
     func bootstrapCommunityUser(
         eduID: String,
         displayName: String?,
@@ -570,7 +574,11 @@ actor CommunityService {
             )
             .execute()
     }
+}
 
+// MARK: - Feed and Posts
+
+extension CommunityService {
     nonisolated func fetchPosts(query: CommunityFeedQuery = .default) async throws -> [CommunityPost] {
         let client = try LeafySupabase.shared.requireClient()
         let config = try LeafySupabase.shared.requireConfig()
@@ -894,7 +902,11 @@ actor CommunityService {
             images: []
         )
     }
+}
 
+// MARK: - Polls
+
+extension CommunityService {
     func fetchPolls(limit: Int = 30) async throws -> [CommunityPoll] {
         let client = try LeafySupabase.shared.requireClient()
         guard client.auth.currentUser != nil else {
@@ -1023,7 +1035,11 @@ actor CommunityService {
     func deleteOwnPoll(pollID: UUID) async throws {
         _ = try await requestPollDeletion(pollID: pollID, reason: nil)
     }
+}
 
+// MARK: - Post Detail and Moderation
+
+extension CommunityService {
     nonisolated func fetchPost(postID: UUID) async throws -> CommunityPost? {
         let client = try LeafySupabase.shared.requireClient()
         let records: [CommunityPostRecord] = try await client
@@ -1406,7 +1422,11 @@ actor CommunityService {
             .rpc("unblock_community_user", params: CommunityUnblockUserRPCParams(blockedID: userID))
             .execute()
     }
+}
 
+// MARK: - Notifications
+
+extension CommunityService {
     func fetchNotifications(limit: Int = 50) async throws -> [CommunityNotification] {
         let client = try LeafySupabase.shared.requireClient()
         guard client.auth.currentUser != nil else {
@@ -1702,7 +1722,11 @@ actor CommunityService {
             .upsert(insert, onConflict: "announcement_id,user_id")
             .execute()
     }
+}
 
+// MARK: - Feedback and Catalog
+
+extension CommunityService {
     func submitFeedback(issueType: String, body: String, contact: String?, deviceInfo: [String: String]) async throws {
         try await ensureAnonymousSession()
         let client = try LeafySupabase.shared.requireClient()
@@ -1796,7 +1820,11 @@ actor CommunityService {
             throw error
         }
     }
+}
 
+// MARK: - Ratings
+
+extension CommunityService {
     func fetchTeacherRatingSummaries(
         search: String = "",
         limit: Int = 50,
@@ -2215,7 +2243,11 @@ actor CommunityService {
             .execute()
             .value
     }
+}
 
+// MARK: - Shared Supabase Implementation
+
+extension CommunityService {
     private func createNotification(
         recipientID: UUID,
         actorID: UUID,
