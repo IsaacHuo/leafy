@@ -175,6 +175,13 @@ struct CampusHeatmapView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(isLoading)
                 .accessibilityHint("更新所选日期和节次的校园热力图数据")
+
+                if !ReviewDemoMode.isEnabled {
+                    Text("每次重新更新数据时，都需要重新登录教务。")
+                        .microCaption()
+                        .foregroundStyle(AppTheme.tertiaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         }
     }

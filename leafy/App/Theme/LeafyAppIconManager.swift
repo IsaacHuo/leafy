@@ -13,22 +13,34 @@ enum LeafyAppIconManager {
         customColorHex: String,
         iconPreferenceRaw: String
     ) {
+        let themeSnapshot = LeafyWidgetThemeSnapshot(
+            preferenceRaw: preferenceRaw,
+            customColorHex: customColorHex
+        )
+        let iconPreference = migratedIconPreference(
+            rawValue: iconPreferenceRaw,
+            themeSnapshot: themeSnapshot
+        )
+
+        if iconPreferenceRaw == "followTheme" {
+            UserDefaults.standard.set(
+                iconPreference.rawValue,
+                forKey: LeafyAppIconAppearancePreference.storageKey
+            )
+        }
+
         LeafyWidgetThemeStore.save(preferenceRaw: preferenceRaw, customHex: customColorHex)
         WidgetCenter.shared.reloadTimelines(ofKind: LeafyWidgetConstants.widgetKind)
-        applyIconIfNeeded(
-            themeSnapshot: LeafyWidgetThemeSnapshot(preferenceRaw: preferenceRaw, customColorHex: customColorHex),
-            iconPreference: LeafyAppIconAppearancePreference.storedValue(iconPreferenceRaw)
-        )
+        applyIconIfNeeded(iconPreference: iconPreference)
     }
 
     static func applyIconIfNeeded(
-        themeSnapshot: LeafyWidgetThemeSnapshot,
         iconPreference: LeafyAppIconAppearancePreference
     ) {
         #if canImport(UIKit)
         guard UIApplication.shared.supportsAlternateIcons else { return }
 
-        let iconName = alternateIconName(themeSnapshot: themeSnapshot, iconPreference: iconPreference)
+        let iconName = alternateIconName(iconPreference: iconPreference)
         guard UIApplication.shared.alternateIconName != iconName else { return }
 
         UIApplication.shared.setAlternateIconName(iconName) { error in
@@ -42,10 +54,9 @@ enum LeafyAppIconManager {
     }
 
     static func alternateIconName(
-        themeSnapshot: LeafyWidgetThemeSnapshot,
         iconPreference: LeafyAppIconAppearancePreference
     ) -> String? {
-        let resolvedTheme = iconPreference.themePreferenceRaw ?? LeafyWidgetThemePalette.closestPreset(for: themeSnapshot)
+        let resolvedTheme = iconPreference.themePreferenceRaw
 
         switch resolvedTheme {
         case .green:
@@ -56,6 +67,26 @@ enum LeafyAppIconManager {
             return "AppIconCandyPink"
         case .custom:
             return nil
+        }
+    }
+
+    static func migratedIconPreference(
+        rawValue: String,
+        themeSnapshot: LeafyWidgetThemeSnapshot
+    ) -> LeafyAppIconAppearancePreference {
+        guard rawValue == "followTheme" else {
+            return LeafyAppIconAppearancePreference.storedValue(rawValue)
+        }
+
+        switch themeSnapshot.preference {
+        case .green:
+            return .green
+        case .tiffanyBlue:
+            return .tiffanyBlue
+        case .candyPink:
+            return .candyPink
+        case .custom:
+            return .green
         }
     }
 }

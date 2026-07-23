@@ -27,7 +27,6 @@ nonisolated enum LeafyThemeColorPreferenceRaw: String, CaseIterable, Sendable {
 }
 
 nonisolated enum LeafyAppIconAppearancePreference: String, CaseIterable, Identifiable, Sendable {
-    case followTheme
     case green
     case tiffanyBlue
     case candyPink
@@ -38,8 +37,6 @@ nonisolated enum LeafyAppIconAppearancePreference: String, CaseIterable, Identif
 
     var title: String {
         switch self {
-        case .followTheme:
-            return "跟随主题色"
         case .green:
             return "鼠尾草绿"
         case .tiffanyBlue:
@@ -49,10 +46,8 @@ nonisolated enum LeafyAppIconAppearancePreference: String, CaseIterable, Identif
         }
     }
 
-    var themePreferenceRaw: LeafyThemeColorPreferenceRaw? {
+    var themePreferenceRaw: LeafyThemeColorPreferenceRaw {
         switch self {
-        case .followTheme:
-            return nil
         case .green:
             return .green
         case .tiffanyBlue:
@@ -70,8 +65,8 @@ nonisolated enum LeafyAppIconAppearancePreference: String, CaseIterable, Identif
             return .tiffanyBlue
         case candyPink.rawValue:
             return .candyPink
-        case followTheme.rawValue:
-            return .followTheme
+        case "followTheme":
+            return .green
         default:
             return .green
         }
@@ -161,23 +156,6 @@ nonisolated enum LeafyWidgetThemePalette: Hashable, Sendable {
         }
     }
 
-    static func closestPreset(for snapshot: LeafyWidgetThemeSnapshot) -> LeafyThemeColorPreferenceRaw {
-        switch snapshot.preference {
-        case .green, .tiffanyBlue, .candyPink:
-            return snapshot.preference
-        case .custom:
-            let customRGB = rgbComponents(fromHex: snapshot.customColorHex) ?? ColorComponents(157, 193, 131)
-            let candidates: [(LeafyThemeColorPreferenceRaw, ColorComponents)] = [
-                (.green, ColorComponents(157, 193, 131)),
-                (.tiffanyBlue, ColorComponents(129, 216, 208)),
-                (.candyPink, ColorComponents(251, 96, 149))
-            ]
-            return candidates.min { lhs, rhs in
-                distanceSquared(customRGB, lhs.1) < distanceSquared(customRGB, rhs.1)
-            }?.0 ?? .green
-        }
-    }
-
     static func rgbComponents(fromHex hex: String?) -> ColorComponents? {
         guard var raw = hex?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
             return nil
@@ -212,9 +190,6 @@ nonisolated enum LeafyWidgetThemePalette: Hashable, Sendable {
         )
     }
 
-    private static func distanceSquared(_ lhs: ColorComponents, _ rhs: ColorComponents) -> Double {
-        pow(lhs.red - rhs.red, 2) + pow(lhs.green - rhs.green, 2) + pow(lhs.blue - rhs.blue, 2)
-    }
 }
 
 nonisolated enum LeafyWidgetThemeStore {

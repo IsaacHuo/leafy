@@ -632,6 +632,110 @@ final class PerformanceRefactorTests: XCTestCase {
         XCTAssertTrue(SchoolReauthentication.requiresReauthentication(URLError(.userAuthenticationRequired)))
         XCTAssertFalse(SchoolReauthentication.requiresReauthentication(SchoolNetworkError.campusNetworkRequired))
         XCTAssertFalse(SchoolReauthentication.requiresReauthentication(SchoolNetworkError.featureUnavailable("未开放")))
+
+        XCTAssertTrue(SchoolReauthentication.shouldPromptForUserInitiatedAccess(SchoolNetworkError.sessionExpired))
+        XCTAssertTrue(SchoolReauthentication.shouldPromptForUserInitiatedAccess(SchoolNetworkError.campusNetworkRequired))
+        XCTAssertFalse(SchoolReauthentication.shouldPromptForUserInitiatedAccess(SchoolNetworkError.featureUnavailable("未开放")))
+    }
+
+    @MainActor
+    func testSchoolSessionPreflightImmediatelyRequiresLoginWithoutLocalSession() async {
+        let manager = SchoolNetworkManager.shared
+        manager.clearSession()
+
+        let result = await manager.preflightAuthenticatedSession()
+
+        XCTAssertEqual(result, .requiresReauthentication)
+    }
+
+    @MainActor
+    func testLegacyFollowThemeIconPreferenceMigratesToConcretePreset() {
+        XCTAssertEqual(LeafyAppIconAppearancePreference.allCases, [.green, .tiffanyBlue, .candyPink])
+        XCTAssertEqual(
+            LeafyAppIconManager.migratedIconPreference(
+                rawValue: "followTheme",
+                themeSnapshot: LeafyWidgetThemeSnapshot(
+                    preferenceRaw: LeafyThemeColorPreferenceRaw.tiffanyBlue.rawValue,
+                    customColorHex: LeafyThemeColorPreferenceRaw.defaultCustomColorHex
+                )
+            ),
+            .tiffanyBlue
+        )
+        XCTAssertEqual(
+            LeafyAppIconManager.migratedIconPreference(
+                rawValue: "followTheme",
+                themeSnapshot: LeafyWidgetThemeSnapshot(
+                    preferenceRaw: LeafyThemeColorPreferenceRaw.custom.rawValue,
+                    customColorHex: "#123456"
+                )
+            ),
+            .green
+        )
+    }
+
+    @MainActor
+    func testMultipleResumeRecordsReplaceAndDeleteIndependently() throws {
+        try? CareerDocumentFileStore.deleteAllFiles()
+        defer { try? CareerDocumentFileStore.deleteAllFiles() }
+
+        let schema = Schema([CareerResumeDocument.self])
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: [configuration])
+        let context = container.mainContext
+        let sourceDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LeafyResumeSources-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sourceDirectory) }
+
+        let productSource = sourceDirectory.appendingPathComponent("product.pdf")
+        let designSource = sourceDirectory.appendingPathComponent("design.pdf")
+        let replacementSource = sourceDirectory.appendingPathComponent("product-v2.pdf")
+        try Data("product-v1".utf8).write(to: productSource)
+        try Data("design-v1".utf8).write(to: designSource)
+        try Data("product-v2".utf8).write(to: replacementSource)
+
+        let productFile = try CareerDocumentFileStore.importFile(from: productSource)
+        let designFile = try CareerDocumentFileStore.importFile(from: designSource)
+        let productResume = CareerResumeDocument(
+            title: "产品实习版",
+            note: "面向产品岗位",
+            originalFilename: productSource.lastPathComponent,
+            localFilename: productFile.localFilename,
+            contentTypeIdentifier: productFile.contentTypeIdentifier
+        )
+        let designResume = CareerResumeDocument(
+            title: "设计实习版",
+            note: "面向设计岗位",
+            originalFilename: designSource.lastPathComponent,
+            localFilename: designFile.localFilename,
+            contentTypeIdentifier: designFile.contentTypeIdentifier
+        )
+        context.insert(productResume)
+        context.insert(designResume)
+        try context.save()
+
+        let previousFilename = productResume.localFilename
+        let replacementFile = try CareerDocumentFileStore.importFile(from: replacementSource)
+        productResume.originalFilename = replacementSource.lastPathComponent
+        productResume.localFilename = replacementFile.localFilename
+        productResume.contentTypeIdentifier = replacementFile.contentTypeIdentifier
+        try context.save()
+        try CareerDocumentFileStore.deleteFile(named: previousFilename)
+
+        XCTAssertEqual(productResume.title, "产品实习版")
+        XCTAssertEqual(productResume.note, "面向产品岗位")
+        XCTAssertNotNil(CareerDocumentFileStore.fileURL(for: productResume))
+        XCTAssertNotNil(CareerDocumentFileStore.fileURL(for: designResume))
+
+        try CareerDocumentFileStore.deleteFile(named: designResume.localFilename)
+        context.delete(designResume)
+        try context.save()
+
+        let remaining = try context.fetch(FetchDescriptor<CareerResumeDocument>())
+        XCTAssertEqual(remaining.map(\.title), ["产品实习版"])
+
+        try CareerDocumentFileStore.deleteAllFiles()
+        XCTAssertNil(CareerDocumentFileStore.fileURL(for: productResume))
     }
 
     @MainActor

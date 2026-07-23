@@ -20,6 +20,7 @@ struct CareerPlanningSectionView: View {
     @Query(sort: \CareerOpportunity.updatedAt, order: .reverse) private var opportunities: [CareerOpportunity]
 
     @State private var isResumeImporterPresented = false
+    @State private var resumeBeingReplaced: CareerResumeDocument?
     @State private var editingResume: CareerResumeDocument?
     @State private var previewURL: CareerPreviewURL?
     @State private var shareItem: CareerShareItem?
@@ -30,10 +31,6 @@ struct CareerPlanningSectionView: View {
     @State private var resumePendingDeletion: CareerResumeDocument?
     @State private var alertMessage: String?
     @State private var operationAlert: LeafyOperationAlert?
-
-    private var currentResume: CareerResumeDocument? {
-        resumes.first
-    }
 
     private var sortedTasks: [CareerTask] {
         tasks.sorted { lhs, rhs in
@@ -139,20 +136,33 @@ struct CareerPlanningSectionView: View {
                     }
 
                     Spacer(minLength: AppSpacing.micro)
+
+                    if !resumes.isEmpty {
+                        CareerSectionAddButton(title: "添加简历", systemName: "plus") {
+                            beginResumeImport()
+                        }
+                    }
                 }
 
-                if let currentResume {
-                    CareerResumeRow(
-                        resume: currentResume,
-                        previewAction: { preview(currentResume) },
-                        editAction: { editingResume = currentResume },
-                        replaceAction: { isResumeImporterPresented = true },
-                        shareAction: { share(currentResume) },
-                        deleteAction: { resumePendingDeletion = currentResume }
-                    )
-                } else {
+                if resumes.isEmpty {
                     CareerEmptyResumeRow {
-                        isResumeImporterPresented = true
+                        beginResumeImport()
+                    }
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(resumes.enumerated()), id: \.element.id) { index, resume in
+                            if index > 0 {
+                                AcademicDetailDivider()
+                            }
+                            CareerResumeRow(
+                                resume: resume,
+                                previewAction: { preview(resume) },
+                                editAction: { editingResume = resume },
+                                replaceAction: { beginResumeImport(replacing: resume) },
+                                shareAction: { share(resume) },
+                                deleteAction: { resumePendingDeletion = resume }
+                            )
+                        }
                     }
                 }
             }
@@ -235,7 +245,6 @@ struct CareerPlanningSectionView: View {
                     .foregroundStyle(AppTheme.primaryText)
 
                 VStack(alignment: .leading, spacing: 9) {
-                    CareerSuggestionRow(icon: "doc.on.doc", title: "简历版本管理", detail: "按求职、保研、考研复试保存不同版本。")
                     CareerSuggestionRow(icon: "target", title: "岗位关键词匹配", detail: "用岗位描述检查简历关键词覆盖。")
                     CareerSuggestionRow(icon: "rectangle.grid.1x2", title: "投递进度看板", detail: "按关注、已投递、面试中和结束汇总进度。")
                     CareerSuggestionRow(icon: "person.crop.rectangle.stack", title: "面试准备清单", detail: "沉淀项目经历、常见问题和复盘记录。")
@@ -248,25 +257,66 @@ struct CareerPlanningSectionView: View {
 
     private func handleResumeImport(_ result: Result<[URL], Error>) {
         do {
-            guard let url = try result.get().first else { return }
-            let stored = try CareerDocumentFileStore.importFile(from: url)
-            for resume in resumes {
-                try? CareerDocumentFileStore.deleteFile(named: resume.localFilename)
-                modelContext.delete(resume)
+            guard let url = try result.get().first else {
+                resumeBeingReplaced = nil
+                return
             }
-            let title = url.deletingPathExtension().lastPathComponent
-            let resume = CareerResumeDocument(
-                title: title.isEmpty ? "个人简历" : title,
-                originalFilename: url.lastPathComponent,
-                localFilename: stored.localFilename,
-                contentTypeIdentifier: stored.contentTypeIdentifier
-            )
-            modelContext.insert(resume)
-            try modelContext.save()
-            operationAlert = .success(L10n.text("简历已保存到本机！", language: leafyLanguage))
+            let stored = try CareerDocumentFileStore.importFile(from: url)
+
+            if let resumeBeingReplaced {
+                let previousLocalFilename = resumeBeingReplaced.localFilename
+                resumeBeingReplaced.originalFilename = url.lastPathComponent
+                resumeBeingReplaced.localFilename = stored.localFilename
+                resumeBeingReplaced.contentTypeIdentifier = stored.contentTypeIdentifier
+                resumeBeingReplaced.updatedAt = Date()
+
+                do {
+                    try modelContext.save()
+                } catch {
+                    modelContext.rollback()
+                    try? CareerDocumentFileStore.deleteFile(named: stored.localFilename)
+                    throw error
+                }
+
+                do {
+                    try CareerDocumentFileStore.deleteFile(named: previousLocalFilename)
+                    operationAlert = .success(L10n.text("简历文件已替换！", language: leafyLanguage))
+                } catch {
+                    alertMessage = "新简历已保存，但旧文件未能清理：\(error.localizedDescription)"
+                }
+            } else {
+                let title = url.deletingPathExtension().lastPathComponent
+                let resume = CareerResumeDocument(
+                    title: title.isEmpty ? "个人简历" : title,
+                    originalFilename: url.lastPathComponent,
+                    localFilename: stored.localFilename,
+                    contentTypeIdentifier: stored.contentTypeIdentifier
+                )
+                modelContext.insert(resume)
+
+                do {
+                    try modelContext.save()
+                } catch {
+                    modelContext.rollback()
+                    try? CareerDocumentFileStore.deleteFile(named: stored.localFilename)
+                    throw error
+                }
+
+                Task { @MainActor in
+                    await Task.yield()
+                    editingResume = resume
+                }
+            }
+            resumeBeingReplaced = nil
         } catch {
+            resumeBeingReplaced = nil
             alertMessage = error.localizedDescription
         }
+    }
+
+    private func beginResumeImport(replacing resume: CareerResumeDocument? = nil) {
+        resumeBeingReplaced = resume
+        isResumeImporterPresented = true
     }
 
     private func preview(_ resume: CareerResumeDocument) {
@@ -961,7 +1011,7 @@ private struct CareerDocumentPreview: UIViewControllerRepresentable {
 private typealias CareerDocumentPreview = LeafyDocumentPreview
 #endif
 
-private enum CareerDocumentFileStore {
+enum CareerDocumentFileStore {
     struct StoredFile {
         let localFilename: String
         let contentTypeIdentifier: String
@@ -1018,7 +1068,19 @@ private enum CareerDocumentFileStore {
         }
     }
 
+    static func deleteAllFiles() throws {
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: directoryURL.path(percentEncoded: false)) {
+            try fileManager.removeItem(at: directoryURL)
+        }
+    }
+
     private static var directoryURL: URL {
+        if AppRuntimeEnvironment.isRunningUnitTests {
+            return FileManager.default.temporaryDirectory
+                .appendingPathComponent("LeafyCareerDocumentsTests", isDirectory: true)
+        }
+
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return base.appendingPathComponent("CareerDocuments", isDirectory: true)

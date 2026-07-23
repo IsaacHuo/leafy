@@ -519,7 +519,6 @@ private struct LeafyCompactProfileIconBadge: View {
 
 private struct IconAppearanceSwatch: View {
     let option: LeafyAppIconAppearancePreference
-    let themePreference: AppThemeColorPreference
     let size: CGFloat
 
     var body: some View {
@@ -549,8 +548,6 @@ private struct IconAppearanceSwatch: View {
 
     private var baseColor: Color {
         switch option {
-        case .followTheme:
-            return themePreference.swatchColor
         case .green:
             return AppTheme.accent(for: .green)
         case .tiffanyBlue:
@@ -639,15 +636,13 @@ private struct PersonalizationSettingsView: View {
                             title: option.title(language: leafyLanguage),
                             isSelected: option == iconAppearancePreference
                         ) {
-                            IconAppearanceSwatch(option: option, themePreference: themeColorPreference, size: 30)
+                            IconAppearanceSwatch(option: option, size: 30)
                         }
                     }
                     .buttonStyle(.plain)
                 }
             } header: {
                 Text("App 外观")
-            } footer: {
-                Text("App 图标只能在预设外观中切换；自定义主题色会匹配最接近的预设图标。")
             }
             .listRowBackground(AppTheme.cardBackground)
 
@@ -1707,6 +1702,9 @@ private struct CacheAndSyncView: View {
     @Query private var favoriteClassrooms: [FavoriteClassroom]
     @Query private var favoriteLinks: [FavoriteCampusLink]
     @Query private var postgraduateTargets: [PostgraduateTarget]
+    @Query private var careerResumes: [CareerResumeDocument]
+    @Query private var careerTasks: [CareerTask]
+    @Query private var careerOpportunities: [CareerOpportunity]
     @Query private var learningMaterials: [LearningMaterialDocument]
     @Query private var learningProjects: [LearningProject]
     @Query private var learningTasks: [LearningProjectTask]
@@ -1756,6 +1754,15 @@ private struct CacheAndSyncView: View {
                     Text(isClearing ? L10n.text("清理中", language: leafyLanguage) : L10n.text("清除本地缓存", language: leafyLanguage))
                 }
                 .disabled(isSyncing || isClearing)
+
+                if !isCustomCampus {
+                    NavigationLink {
+                        CampusNetworkConnectionGuideView()
+                    } label: {
+                        Label("校园网连接说明", systemImage: "wifi")
+                    }
+                    .disabled(isSyncing || isClearing)
+                }
             } footer: {
                 Text(cacheFooterText)
             }
@@ -1815,9 +1822,9 @@ private struct CacheAndSyncView: View {
 
     private var cacheFooterText: String {
         if isCustomCampus {
-            return "“清除教务缓存”只删除课表、成绩、考试安排和同步记录，保留账号登录状态和本机保存的内容；“清除本地缓存”会一并删除本地身份、备注、提醒、收藏、学习数据和体测记录等内容，需要重新登录当前账号。"
+            return "“清除教务缓存”只删除课表、成绩、考试安排和同步记录，保留账号登录状态和本机保存的内容；“清除本地缓存”会一并删除本地身份、备注、提醒、收藏、简历、职业规划、学习数据和体测记录等内容，需要重新登录当前账号。"
         }
-        return "“清除教务缓存”只删除课表、成绩、考试安排、教学计划和空教室等教务数据，保留登录状态和本机保存的内容；“清除本地缓存”会一并删除本地身份、教务登录态、备注、提醒、收藏和学习数据等内容，需要连接校园网重新登录。"
+        return "“清除教务缓存”只删除课表、成绩、考试安排、教学计划和空教室等教务数据，保留登录状态和本机保存的内容；“清除本地缓存”会一并删除本地身份、教务登录态、备注、提醒、收藏、简历、职业规划和学习数据等内容，需要连接校园网重新登录。"
     }
 
     private var academicCacheClearConfirmationText: String {
@@ -1828,8 +1835,8 @@ private struct CacheAndSyncView: View {
 
     private var clearConfirmationText: String {
         isCustomCampus
-            ? "这个操作会清除本地身份和本机保存的数据。清除后需要重新登录当前账号。"
-            : "这个操作会清除本地身份与教务登录态。清除后需要连接校园网重新登录。"
+            ? "这个操作会清除本地身份、简历、职业规划和本机保存的数据。清除后需要重新登录当前账号。"
+            : "这个操作会清除本地身份、教务登录态、简历、职业规划和本机保存的数据。清除后需要连接校园网重新登录。"
     }
 
     private func cacheRow(_ row: ProfileCacheSummaryRow) -> some View {
@@ -1869,13 +1876,28 @@ private struct CacheAndSyncView: View {
     @MainActor
     private func syncAll() async {
         guard !isSyncing else { return }
+
+        if !isCustomCampus,
+           !ReviewDemoMode.isEnabled,
+           let request = await SchoolReauthentication.preflightRequest(
+               networkManager: networkManager,
+               context: .schoolDataSync
+           ) {
+            reauthenticationRequest = request
+            return
+        }
+
         isSyncing = true
         defer {
             isSyncing = false
             refreshCacheSummary()
         }
 
-        switch await SchoolDataSyncService.syncAll(modelContext: modelContext, language: leafyLanguage) {
+        switch await SchoolDataSyncService.syncAll(
+            modelContext: modelContext,
+            language: leafyLanguage,
+            userInitiated: true
+        ) {
         case .success(let syncMessage):
             message = syncMessage
         case .needsLogin:
@@ -1910,6 +1932,15 @@ private struct CacheAndSyncView: View {
     @MainActor
     private func clearAllCaches() {
         isClearing = true
+
+        do {
+            try CareerDocumentFileStore.deleteAllFiles()
+        } catch {
+            isClearing = false
+            operationAlert = .failure("简历文件清除失败：\(error.localizedDescription)")
+            return
+        }
+
         TimetableNotificationManager.cancelAllCourseReminders(courses: courses)
         TimetableNotificationManager.cancelAllCellReminders(cellReminders)
         ScheduleReportNotificationManager.clearScheduledNotifications()
@@ -1923,6 +1954,9 @@ private struct CacheAndSyncView: View {
         for favorite in favoriteClassrooms { modelContext.delete(favorite) }
         for favorite in favoriteLinks { modelContext.delete(favorite) }
         for target in postgraduateTargets { modelContext.delete(target) }
+        for resume in careerResumes { modelContext.delete(resume) }
+        for task in careerTasks { modelContext.delete(task) }
+        for opportunity in careerOpportunities { modelContext.delete(opportunity) }
         for project in learningProjects { modelContext.delete(project) }
         for task in learningTasks { modelContext.delete(task) }
         for record in studyTimeRecords { modelContext.delete(record) }
@@ -1952,6 +1986,49 @@ private struct CacheAndSyncView: View {
         message = L10n.text("本地缓存和本地身份已清除。", language: leafyLanguage)
         refreshCacheSummary()
         operationAlert = .success(L10n.text("本地缓存已清除！", language: leafyLanguage))
+    }
+}
+
+private struct CampusNetworkConnectionGuideView: View {
+    @Environment(\.openURL) private var openURL
+
+    private let easyConnectURL = URL(string: "https://apps.apple.com/cn/app/easyconnect/id440460214")!
+
+    var body: some View {
+        List {
+            Section("在校内") {
+                Label("连接 bjfu-wifi", systemImage: "wifi")
+                    .leafyHeadline()
+
+                Text("连接后回到 Leafy，即可登录教务并同步课表、成绩、考试安排或查询空教室。")
+                    .leafyBody()
+                    .foregroundStyle(AppTheme.secondaryText)
+            }
+
+            Section("在校外") {
+                Label("通过北林 VPN 连接", systemImage: "network.badge.shield.half.filled")
+                    .leafyHeadline()
+
+                Text("先安装 EasyConnect，并按学校提供的方式连接北林 VPN。连接成功后，回到 Leafy 即可使用需要校园网的教务功能。")
+                    .leafyBody()
+                    .foregroundStyle(AppTheme.secondaryText)
+
+                Button {
+                    openURL(easyConnectURL)
+                } label: {
+                    Label("前往 App Store 下载 EasyConnect", systemImage: "arrow.down.app.fill")
+                }
+            }
+
+            Section {
+                Text("如果重新登录页暂时无法加载验证码，请先确认校园网或北林 VPN 已连接，再点击验证码区域重试。")
+                    .leafyBody()
+                    .foregroundStyle(AppTheme.secondaryText)
+            }
+        }
+        .leafyInsetGroupedListStyle()
+        .navigationTitle("校园网连接说明")
+        .leafyInlineNavigationTitle()
     }
 }
 
@@ -2024,6 +2101,7 @@ private enum CampusLinkCatalog {
 
 private struct CampusLinksView: View {
     @State private var isCollegeLinksExpanded = false
+    @State private var browserItem: ProfileBrowserItem?
 
     private let serviceLinks = CampusLinkCatalog.serviceLinks
     private let collegeLinks = CampusLinkCatalog.collegeLinks
@@ -2053,17 +2131,23 @@ private struct CampusLinksView: View {
             }
         }
         .navigationTitle("常用链接")
+        .sheet(item: $browserItem) { item in
+            ProfileSafariView(url: item.url)
+        }
     }
 
     private func linkRow(_ link: CampusLinkCatalog.LinkItem) -> some View {
-        Link(destination: link.url) {
+        Button {
+            browserItem = ProfileBrowserItem(url: link.url)
+        } label: {
             HStack {
                 Text(link.title)
                 Spacer()
-                Image(systemName: "arrow.up.right.square")
+                Image(systemName: "safari")
                     .foregroundStyle(AppTheme.tertiaryText)
             }
         }
+        .buttonStyle(.plain)
     }
 }
 
