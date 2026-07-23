@@ -168,6 +168,17 @@ struct ExamScheduleView: View {
             return
         }
 
+        if userInitiated,
+           let request = await SchoolReauthentication.preflightRequest(
+               networkManager: networkManager,
+               context: .examSchedule
+           ) {
+            await MainActor.run {
+                reauthenticationRequest = request
+            }
+            return
+        }
+
         guard networkManager.isLoggedIn else {
             await MainActor.run {
                 if userInitiated, networkManager.hasCachedIdentity {
@@ -197,7 +208,7 @@ struct ExamScheduleView: View {
             }
         } catch {
             await MainActor.run {
-                if userInitiated, SchoolReauthentication.requiresReauthentication(error) {
+                if userInitiated, SchoolReauthentication.shouldPromptForUserInitiatedAccess(error) {
                     reauthenticationRequest = SchoolReauthenticationRequest(context: .examSchedule)
                 } else {
                     errorMessage = "加载考试安排失败：\(error.localizedDescription)"
@@ -607,6 +618,17 @@ struct TeachingPlanView: View {
             return
         }
 
+        if userInitiated,
+           let request = await SchoolReauthentication.preflightRequest(
+               networkManager: networkManager,
+               context: .teachingPlan
+           ) {
+            await MainActor.run {
+                reauthenticationRequest = request
+            }
+            return
+        }
+
         guard networkManager.isLoggedIn else {
             await MainActor.run {
                 sections = cachedSections
@@ -637,7 +659,7 @@ struct TeachingPlanView: View {
         } catch {
             await MainActor.run {
                 sections = SchoolDataCache.loadTeachingPlan()
-                if userInitiated, SchoolReauthentication.requiresReauthentication(error) {
+                if userInitiated, SchoolReauthentication.shouldPromptForUserInitiatedAccess(error) {
                     reauthenticationRequest = SchoolReauthenticationRequest(context: .teachingPlan)
                 } else if sections.isEmpty || force {
                     errorMessage = "加载教学计划失败：\(error.localizedDescription)"
@@ -1022,6 +1044,17 @@ struct TrainingProgramView: View {
             return
         }
 
+        if userInitiated,
+           let request = await SchoolReauthentication.preflightRequest(
+               networkManager: networkManager,
+               context: .trainingProgram
+           ) {
+            await MainActor.run {
+                reauthenticationRequest = request
+            }
+            return
+        }
+
         guard networkManager.isLoggedIn else {
             await MainActor.run {
                 document = cachedDocument
@@ -1056,7 +1089,7 @@ struct TrainingProgramView: View {
                 let fallbackDocument = SchoolDataCache.loadTrainingProgram()
                 document = fallbackDocument
                 requirements = fallbackDocument?.creditRequirements ?? SchoolDataCache.loadGraduationRequirements()
-                if userInitiated, SchoolReauthentication.requiresReauthentication(error) {
+                if userInitiated, SchoolReauthentication.shouldPromptForUserInitiatedAccess(error) {
                     reauthenticationRequest = SchoolReauthenticationRequest(context: .trainingProgram)
                 } else if (document == nil && requirements.isEmpty) || force {
                     errorMessage = "加载培养方案失败：\(error.localizedDescription)"
@@ -1367,6 +1400,18 @@ struct EmptyClassroomView: View {
             errorMessage = nil
             return
         }
+
+        if userInitiated,
+           let request = await SchoolReauthentication.preflightRequest(
+               networkManager: networkManager,
+               context: .emptyClassrooms
+           ) {
+            await MainActor.run {
+                reauthenticationRequest = request
+            }
+            return
+        }
+
         await MainActor.run {
             isLoading = true
             errorMessage = nil

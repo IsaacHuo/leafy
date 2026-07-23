@@ -652,11 +652,6 @@ struct LoginView: View {
                 isLoggingIn = false
                 if success {
                     schoolNetworkManager.isLoggedIn = true
-                    SchoolDataPrefetchCoordinator.shared.prefetchIfNeeded(
-                        modelContext: modelContext,
-                        language: leafyLanguage,
-                        trigger: .login
-                    )
                 } else {
                     alertMessage = L10n.text("登录请求已发送，但未能确认登录成功。请重试；如果仍失败，把这条提示发给我。", language: leafyLanguage)
                     showAlert = true

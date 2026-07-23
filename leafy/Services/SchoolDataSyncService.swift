@@ -55,7 +55,8 @@ enum SchoolDataRefreshNotifier {
 enum SchoolDataSyncService {
     static func syncAll(
         modelContext: ModelContext,
-        language: AppLanguagePreference
+        language: AppLanguagePreference,
+        userInitiated: Bool = false
     ) async -> SchoolDataSyncOutcome {
         let networkManager = ActiveCampusContext.networkManager
 
@@ -81,8 +82,6 @@ enum SchoolDataSyncService {
 
         var results: [String] = []
         var refreshedScopes: Set<SchoolDataRefreshScope> = []
-        var timetableFailureMessage: String?
-        var parsedCourses: [Course]?
         var parsedGrades: [Grade]?
         var gradeRankingsToSave: [GradeRankingRecord]?
         var gradeCreditSummaryToSave: GradeCreditSummary?
@@ -93,13 +92,23 @@ enum SchoolDataSyncService {
         do {
             let html = try await networkManager.fetchTimetable()
             let parsed = try HTMLParser.parseTimetable(html: html)
-            parsedCourses = parsed
+            try persistTimetable(
+                parsed,
+                semesterID: semesterConfig.semesterID,
+                modelContext: modelContext
+            )
             results.append(L10n.text("课表 %d 门", language: language, parsed.count))
+            if await TimetableSharingService.shared.publishExistingSnapshotIfNeeded(
+                courses: parsed.map(SharedTimetableCourse.init(course:))
+            ) {
+                results.append(L10n.text("共享课表已更新", language: language))
+            }
         } catch {
-            if SchoolReauthentication.requiresReauthentication(error) {
+            modelContext.rollback()
+            if requiresReauthentication(error, userInitiated: userInitiated) {
                 return .needsReauthentication(.schoolDataSync)
             }
-            timetableFailureMessage = error.localizedDescription
+            TimetableCacheMetadata.lastFailureMessage = error.localizedDescription
             results.append(L10n.text("课表失败", language: language))
         }
 
@@ -118,7 +127,7 @@ enum SchoolDataSyncService {
                 parsedGrades = parsed
                 results.append(L10n.text("成绩 %d 条", language: language, parsed.count))
             } catch {
-                if SchoolReauthentication.requiresReauthentication(error) {
+                if requiresReauthentication(error, userInitiated: userInitiated) {
                     return .needsReauthentication(.schoolDataSync)
                 }
                 results.append(L10n.text("成绩失败", language: language))
@@ -133,7 +142,7 @@ enum SchoolDataSyncService {
                 }
                 results.append(L10n.text("排名 %d 条", language: language, parsed.count))
             } catch {
-                if SchoolReauthentication.requiresReauthentication(error) {
+                if requiresReauthentication(error, userInitiated: userInitiated) {
                     return .needsReauthentication(.schoolDataSync)
                 }
                 results.append(L10n.text("排名未开放", language: language))
@@ -145,7 +154,7 @@ enum SchoolDataSyncService {
                 examScheduleToSave = parsed
                 results.append(L10n.text("考试 %d 条", language: language, parsed.count))
             } catch {
-                if SchoolReauthentication.requiresReauthentication(error) {
+                if requiresReauthentication(error, userInitiated: userInitiated) {
                     return .needsReauthentication(.schoolDataSync)
                 }
                 results.append(L10n.text("考试失败", language: language))
@@ -157,7 +166,7 @@ enum SchoolDataSyncService {
                 teachingPlanToSave = parsed
                 results.append(L10n.text("教学计划 %d 学期", language: language, parsed.count))
             } catch {
-                if SchoolReauthentication.requiresReauthentication(error) {
+                if requiresReauthentication(error, userInitiated: userInitiated) {
                     return .needsReauthentication(.schoolDataSync)
                 }
                 results.append(L10n.text("教学计划失败", language: language))
@@ -169,30 +178,11 @@ enum SchoolDataSyncService {
                 trainingProgramToSave = document
                 results.append(L10n.text("培养方案 %d 类", language: language, document.creditRequirements.count))
             } catch {
-                if SchoolReauthentication.requiresReauthentication(error) {
+                if requiresReauthentication(error, userInitiated: userInitiated) {
                     return .needsReauthentication(.schoolDataSync)
                 }
                 results.append(L10n.text("培养方案失败", language: language))
             }
-        }
-
-        if let parsedCourses {
-            for course in fetch(Course.self, from: modelContext) {
-                modelContext.delete(course)
-            }
-            for course in parsedCourses {
-                modelContext.insert(course)
-            }
-            TimetableCacheMetadata.lastSyncAt = Date()
-            TimetableCacheMetadata.lastFailureMessage = nil
-            TimetableCacheMetadata.lastSyncedSemesterID = semesterConfig.semesterID
-            AppStoreReviewCoordinator.recordSuccessfulSync(kind: .timetable, date: Date())
-            refreshedScopes.insert(.timetable)
-            if await TimetableSharingService.shared.publishExistingSnapshotIfNeeded(courses: parsedCourses.map(SharedTimetableCourse.init(course:))) {
-                results.append(L10n.text("共享课表已更新", language: language))
-            }
-        } else if let timetableFailureMessage {
-            TimetableCacheMetadata.lastFailureMessage = timetableFailureMessage
         }
 
         if let parsedGrades, !parsedGrades.isEmpty {
@@ -228,7 +218,7 @@ enum SchoolDataSyncService {
         }
 
         try? modelContext.save()
-        if parsedCourses != nil || examScheduleToSave != nil {
+        if examScheduleToSave != nil {
             LeafyWidgetSnapshotBuilder.publish(from: modelContext, isAuthenticated: true)
         }
         SchoolDataRefreshNotifier.post(refreshedScopes)
@@ -240,6 +230,37 @@ enum SchoolDataSyncService {
                 results.joined(separator: L10n.text("，", language: language))
             )
         )
+    }
+
+    private static func persistTimetable(
+        _ courses: [Course],
+        semesterID: String,
+        modelContext: ModelContext
+    ) throws {
+        for course in fetch(Course.self, from: modelContext) {
+            modelContext.delete(course)
+        }
+        for course in courses {
+            modelContext.insert(course)
+        }
+        try modelContext.save()
+
+        let now = Date()
+        TimetableCacheMetadata.lastSyncAt = now
+        TimetableCacheMetadata.lastFailureMessage = nil
+        TimetableCacheMetadata.lastSyncedSemesterID = semesterID
+        AppStoreReviewCoordinator.recordSuccessfulSync(kind: .timetable, date: now)
+        LeafyWidgetSnapshotBuilder.publish(from: modelContext, isAuthenticated: true)
+        SchoolDataRefreshNotifier.post(.timetable)
+    }
+
+    private static func requiresReauthentication(
+        _ error: Error,
+        userInitiated: Bool
+    ) -> Bool {
+        userInitiated
+            ? SchoolReauthentication.shouldPromptForUserInitiatedAccess(error)
+            : SchoolReauthentication.requiresReauthentication(error)
     }
 
     private static func fetch<T: PersistentModel>(_ model: T.Type, from modelContext: ModelContext) -> [T] {

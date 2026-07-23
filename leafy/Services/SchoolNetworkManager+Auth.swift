@@ -18,11 +18,23 @@ extension SchoolNetworkManager {
             throw SchoolNetworkError.featureUnavailable("演示模式不连接学校教务验证码。")
         }
 
-        switch portal {
-        case .undergraduate:
-            return try await fetchUndergraduateCaptcha()
-        case .graduate:
-            return try await fetchGraduateCaptcha()
+        let previousCookies = persistedCookieValues
+        do {
+            switch portal {
+            case .undergraduate:
+                return try await fetchUndergraduateCaptcha()
+            case .graduate:
+                return try await fetchGraduateCaptcha()
+            }
+        } catch {
+            // A failed captcha request usually means the campus network/VPN is
+            // unreachable. Preserve the previous session so connectivity is
+            // not mistaken for a real logout.
+            persistedCookieValues = previousCookies
+            for url in [URL(string: baseURL), URL(string: graduateBaseURL)].compactMap({ $0 }) {
+                syncPersistedCookiesToStorage(for: url)
+            }
+            throw error
         }
     }
 
@@ -472,8 +484,14 @@ extension SchoolNetworkManager {
         #endif
     }
 
-    func fetchGraduateDisplayName(from url: URL) async throws -> String {
+    func fetchGraduateDisplayName(
+        from url: URL,
+        timeoutInterval: TimeInterval? = nil
+    ) async throws -> String {
         var request = makeRequest(url: url, method: "POST", referer: graduateURL(path: "/home/stulogin"))
+        if let timeoutInterval {
+            request.timeoutInterval = timeoutInterval
+        }
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         let (data, response) = try await data(for: preparedRequest(from: request))
         if let httpResponse = response as? HTTPURLResponse {
@@ -481,6 +499,11 @@ extension SchoolNetworkManager {
         }
 
         let rawBody = String(data: data, encoding: .utf8) ?? ""
+        if response.url?.path.lowercased().contains("stulogin") == true ||
+            rawBody.lowercased().contains("stulogin") ||
+            rawBody.lowercased().contains("</script>") {
+            throw SchoolNetworkError.sessionExpired
+        }
         let decryptedBody = decryptGraduateAES(rawBody)
         guard let bodyData = decryptedBody.data(using: .utf8),
               let array = try? JSONSerialization.jsonObject(with: bodyData) as? [[String: Any]],

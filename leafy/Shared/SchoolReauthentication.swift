@@ -19,6 +19,37 @@ nonisolated enum SchoolReauthentication {
         return nsError.domain == NSURLErrorDomain &&
             nsError.code == URLError.userAuthenticationRequired.rawValue
     }
+
+    static func shouldPromptForUserInitiatedAccess(_ error: Error) -> Bool {
+        if requiresReauthentication(error) {
+            return true
+        }
+
+        if case SchoolNetworkError.campusNetworkRequired = error {
+            return true
+        }
+
+        return false
+    }
+
+    @MainActor
+    static func preflightRequest(
+        networkManager: SchoolNetworkManager,
+        context: SchoolReauthenticationContext
+    ) async -> SchoolReauthenticationRequest? {
+        switch await networkManager.preflightAuthenticatedSession() {
+        case .authenticated:
+            return nil
+        case .requiresReauthentication, .networkUnavailable:
+            return SchoolReauthenticationRequest(context: context)
+        }
+    }
+}
+
+nonisolated enum SchoolSessionPreflightResult: Equatable, Sendable {
+    case authenticated
+    case requiresReauthentication
+    case networkUnavailable
 }
 
 struct SchoolReauthenticationContext: Equatable {
@@ -304,7 +335,14 @@ private struct SchoolReauthenticationSheet: View {
         } catch {
             captchaKey = ""
             captchaImage = nil
-            errorMessage = error.localizedDescription
+            if case SchoolNetworkError.campusNetworkRequired = error {
+                errorMessage = L10n.text(
+                    "暂时无法连接教务验证码。请先连接 bjfu-wifi 或北林 VPN，再点击验证码区域重试。",
+                    language: leafyLanguage
+                )
+            } else {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 

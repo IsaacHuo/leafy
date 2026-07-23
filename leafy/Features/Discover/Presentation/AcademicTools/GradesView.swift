@@ -41,11 +41,17 @@ struct GradesView: View {
             if grades.isEmpty && !isFetching {
                 emptyGradesCard
             } else {
-                AcademicDetailCard {
-                    GradeAnalyticsCard(analytics: gradePresentationSnapshot.analytics) {
-                        openAnalytics?()
+                Button {
+                    openAnalytics?()
+                } label: {
+                    AcademicDetailCard {
+                        GradeAnalyticsCard(analytics: gradePresentationSnapshot.analytics)
                     }
                 }
+                .buttonStyle(.plain)
+                .disabled(openAnalytics == nil)
+                .accessibilityLabel("查看成绩分析详情")
+                .accessibilityHint("打开 GPA、分数分布和课程影响分析")
                 AcademicDetailFooterText(text: gpaFooterText)
 
                 ForEach(gradePresentationSnapshot.sortedTerms, id: \.self) { term in
@@ -230,6 +236,17 @@ struct GradesView: View {
             return
         }
 
+        if userInitiated,
+           let request = await SchoolReauthentication.preflightRequest(
+               networkManager: networkManager,
+               context: .grades
+           ) {
+            await MainActor.run {
+                reauthenticationRequest = request
+            }
+            return
+        }
+
         guard networkManager.isLoggedIn else {
             if userInitiated, networkManager.hasCachedIdentity {
                 reauthenticationRequest = SchoolReauthenticationRequest(context: .grades)
@@ -276,7 +293,7 @@ struct GradesView: View {
         } catch {
             await MainActor.run {
                 isFetching = false
-                if userInitiated, SchoolReauthentication.requiresReauthentication(error) {
+                if userInitiated, SchoolReauthentication.shouldPromptForUserInitiatedAccess(error) {
                     reauthenticationRequest = SchoolReauthenticationRequest(context: .grades)
                 } else {
                     alertMessage = L10n.text("抓取成绩失败：%@", language: leafyLanguage, error.localizedDescription)
@@ -329,7 +346,6 @@ private struct GradeAnalyticsCard: View {
     @Environment(\.leafyLanguage) private var leafyLanguage
 
     let analytics: GradeAnalytics
-    let openDetail: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -338,19 +354,16 @@ private struct GradeAnalyticsCard: View {
                     .leafyHeadline()
                     .foregroundStyle(AppTheme.primaryText)
                 Spacer()
-                Button(action: openDetail) {
-                    HStack(spacing: 4) {
-                        Text("点击查看详情")
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                    }
-                    .microCaption()
-                    .foregroundStyle(AppTheme.accentEmphasis)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(AppTheme.softFill, in: Capsule())
+                HStack(spacing: 4) {
+                    Text("点击查看详情")
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
                 }
-                .buttonStyle(.plain)
+                .microCaption()
+                .foregroundStyle(AppTheme.accentEmphasis)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(AppTheme.softFill, in: Capsule())
             }
 
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {

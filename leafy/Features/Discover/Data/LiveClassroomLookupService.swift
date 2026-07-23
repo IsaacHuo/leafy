@@ -112,7 +112,7 @@ nonisolated struct LiveClassroomLookupService: ClassroomLookupServicing {
 
 nonisolated enum ClassroomLookupReauthentication {
     static func requiresReauthentication(_ error: Error) -> Bool {
-        if SchoolReauthentication.requiresReauthentication(error) {
+        if SchoolReauthentication.shouldPromptForUserInitiatedAccess(error) {
             return true
         }
 

@@ -1854,6 +1854,17 @@ struct TimetableView: View {
             return
         }
 
+        if userInitiated,
+           let request = await SchoolReauthentication.preflightRequest(
+               networkManager: networkManager,
+               context: .timetable(portal: networkManager.currentPortal)
+           ) {
+            await MainActor.run {
+                reauthenticationRequest = request
+            }
+            return
+        }
+
         guard networkManager.isLoggedIn else {
             if userInitiated, networkManager.hasCachedIdentity {
                 reauthenticationRequest = SchoolReauthenticationRequest(
@@ -1938,7 +1949,7 @@ struct TimetableView: View {
                 TimetableCacheMetadata.lastFailureMessage = error.localizedDescription
                 lastFailureMessage = error.localizedDescription
                 publishWidgetSnapshot()
-                if userInitiated, SchoolReauthentication.requiresReauthentication(error) {
+                if userInitiated, SchoolReauthentication.shouldPromptForUserInitiatedAccess(error) {
                     reauthenticationRequest = SchoolReauthenticationRequest(
                         context: .timetable(portal: networkManager.currentPortal)
                     )

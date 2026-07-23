@@ -172,9 +172,11 @@ struct LeafyApp: App {
             .onReceive(NotificationCenter.default.publisher(for: AppStoreReviewCoordinator.successfulSyncRecordedNotification)) { _ in
                 scheduleReviewRequestIfEligible()
             }
-        .onReceive(NotificationCenter.default.publisher(for: .campusIdentityDidChange)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .campusIdentityDidChange)) { notification in
             guard !AppRuntimeEnvironment.isRunningUnitTests else { return }
-            reloadModelContainerForCampusIdentity()
+            reloadModelContainerForCampusIdentity(
+                prefetchTrigger: notification.object == nil ? .foreground : .login
+            )
         }
             .onReceive(NotificationCenter.default.publisher(for: .schoolDataDidRefresh)) { _ in
                 refreshScheduleReportNotifications()
@@ -203,14 +205,16 @@ struct LeafyApp: App {
     }
 
     @MainActor
-    private func reloadModelContainerForCampusIdentity() {
+    private func reloadModelContainerForCampusIdentity(
+        prefetchTrigger: SchoolDataPrefetchTrigger
+    ) {
         let setup = AppModelContainerFactory.make()
         modelContainerSetup = setup
         if let recoveryMessage = setup.recoveryMessage {
             modelRecoveryMessage = recoveryMessage
         }
         modelContainerRevision = UUID()
-        refreshSemesterRuntimeConfig(force: true, prefetchTrigger: .foreground)
+        refreshSemesterRuntimeConfig(force: true, prefetchTrigger: prefetchTrigger)
         refreshWidgetSnapshot()
         refreshScheduleReportNotifications()
     }

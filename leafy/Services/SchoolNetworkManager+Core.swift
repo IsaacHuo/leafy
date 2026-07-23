@@ -176,6 +176,13 @@ extension SchoolNetworkManager {
     func clearPersistedCookies() {
         persistedCookieValues = [:]
         UserDefaults.standard.removeObject(forKey: CampusScopedDefaults.key("schoolSessionCookies"))
+
+        let schoolURLs = [URL(string: baseURL), URL(string: graduateBaseURL)].compactMap { $0 }
+        for url in schoolURLs {
+            for cookie in HTTPCookieStorage.shared.cookies(for: url) ?? [] {
+                HTTPCookieStorage.shared.deleteCookie(cookie)
+            }
+        }
     }
 
     func persistAuthenticatedIdentity(eduID: String, displayName: String? = nil) {
@@ -454,6 +461,68 @@ extension SchoolNetworkManager {
         }
 
         return false
+    }
+
+    func preflightAuthenticatedSession(
+        timeoutInterval: TimeInterval = 1.5
+    ) async -> SchoolSessionPreflightResult {
+        if ReviewDemoMode.isEnabled {
+            return .authenticated
+        }
+
+        guard hasCachedIdentity, isLoggedIn else {
+            return .requiresReauthentication
+        }
+
+        if let lastAuthenticatedSessionValidationAt,
+           Date().timeIntervalSince(lastAuthenticatedSessionValidationAt) < 5 {
+            return .authenticated
+        }
+
+        if currentPortal == .graduate {
+            guard let url = graduateURL(path: "/student/default/getxscardinfo") else {
+                return .networkUnavailable
+            }
+
+            do {
+                _ = try await fetchGraduateDisplayName(
+                    from: url,
+                    timeoutInterval: timeoutInterval
+                )
+                lastAuthenticatedSessionValidationAt = Date()
+                return .authenticated
+            } catch {
+                if SchoolReauthentication.requiresReauthentication(error) {
+                    clearPersistedCookies()
+                    isLoggedIn = false
+                    return .requiresReauthentication
+                }
+                return .networkUnavailable
+            }
+        }
+
+        guard let url = URL(string: "\(baseURL)/jsxsd/framework/xsMain.jsp") else {
+            return .networkUnavailable
+        }
+
+        var request = makeRequest(url: url)
+        request.timeoutInterval = timeoutInterval
+
+        do {
+            let (html, response) = try await html(for: request)
+            if isAuthenticatedResponse(url: response.url, html: html) {
+                lastAuthenticatedSessionValidationAt = Date()
+                return .authenticated
+            }
+            if isLoginPage(html) {
+                clearPersistedCookies()
+                isLoggedIn = false
+                return .requiresReauthentication
+            }
+            return .networkUnavailable
+        } catch {
+            return .networkUnavailable
+        }
     }
 
     func invalidateSessionIfNeeded() async -> Bool {
