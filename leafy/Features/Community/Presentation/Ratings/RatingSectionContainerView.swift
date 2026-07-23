@@ -219,6 +219,7 @@ private struct TeacherSectionView: View {
     let lifecycleStore: RatingCatalogSectionStore
 
     private let pageSize = 50
+    private let visibleLoadMoreCount = 20
 
     @State private var search = ""
     @State private var selectedUnit: String?
@@ -230,6 +231,7 @@ private struct TeacherSectionView: View {
     @State private var isLoading = false
     @State private var isLoadingMore = false
     @State private var canLoadMore = false
+    @State private var sourceOffset = 0
     @State private var errorMessage: String?
     @State private var searchTask: Task<Void, Never>?
     @State private var suggestionSheet: CatalogSuggestionSheetContext?
@@ -332,6 +334,11 @@ private struct TeacherSectionView: View {
                     action: openTeacherSuggestion
                 )
             }
+            if canLoadMore {
+                RatingLoadMoreButton(isLoading: isLoadingMore) {
+                    scheduleTeacherLoad(reset: false)
+                }
+            }
         } else {
             if let errorMessage {
                 Text(errorMessage)
@@ -391,6 +398,7 @@ private struct TeacherSectionView: View {
         if ReviewDemoMode.isEnabled {
             let demoTeachers = ReviewDemoDataSeeder.teacherSummaries(search: search)
             teachers = reset ? demoTeachers : teachers
+            sourceOffset = demoTeachers.count
             canLoadMore = false
             errorMessage = nil
             updateDerivedTeacherState()
@@ -399,22 +407,46 @@ private struct TeacherSectionView: View {
 
         do {
             try await dependencies.communityRepository.ensureAnonymousSession()
-            let fetchedTeachers = try await dependencies.communityRepository.fetchTeacherRatingSummaries(
-                search: search,
-                limit: pageSize,
-                offset: reset ? 0 : teachers.count
-            )
             if reset {
+                let fetchedTeachers = try await dependencies.communityRepository.fetchTeacherRatingSummaries(
+                    search: search,
+                    limit: pageSize,
+                    offset: 0
+                )
                 teachers = fetchedTeachers
+                sourceOffset = fetchedTeachers.count
+                canLoadMore = fetchedTeachers.count == pageSize
             } else {
-                let existingIDs = Set(teachers.map(\.id))
-                teachers.append(contentsOf: fetchedTeachers.filter { !existingIDs.contains($0.id) })
+                let visibleIDsBeforeLoad = Set(filteredTeachers.map(\.id))
+                var newlyVisibleCount = 0
+
+                while canLoadMore && newlyVisibleCount < visibleLoadMoreCount {
+                    try Task.checkCancellation()
+                    let fetchedTeachers = try await dependencies.communityRepository.fetchTeacherRatingSummaries(
+                        search: search,
+                        limit: pageSize,
+                        offset: sourceOffset
+                    )
+                    sourceOffset += fetchedTeachers.count
+
+                    let existingIDs = Set(teachers.map(\.id))
+                    teachers.append(contentsOf: fetchedTeachers.filter { !existingIDs.contains($0.id) })
+                    canLoadMore = fetchedTeachers.count == pageSize
+                    updateDerivedTeacherState()
+                    newlyVisibleCount = filteredTeachers.reduce(into: 0) { count, teacher in
+                        if !visibleIDsBeforeLoad.contains(teacher.id) {
+                            count += 1
+                        }
+                    }
+                }
             }
-            canLoadMore = fetchedTeachers.count == pageSize
             errorMessage = nil
+        } catch is CancellationError {
+            return
         } catch {
             if reset {
                 teachers = []
+                sourceOffset = 0
                 canLoadMore = false
             }
             errorMessage = error.localizedDescription

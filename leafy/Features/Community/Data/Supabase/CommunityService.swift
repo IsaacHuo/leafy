@@ -1791,6 +1791,7 @@ extension CommunityService {
                 .order("rating_average", ascending: false)
                 .order("rating_count", ascending: false)
                 .order("name", ascending: true)
+                .order("id", ascending: true)
                 .range(from: safeOffset, to: rangeEnd)
                 .execute()
                 .value
@@ -1801,6 +1802,7 @@ extension CommunityService {
                 .order("rating_average", ascending: false)
                 .order("rating_count", ascending: false)
                 .order("name", ascending: true)
+                .order("id", ascending: true)
                 .range(from: safeOffset, to: rangeEnd)
                 .execute()
                 .value
