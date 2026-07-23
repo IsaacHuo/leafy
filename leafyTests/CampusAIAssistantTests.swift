@@ -458,7 +458,6 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertTrue(initial.contextSettings.includesExamsAndPlans)
         XCTAssertFalse(initial.contextSettings.includesLearningWorkspace)
         XCTAssertFalse(initial.contextSettings.includesMedicalLedger)
-        XCTAssertFalse(initial.contextSettings.includesCommunityCache)
         XCTAssertTrue(initial.webSearchEnabled)
         XCTAssertTrue([
             CampusAIContextSettings.allEnabled.includesTimetable,
@@ -467,8 +466,7 @@ final class CampusAIAssistantTests: XCTestCase {
             CampusAIContextSettings.allEnabled.includesLearningWorkspace,
             CampusAIContextSettings.allEnabled.includesPostgraduateAndCareer,
             CampusAIContextSettings.allEnabled.includesHonorsFitnessQuality,
-            CampusAIContextSettings.allEnabled.includesMedicalLedger,
-            CampusAIContextSettings.allEnabled.includesCommunityCache
+            CampusAIContextSettings.allEnabled.includesMedicalLedger
         ].allSatisfy { $0 })
 
         var changed = initial
@@ -525,7 +523,7 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertEqual(migrated.contextSettings, .allEnabled)
         XCTAssertFalse(migrated.webSearchEnabled)
         XCTAssertNil(defaults.data(forKey: "campusAI.userSettings.v5"))
-        XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v6"))
+        XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v7"))
 
         var explicitBYOK = migrated
         explicitBYOK.serviceMode = .ownAPIKey
@@ -534,6 +532,48 @@ final class CampusAIAssistantTests: XCTestCase {
             CampusAISettingsStore.load(userDefaults: defaults).serviceMode,
             .ownAPIKey
         )
+    }
+
+    func testSettingsStoreMigratesV6ToV7WithoutResettingBYOKOrOtherScopes() throws {
+        let suiteName = "CampusAIAssistantTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let v6 = """
+        {
+          "serviceMode":"ownAPIKey",
+          "selectedProviderID":"deepseek",
+          "selectedModelID":"pro",
+          "systemPrompt":"保留自定义偏好",
+          "contextSettings":{
+            "includesTimetable":false,
+            "includesGrades":true,
+            "includesExamsAndPlans":false,
+            "includesLearningWorkspace":true,
+            "includesPostgraduateAndCareer":true,
+            "includesHonorsFitnessQuality":false,
+            "includesMedicalLedger":true,
+            "includesCommunityCache":true
+          },
+          "webSearchEnabled":false
+        }
+        """
+        defaults.set(Data(v6.utf8), forKey: "campusAI.userSettings.v6")
+
+        let migrated = CampusAISettingsStore.load(userDefaults: defaults)
+
+        XCTAssertEqual(migrated.serviceMode, .ownAPIKey)
+        XCTAssertEqual(migrated.selectedModelID, .pro)
+        XCTAssertEqual(migrated.systemPrompt, "保留自定义偏好")
+        XCTAssertFalse(migrated.contextSettings.includesTimetable)
+        XCTAssertTrue(migrated.contextSettings.includesGrades)
+        XCTAssertFalse(migrated.contextSettings.includesExamsAndPlans)
+        XCTAssertTrue(migrated.contextSettings.includesLearningWorkspace)
+        XCTAssertTrue(migrated.contextSettings.includesPostgraduateAndCareer)
+        XCTAssertFalse(migrated.contextSettings.includesHonorsFitnessQuality)
+        XCTAssertTrue(migrated.contextSettings.includesMedicalLedger)
+        XCTAssertFalse(migrated.webSearchEnabled)
+        XCTAssertNil(defaults.data(forKey: "campusAI.userSettings.v6"))
+        XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v7"))
     }
 
     func testQuotaSnapshotDecodesLegacyAndExpandedPayloads() throws {
@@ -653,7 +693,7 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertFalse(settings.contextSettings.includesMedicalLedger)
         XCTAssertTrue(settings.webSearchEnabled)
         XCTAssertNil(defaults.data(forKey: "campusAI.userSettings.v1"))
-        XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v6"))
+        XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v7"))
     }
 
     func testLegacyKeychainAccountsAreRemovedOnce() throws {
@@ -853,24 +893,6 @@ final class CampusAIAssistantTests: XCTestCase {
             ],
             medicalEntries: [medicalEntry],
             medicalPhotos: [MedicalLedgerPhoto(entryID: medicalEntry.id.uuidString, originalFilename: "invoice.jpg", localFilename: "invoice-local.jpg")],
-            communityPosts: [
-                CommunityPost(
-                    id: UUID(),
-                    authorID: UUID(),
-                    title: "校园 App 比赛规划",
-                    body: "公开帖子摘要",
-                    category: "校园",
-                    isAnonymous: true,
-                    commentCount: 2,
-                    likeCount: 3,
-                    status: "published",
-                    createdAt: "2026-06-25T00:00:00Z",
-                    updatedAt: "2026-06-25T00:00:00Z",
-                    viewerHasLiked: false,
-                    author: nil,
-                    images: []
-                )
-            ],
             settings: allContextSettings,
             now: now
         )
@@ -890,7 +912,7 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertEqual(context.countdowns.map { $0.title }, ["四六级报名"])
         XCTAssertEqual(context.learningWorkspace.materials.first?.title, "数据结构复习资料")
         XCTAssertEqual(context.medicalLedger.photoCount, 1)
-        XCTAssertEqual(context.communityCache.posts.first?.title, "校园 App 比赛规划")
+        XCTAssertTrue(context.communityCache.posts.isEmpty)
 
         let encoded = try XCTUnwrap(String(data: JSONEncoder().encode(context), encoding: .utf8))
         XCTAssertTrue(encoded.contains("只发送这条用户备注"))
@@ -899,6 +921,7 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertFalse(encoded.contains("do-not-send-file-name.pdf"))
         XCTAssertFalse(encoded.contains("invoice-local.jpg"))
         XCTAssertFalse(encoded.contains("resume-local.pdf"))
+        XCTAssertFalse(encoded.contains("公开帖子摘要"))
     }
 
     func testContextBuilderReportsSourceStatusFreshnessAndMissingData() throws {
@@ -1226,6 +1249,162 @@ final class CampusAIAssistantTests: XCTestCase {
             let properties = try XCTUnwrap(parameters["properties"] as? [String: Any])
             XCTAssertEqual(required, ["query"])
             XCTAssertNil(properties["focus_terms"])
+        }
+    }
+
+    func testPersonalContextToolDeclaresSevenCanonicalScopes() throws {
+        let encoded = try JSONEncoder().encode(CampusAIResearchToolDefinition.all)
+        let tools = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [[String: Any]])
+        let tool = try XCTUnwrap(tools.first { item in
+            (item["function"] as? [String: Any])?["name"] as? String == "request_personal_context"
+        })
+        let function = try XCTUnwrap(tool["function"] as? [String: Any])
+        let parameters = try XCTUnwrap(function["parameters"] as? [String: Any])
+        let properties = try XCTUnwrap(parameters["properties"] as? [String: Any])
+        let scopes = try XCTUnwrap(properties["scopes"] as? [String: Any])
+        let items = try XCTUnwrap(scopes["items"] as? [String: Any])
+        let values = try XCTUnwrap(items["enum"] as? [String])
+
+        XCTAssertEqual(parameters["required"] as? [String], ["scopes"])
+        XCTAssertEqual(Set(values), Set(CampusAIPersonalContextScope.allCases.map(\.rawValue)))
+        XCTAssertEqual(values.count, 7)
+        XCTAssertFalse(values.contains("community"))
+        XCTAssertNil(properties["domains"])
+    }
+
+    func testPersonalContextGradesAliasesReturnAvailableWithoutCommunityLeakage() {
+        let grade = CampusAILocalKnowledgeResult(
+            id: "grade-1",
+            domain: .academics,
+            title: "高等数学：92",
+            summary: "2025-2026-1，4 学分",
+            sourceID: "grade.course.0",
+            score: 100
+        )
+        let legacyCommunity = CampusAILocalKnowledgeResult(
+            id: "community-1",
+            domain: .academics,
+            title: "不应读取的社区内容",
+            summary: "旧客户端缓存",
+            sourceID: "community.post.0",
+            score: 100
+        )
+        let retrieval = CampusAILocalRetrievalPayload(query: "我现在的成绩", results: [grade, legacyCommunity])
+        var settings = CampusAIContextSettings.defaultValue
+        settings.includesGrades = true
+
+        for alias in ["grades", "academics", "成绩"] {
+            let resolution = CampusAIPersonalContextResolver.resolve(
+                values: [alias],
+                settings: settings,
+                retrieval: retrieval
+            )
+            XCTAssertEqual(resolution.status, .available)
+            XCTAssertEqual(resolution.scopeStatuses.first?.scope, "grades")
+            XCTAssertEqual(resolution.scopeStatuses.first?.status, .available)
+            XCTAssertEqual(resolution.results.map(\.id), ["grade-1"])
+        }
+    }
+
+    func testPersonalContextGradesReportsDisabledAndNoData() {
+        let grade = CampusAILocalKnowledgeResult(
+            id: "grade-1",
+            domain: .academics,
+            title: "大学英语：88",
+            summary: "2 学分",
+            sourceID: "grade.course.0",
+            score: 100
+        )
+        let retrieval = CampusAILocalRetrievalPayload(query: "成绩", results: [grade])
+
+        let disabled = CampusAIPersonalContextResolver.resolve(
+            values: ["grades"],
+            settings: .defaultValue,
+            retrieval: retrieval
+        )
+        XCTAssertEqual(disabled.status, .disabled)
+        XCTAssertEqual(disabled.scopeStatuses.first?.status, .disabled)
+        XCTAssertTrue(disabled.results.isEmpty)
+
+        var enabled = CampusAIContextSettings.defaultValue
+        enabled.includesGrades = true
+        let noData = CampusAIPersonalContextResolver.resolve(
+            values: ["成绩"],
+            settings: enabled,
+            retrieval: .empty(query: "成绩")
+        )
+        XCTAssertEqual(noData.status, .noData)
+        XCTAssertEqual(noData.scopeStatuses.first?.status, .noData)
+        XCTAssertTrue(noData.results.isEmpty)
+    }
+
+    func testPersonalContextRejectsRemovedCommunityScope() {
+        let resolution = CampusAIPersonalContextResolver.resolve(
+            values: ["community"],
+            settings: .allEnabled,
+            retrieval: .empty(query: "社区")
+        )
+
+        XCTAssertEqual(resolution.status, .unsupported)
+        XCTAssertEqual(resolution.scopeStatuses.first?.status, .unsupported)
+        XCTAssertTrue(resolution.results.isEmpty)
+    }
+
+    func testEveryPersonalContextScopeHasAvailableDisabledAndNoDataStates() {
+        let sourceIDs: [CampusAIPersonalContextScope: (CampusAILocalKnowledgeDomain, String)] = [
+            .timetable: (.schedule, "timetable.today.0"),
+            .grades: (.academics, "grade.course.0"),
+            .examsAndPlans: (.schedule, "exam.0"),
+            .learningWorkspace: (.learning, "learning.task.0"),
+            .postgraduateAndCareer: (.postgraduateCareer, "career.task.0"),
+            .honorsFitnessQuality: (.honorsQuality, "honor.0"),
+            .medicalLedger: (.medical, "medical.entry.0")
+        ]
+
+        for scope in CampusAIPersonalContextScope.allCases {
+            let source = sourceIDs[scope]!
+            let result = CampusAILocalKnowledgeResult(
+                id: scope.rawValue,
+                domain: source.0,
+                title: scope.title,
+                summary: "测试数据",
+                sourceID: source.1,
+                score: 100
+            )
+            let retrieval = CampusAILocalRetrievalPayload(query: scope.title, results: [result])
+            let available = CampusAIPersonalContextResolver.resolve(
+                values: [scope.rawValue],
+                settings: .allEnabled,
+                retrieval: retrieval
+            )
+            XCTAssertEqual(available.status, .available, scope.rawValue)
+            XCTAssertEqual(available.results.map(\.id), [scope.rawValue], scope.rawValue)
+
+            var disabledSettings = CampusAIContextSettings.allEnabled
+            switch scope {
+            case .timetable: disabledSettings.includesTimetable = false
+            case .grades: disabledSettings.includesGrades = false
+            case .examsAndPlans: disabledSettings.includesExamsAndPlans = false
+            case .learningWorkspace: disabledSettings.includesLearningWorkspace = false
+            case .postgraduateAndCareer: disabledSettings.includesPostgraduateAndCareer = false
+            case .honorsFitnessQuality: disabledSettings.includesHonorsFitnessQuality = false
+            case .medicalLedger: disabledSettings.includesMedicalLedger = false
+            }
+            let disabled = CampusAIPersonalContextResolver.resolve(
+                values: [scope.rawValue],
+                settings: disabledSettings,
+                retrieval: retrieval
+            )
+            XCTAssertEqual(disabled.status, .disabled, scope.rawValue)
+            XCTAssertTrue(disabled.results.isEmpty, scope.rawValue)
+
+            let noData = CampusAIPersonalContextResolver.resolve(
+                values: [scope.rawValue],
+                settings: .allEnabled,
+                retrieval: .empty(query: scope.title)
+            )
+            XCTAssertEqual(noData.status, .noData, scope.rawValue)
+            XCTAssertTrue(noData.results.isEmpty, scope.rawValue)
         }
     }
 
@@ -1564,24 +1743,6 @@ final class CampusAIAssistantTests: XCTestCase {
             fitnessTests: [FitnessTestRecord(itemRawValue: FitnessTestItem.sprint50m.rawValue, value: 7.2, unitRawValue: FitnessTestUnit.second.rawValue)],
             qualityRecords: [ComprehensiveQualityRecord(collegeName: "信息学院", academicStandardScore: 90)],
             medicalEntries: [medicalEntry],
-            communityPosts: [
-                CommunityPost(
-                    id: UUID(),
-                    authorID: UUID(),
-                    title: "学习经验讨论",
-                    body: "公开帖子摘要",
-                    category: "学习",
-                    isAnonymous: true,
-                    commentCount: 1,
-                    likeCount: 2,
-                    status: "published",
-                    createdAt: "2026-07-22T00:00:00Z",
-                    updatedAt: "2026-07-22T00:00:00Z",
-                    viewerHasLiked: false,
-                    author: nil,
-                    images: []
-                )
-            ],
             settings: .allEnabled,
             now: now
         )
@@ -2502,7 +2663,7 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertTrue(settings.webSearchEnabled)
         XCTAssertEqual(settings.systemPrompt, "保留这个偏好")
         XCTAssertNil(defaults.data(forKey: "campusAI.userSettings.v2"))
-        XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v6"))
+        XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v7"))
     }
 
     func testCurrentSettingsPreserveDisabledWebResearch() throws {

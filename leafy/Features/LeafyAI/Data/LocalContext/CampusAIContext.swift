@@ -32,8 +32,7 @@ nonisolated struct CampusAIContextPayload: Codable, Hashable {
             learningWorkspace.hasContent ||
             postgraduateAndCareer.hasContent ||
             honorsFitnessQuality.hasContent ||
-            medicalLedger.hasContent ||
-            communityCache.hasContent
+            medicalLedger.hasContent
     }
 }
 
@@ -404,7 +403,6 @@ nonisolated enum CampusAIContextBuilder {
             qualityEvidence: fetch(ComprehensiveQualityEvidenceDocument.self, in: modelContext),
             medicalEntries: fetch(MedicalLedgerEntry.self, in: modelContext),
             medicalPhotos: fetch(MedicalLedgerPhoto.self, in: modelContext),
-            communityPosts: CommunityFeedCache().load(query: .default),
             timetableLastSyncAt: TimetableCacheMetadata.lastSyncAt,
             gradeDetailsLastSyncAt: SchoolDataCache.lastSyncDate(for: .gradeDetails),
             gradeSupplementalLastSyncAt: SchoolDataCache.lastSyncDate(for: .gradeRankings),
@@ -445,7 +443,6 @@ nonisolated enum CampusAIContextBuilder {
         qualityEvidence: [ComprehensiveQualityEvidenceDocument] = [],
         medicalEntries: [MedicalLedgerEntry] = [],
         medicalPhotos: [MedicalLedgerPhoto] = [],
-        communityPosts: [CommunityPost] = [],
         timetableLastSyncAt: Date? = nil,
         gradeDetailsLastSyncAt: Date? = nil,
         gradeSupplementalLastSyncAt: Date? = nil,
@@ -566,9 +563,7 @@ nonisolated enum CampusAIContextBuilder {
             medicalLedger: settings.includesMedicalLedger
                 ? medicalLedgerContext(entries: medicalEntries, photoCounts: photoCounts)
                 : .empty,
-            communityCache: settings.includesCommunityCache
-                ? CampusAICommunityCacheContext(posts: communityPosts.prefix(20).map { CampusAICommunityPostContext(post: $0) })
-                : .empty
+            communityCache: .empty
         )
     }
 
@@ -852,8 +847,7 @@ nonisolated enum CampusAIContextBuilder {
             ("学习空间", settings.includesLearningWorkspace),
             ("考研和职业规划", settings.includesPostgraduateAndCareer),
             ("荣誉体测综测", settings.includesHonorsFitnessQuality),
-            ("医疗台账", settings.includesMedicalLedger),
-            ("社区公开缓存", settings.includesCommunityCache)
+            ("医疗台账", settings.includesMedicalLedger)
         ]
     }
 }

@@ -222,8 +222,7 @@ nonisolated enum CampusAIDiagnostics {
             settings.includesLearningWorkspace ? "learning" : nil,
             settings.includesPostgraduateAndCareer ? "postgraduate_career" : nil,
             settings.includesHonorsFitnessQuality ? "honors_fitness" : nil,
-            settings.includesMedicalLedger ? "medical" : nil,
-            settings.includesCommunityCache ? "community" : nil
+            settings.includesMedicalLedger ? "medical" : nil
         ]
         .compactMap { $0 }
         .joined(separator: ",")
@@ -232,6 +231,18 @@ nonisolated enum CampusAIDiagnostics {
             .sorted()
             .joined(separator: ",")
         logger.info("local_context request=\(requestID.uuidString, privacy: .public) enabled=\(enabled, privacy: .public) retrieval=\(counts, privacy: .public)")
+    }
+
+    static func personalContext(
+        requestID: UUID,
+        statuses: [CampusAIPersonalContextScopeStatus],
+        resultCount: Int,
+        stage: String
+    ) {
+        let summary = statuses
+            .map { "\($0.scope):\($0.status.rawValue):\($0.resultCount)" }
+            .joined(separator: ",")
+        logger.info("personal_context request=\(requestID.uuidString, privacy: .public) stage=\(stage, privacy: .public) scopes=\(summary, privacy: .public) results=\(resultCount, privacy: .public)")
     }
 
     static func subscriptionProductFailure(

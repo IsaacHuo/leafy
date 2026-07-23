@@ -6,7 +6,6 @@ nonisolated enum CampusAILocalKnowledgeDomain: String, Codable, CaseIterable, Ha
     case fitnessSports
     case honorsQuality
     case medical
-    case community
 
     var id: String { rawValue }
 
@@ -19,7 +18,6 @@ nonisolated enum CampusAILocalKnowledgeDomain: String, Codable, CaseIterable, Ha
         case .fitnessSports: return "体育体测"
         case .honorsQuality: return "荣誉综测"
         case .medical: return "医疗台账"
-        case .community: return "社区公开摘要"
         }
     }
 
@@ -39,8 +37,6 @@ nonisolated enum CampusAILocalKnowledgeDomain: String, Codable, CaseIterable, Ha
             return ["荣誉", "综测", "综合素质", "证明", "奖项", "材料"]
         case .medical:
             return ["医疗", "医保", "报销", "就诊", "医院", "台账", "材料", "发票"]
-        case .community:
-            return ["社区", "帖子", "动态", "同学", "公开", "讨论"]
         }
     }
 }
@@ -170,6 +166,205 @@ nonisolated struct CampusAILocalRetrievalPayload: Codable, Hashable {
         try container.encode(query, forKey: .query)
         try container.encode(generatedAt, forKey: .generatedAt)
         try container.encode(results, forKey: .results)
+    }
+}
+
+nonisolated enum CampusAIPersonalContextScope: String, Codable, CaseIterable, Hashable, Identifiable {
+    case timetable
+    case grades
+    case examsAndPlans
+    case learningWorkspace
+    case postgraduateAndCareer
+    case honorsFitnessQuality
+    case medicalLedger
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .timetable: return "课表和提醒"
+        case .grades: return "成绩和排名"
+        case .examsAndPlans: return "考试和培养计划"
+        case .learningWorkspace: return "学习空间"
+        case .postgraduateAndCareer: return "考研和职业规划"
+        case .honorsFitnessQuality: return "荣誉体测综测"
+        case .medicalLedger: return "医疗台账"
+        }
+    }
+
+    func isEnabled(in settings: CampusAIContextSettings) -> Bool {
+        switch self {
+        case .timetable: return settings.includesTimetable
+        case .grades: return settings.includesGrades
+        case .examsAndPlans: return settings.includesExamsAndPlans
+        case .learningWorkspace: return settings.includesLearningWorkspace
+        case .postgraduateAndCareer: return settings.includesPostgraduateAndCareer
+        case .honorsFitnessQuality: return settings.includesHonorsFitnessQuality
+        case .medicalLedger: return settings.includesMedicalLedger
+        }
+    }
+
+    func matches(_ result: CampusAILocalKnowledgeResult) -> Bool {
+        let sourceID = result.sourceID
+        switch self {
+        case .timetable:
+            return sourceID.hasPrefix("timetable.") || sourceID.hasPrefix("course.note.")
+        case .grades:
+            return sourceID.hasPrefix("grade.")
+        case .examsAndPlans:
+            return sourceID.hasPrefix("exam.") || sourceID.hasPrefix("countdown.") ||
+                sourceID.hasPrefix("teaching.plan.") || sourceID == "training.program"
+        case .learningWorkspace:
+            return sourceID.hasPrefix("learning.") || sourceID.hasPrefix("study.record.")
+        case .postgraduateAndCareer:
+            return sourceID.hasPrefix("postgraduate.") || sourceID.hasPrefix("career.")
+        case .honorsFitnessQuality:
+            return sourceID.hasPrefix("fitness.") || sourceID.hasPrefix("honor.") || sourceID.hasPrefix("quality.")
+        case .medicalLedger:
+            return sourceID.hasPrefix("medical.")
+        }
+    }
+
+    static func normalize(_ values: [String]) -> CampusAIPersonalContextScopeRequest {
+        var scopes: [CampusAIPersonalContextScope] = []
+        var unsupportedCommunity = false
+        var invalidCount = 0
+
+        for value in values.prefix(3) {
+            let normalized = value
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+                .replacingOccurrences(of: "_", with: "")
+                .replacingOccurrences(of: "-", with: "")
+                .replacingOccurrences(of: " ", with: "")
+            let scope: CampusAIPersonalContextScope?
+            switch normalized {
+            case "timetable", "schedule", "课表", "课表和提醒": scope = .timetable
+            case "grades", "grade", "academics", "成绩", "成绩和排名", "学业成绩": scope = .grades
+            case "examsandplans", "exams", "exam", "考试", "考试和培养计划", "培养计划": scope = .examsAndPlans
+            case "learningworkspace", "learning", "学习空间", "学习资料": scope = .learningWorkspace
+            case "postgraduateandcareer", "postgraduatecareer", "考研职业", "考研和职业规划": scope = .postgraduateAndCareer
+            case "honorsfitnessquality", "fitnesssports", "honorsquality", "荣誉体测综测", "荣誉、体测和综测": scope = .honorsFitnessQuality
+            case "medicalledger", "medical", "医疗", "医疗台账": scope = .medicalLedger
+            case "community", "communitycache", "社区", "社区公开缓存":
+                unsupportedCommunity = true
+                scope = nil
+            default:
+                invalidCount += 1
+                scope = nil
+            }
+            if let scope, !scopes.contains(scope) {
+                scopes.append(scope)
+            }
+        }
+        if values.count > 3 {
+            invalidCount += values.count - 3
+        }
+        return CampusAIPersonalContextScopeRequest(
+            scopes: scopes,
+            requestedUnsupportedCommunity: unsupportedCommunity,
+            invalidCount: invalidCount
+        )
+    }
+}
+
+nonisolated struct CampusAIPersonalContextScopeRequest: Hashable {
+    let scopes: [CampusAIPersonalContextScope]
+    let requestedUnsupportedCommunity: Bool
+    let invalidCount: Int
+}
+
+nonisolated enum CampusAIPersonalContextAvailability: String, Codable, Hashable {
+    case disabled
+    case noData = "no_data"
+    case available
+    case unsupported
+}
+
+nonisolated struct CampusAIPersonalContextScopeStatus: Codable, Hashable {
+    let scope: String
+    let title: String
+    let status: CampusAIPersonalContextAvailability
+    let resultCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case scope, title, status
+        case resultCount = "result_count"
+    }
+}
+
+nonisolated struct CampusAIPersonalContextResolution: Codable, Hashable {
+    let status: CampusAIPersonalContextAvailability
+    let scopeStatuses: [CampusAIPersonalContextScopeStatus]
+    let results: [CampusAILocalKnowledgeResult]
+    let invalidScopeCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case status, results
+        case scopeStatuses = "scope_statuses"
+        case invalidScopeCount = "invalid_scope_count"
+    }
+}
+
+nonisolated enum CampusAIPersonalContextResolver {
+    static func resolve(
+        values: [String],
+        settings: CampusAIContextSettings,
+        retrieval: CampusAILocalRetrievalPayload,
+        maxResults: Int = 8
+    ) -> CampusAIPersonalContextResolution {
+        let request = CampusAIPersonalContextScope.normalize(values)
+        var statuses: [CampusAIPersonalContextScopeStatus] = []
+        var resultsByScope: [(CampusAIPersonalContextScope, [CampusAILocalKnowledgeResult])] = []
+
+        for scope in request.scopes {
+            guard scope.isEnabled(in: settings) else {
+                statuses.append(.init(scope: scope.rawValue, title: scope.title, status: .disabled, resultCount: 0))
+                continue
+            }
+            let results = retrieval.results.filter(scope.matches)
+            let status: CampusAIPersonalContextAvailability = results.isEmpty ? .noData : .available
+            statuses.append(.init(scope: scope.rawValue, title: scope.title, status: status, resultCount: results.count))
+            if !results.isEmpty {
+                resultsByScope.append((scope, results))
+            }
+        }
+
+        if request.requestedUnsupportedCommunity {
+            statuses.append(.init(scope: "community", title: "社区公开缓存", status: .unsupported, resultCount: 0))
+        }
+
+        var selected: [CampusAILocalKnowledgeResult] = []
+        var selectedIDs = Set<String>()
+        for (_, results) in resultsByScope {
+            if let first = results.first, selectedIDs.insert(first.id).inserted {
+                selected.append(first)
+            }
+        }
+        for (_, results) in resultsByScope {
+            for result in results where selected.count < maxResults {
+                if selectedIDs.insert(result.id).inserted {
+                    selected.append(result)
+                }
+            }
+        }
+
+        let overall: CampusAIPersonalContextAvailability
+        if !selected.isEmpty {
+            overall = .available
+        } else if statuses.contains(where: { $0.status == .noData }) {
+            overall = .noData
+        } else if statuses.contains(where: { $0.status == .disabled }) {
+            overall = .disabled
+        } else {
+            overall = .unsupported
+        }
+        return .init(
+            status: overall,
+            scopeStatuses: statuses,
+            results: selected,
+            invalidScopeCount: request.invalidCount
+        )
     }
 }
 
@@ -565,23 +760,6 @@ nonisolated enum CampusAILocalKnowledgeIndex {
                 routeHint: CampusAIAcademicRouteID.medicalLedger.rawValue,
                 updatedAt: entry.updatedAt,
                 baseScore: 18
-            ))
-        }
-
-        for (index, post) in context.communityCache.posts.enumerated() {
-            candidates.append(candidate(
-                domain: .community,
-                title: "社区：\(post.title)",
-                summary: join([
-                    post.category,
-                    post.body.nonEmptyTrimmed,
-                    "评论 \(post.commentCount)",
-                    "点赞 \(post.likeCount)",
-                    post.imageCount > 0 ? "含 \(post.imageCount) 张图片" : nil
-                ]),
-                sourceID: "community.post.\(index)",
-                updatedAt: post.updatedAt.nonEmptyTrimmed ?? post.createdAt,
-                baseScore: 8
             ))
         }
 

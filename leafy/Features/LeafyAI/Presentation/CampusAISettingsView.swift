@@ -180,8 +180,7 @@ struct CampusAISettingsView: View {
             settings.contextSettings.includesLearningWorkspace,
             settings.contextSettings.includesPostgraduateAndCareer,
             settings.contextSettings.includesHonorsFitnessQuality,
-            settings.contextSettings.includesMedicalLedger,
-            settings.contextSettings.includesCommunityCache
+            settings.contextSettings.includesMedicalLedger
         ].filter { $0 }.count
     }
 
@@ -558,7 +557,6 @@ private struct CampusAIContextSettingsPage: View {
                 Toggle("考研和职业规划", isOn: $settings.contextSettings.includesPostgraduateAndCareer)
                 Toggle("荣誉、体测和综测", isOn: $settings.contextSettings.includesHonorsFitnessQuality)
                 Toggle("医疗台账", isOn: $settings.contextSettings.includesMedicalLedger)
-                Toggle("社区公开缓存", isOn: $settings.contextSettings.includesCommunityCache)
 
                 Button("全部开启") {
                     settings.contextSettings = .allEnabled
