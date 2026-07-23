@@ -351,7 +351,7 @@ struct CampusAISubscriptionView: View {
                             Text("\(displayPrice)/周")
                                 .font(.title3.weight(.semibold))
                         } else {
-                            Text("正在读取 App Store 价格")
+                            Text(productStatusText)
                                 .font(.subheadline)
                                 .foregroundStyle(AppTheme.secondaryText)
                         }
@@ -391,22 +391,36 @@ struct CampusAISubscriptionView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    Button {
-                        Task {
-                            if await store.purchase() {
-                                onSubscribed()
-                                dismiss()
-                            }
+                    if store.productLoadState == .unavailable && !store.isPurchased {
+                        Button {
+                            Task { await store.refresh() }
+                        } label: {
+                            Text("重新加载订阅商品")
+                                .font(.body.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 50)
                         }
-                    } label: {
-                        Text(store.isPurchased ? "已订阅" : subscribeButtonTitle)
-                            .font(.body.weight(.semibold))
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 50)
+                        .buttonStyle(.borderedProminent)
+                        .tint(AppTheme.accent)
+                        .disabled(store.isLoading)
+                    } else {
+                        Button {
+                            Task {
+                                if await store.purchase() {
+                                    onSubscribed()
+                                    dismiss()
+                                }
+                            }
+                        } label: {
+                            Text(store.isPurchased ? "已订阅" : subscribeButtonTitle)
+                                .font(.body.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 50)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(AppTheme.accent)
+                        .disabled(store.product == nil || store.isLoading || store.isPurchased)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(AppTheme.accent)
-                    .disabled(store.product == nil || store.isLoading || store.isPurchased)
 
                     Button("恢复购买") {
                         Task { await store.restorePurchases() }
@@ -436,8 +450,19 @@ struct CampusAISubscriptionView: View {
     }
 
     private var subscribeButtonTitle: String {
-        guard let displayPrice = store.displayPrice else { return "商品暂不可用" }
+        guard let displayPrice = store.displayPrice else { return "正在加载" }
         return "订阅 · \(displayPrice)/周"
+    }
+
+    private var productStatusText: String {
+        switch store.productLoadState {
+        case .idle, .loading:
+            return "正在读取 App Store 价格"
+        case .available:
+            return "App Store 价格已读取"
+        case .unavailable:
+            return "暂时无法读取订阅价格"
+        }
     }
 
     private func subscriptionBenefit(_ text: String) -> some View {
@@ -536,7 +561,7 @@ private struct CampusAIContextSettingsPage: View {
                 Toggle("社区公开缓存", isOn: $settings.contextSettings.includesCommunityCache)
 
                 Button("全部开启") {
-                    settings.contextSettings = .defaultValue
+                    settings.contextSettings = .allEnabled
                 }
             } header: {
                 Text("允许进入上下文的数据")
@@ -556,9 +581,9 @@ private struct CampusAIContextSettingsPage: View {
                                 .lineLimit(2)
                         }
                         Spacer(minLength: 8)
-                        Text(status.state == .disabled ? "已关闭" : "本机")
+                        Text(contextStatusText(status))
                             .font(.caption)
-                            .foregroundStyle(status.state == .disabled ? AppTheme.tertiaryText : AppTheme.accent)
+                            .foregroundStyle(contextStatusColor(status))
                     }
                     .padding(.vertical, 2)
                 }
@@ -566,6 +591,30 @@ private struct CampusAIContextSettingsPage: View {
         }
         .navigationTitle("本机上下文")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func contextStatusText(_ status: CampusAIContextSourceStatus) -> String {
+        switch status.state {
+        case .available:
+            return "可读取"
+        case .missing:
+            return "暂无数据"
+        case .disabled:
+            return "已关闭"
+        case .localOnly:
+            return status.itemCount > 0 ? "可读取" : "暂无数据"
+        }
+    }
+
+    private func contextStatusColor(_ status: CampusAIContextSourceStatus) -> Color {
+        switch status.state {
+        case .available:
+            return AppTheme.accent
+        case .localOnly where status.itemCount > 0:
+            return AppTheme.accent
+        case .missing, .disabled, .localOnly:
+            return AppTheme.tertiaryText
+        }
     }
 }
 

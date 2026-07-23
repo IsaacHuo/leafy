@@ -460,6 +460,16 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertFalse(initial.contextSettings.includesMedicalLedger)
         XCTAssertFalse(initial.contextSettings.includesCommunityCache)
         XCTAssertTrue(initial.webSearchEnabled)
+        XCTAssertTrue([
+            CampusAIContextSettings.allEnabled.includesTimetable,
+            CampusAIContextSettings.allEnabled.includesGrades,
+            CampusAIContextSettings.allEnabled.includesExamsAndPlans,
+            CampusAIContextSettings.allEnabled.includesLearningWorkspace,
+            CampusAIContextSettings.allEnabled.includesPostgraduateAndCareer,
+            CampusAIContextSettings.allEnabled.includesHonorsFitnessQuality,
+            CampusAIContextSettings.allEnabled.includesMedicalLedger,
+            CampusAIContextSettings.allEnabled.includesCommunityCache
+        ].allSatisfy { $0 })
 
         var changed = initial
         changed.systemPrompt = "请优先用列表回答"
@@ -495,6 +505,37 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertEqual(reloaded.selectedModelID, .pro)
     }
 
+    func testSettingsStoreMigratesV5ToManagedOnceAndPreservesPreferences() throws {
+        let suiteName = "CampusAIAssistantTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var previous = CampusAIUserSettings.defaultValue
+        previous.serviceMode = .ownAPIKey
+        previous.selectedModelID = .pro
+        previous.systemPrompt = "保留自定义偏好"
+        previous.contextSettings = .allEnabled
+        previous.webSearchEnabled = false
+        defaults.set(try JSONEncoder().encode(previous), forKey: "campusAI.userSettings.v5")
+
+        let migrated = CampusAISettingsStore.load(userDefaults: defaults)
+        XCTAssertEqual(migrated.serviceMode, .leafyManaged)
+        XCTAssertEqual(migrated.selectedModelID, .pro)
+        XCTAssertEqual(migrated.systemPrompt, "保留自定义偏好")
+        XCTAssertEqual(migrated.contextSettings, .allEnabled)
+        XCTAssertFalse(migrated.webSearchEnabled)
+        XCTAssertNil(defaults.data(forKey: "campusAI.userSettings.v5"))
+        XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v6"))
+
+        var explicitBYOK = migrated
+        explicitBYOK.serviceMode = .ownAPIKey
+        XCTAssertTrue(CampusAISettingsStore.save(explicitBYOK, userDefaults: defaults))
+        XCTAssertEqual(
+            CampusAISettingsStore.load(userDefaults: defaults).serviceMode,
+            .ownAPIKey
+        )
+    }
+
     func testQuotaSnapshotDecodesLegacyAndExpandedPayloads() throws {
         let legacy = try JSONDecoder().decode(
             CampusAIQuotaSnapshot.self,
@@ -511,6 +552,42 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertEqual(subscription.dailyRemaining, 28)
         XCTAssertEqual(subscription.periodRemaining, 108)
         XCTAssertEqual(subscription.remaining, 28)
+    }
+
+    @MainActor
+    func testSubscriptionStoreKeepsQuotaWhenProductIsUnavailableAndCoalescesRefreshes() async throws {
+        let quota = try JSONDecoder().decode(
+            CampusAIQuotaSnapshot.self,
+            from: Data(#"{"plan_source":"free","limit":10,"used":2,"remaining":8,"reset_at":"2026-07-23T16:00:00.000Z","status":"free"}"#.utf8)
+        )
+        let productLoadCount = CampusAITestCounter()
+        let store = CampusAISubscriptionStore(
+            productLoader: { _ in
+                await productLoadCount.increment()
+                try await Task.sleep(for: .milliseconds(50))
+                return []
+            },
+            currentSubscriptionLoader: { nil },
+            quotaSynchronizer: { _ in quota }
+        )
+
+        async let firstRefresh: Void = store.refresh()
+        async let secondRefresh: Void = store.refresh()
+        _ = await (firstRefresh, secondRefresh)
+
+        let loadCount = await productLoadCount.value
+        XCTAssertEqual(loadCount, 1)
+        XCTAssertEqual(store.productLoadState, .unavailable)
+        XCTAssertNil(store.product)
+        XCTAssertEqual(store.quota?.remaining, 8)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertFalse(store.isLoading)
+        XCTAssertFalse(
+            CampusAIManagedEntitlementError
+                .productNotReturned(productID: CampusAIManagedEntitlementClient.weeklyProductID)
+                .localizedDescription
+                .contains(CampusAIManagedEntitlementClient.weeklyProductID)
+        )
     }
 
     func testProviderCatalogDefaultsToDeepSeekV4Flash() {
@@ -576,7 +653,7 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertFalse(settings.contextSettings.includesMedicalLedger)
         XCTAssertTrue(settings.webSearchEnabled)
         XCTAssertNil(defaults.data(forKey: "campusAI.userSettings.v1"))
-        XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v5"))
+        XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v6"))
     }
 
     func testLegacyKeychainAccountsAreRemovedOnce() throws {
@@ -1452,6 +1529,88 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertTrue(encoded.contains("routeHint"))
         XCTAssertFalse(encoded.contains("localFilename"))
         XCTAssertFalse(encoded.contains("private-local-path"))
+    }
+
+    func testLocalKnowledgeIndexKeepsEveryEnabledDomainUnderScheduleNoise() {
+        let now = SemesterConfig.startOfSemesterDate.addingTimeInterval(10 * 60 * 60)
+        let schedule = SemesterConfig.weekAndDay(for: now)
+        let courses = (0..<20).map { index in
+            Course(
+                courseName: "课程 \(index)",
+                teacher: "教师 \(index)",
+                room: "教室 \(index)",
+                location: "教学楼",
+                dayOfWeek: schedule.day,
+                weeks: [schedule.week],
+                duration: [1, 2]
+            )
+        }
+        let medicalEntry = MedicalLedgerEntry(
+            hospitalName: "校医院",
+            department: "内科",
+            diagnosisNote: "复诊记录",
+            totalExpense: 60,
+            statusRawValue: MedicalLedgerStatus.organizing.rawValue
+        )
+        let context = CampusAIContextBuilder.build(
+            courses: courses,
+            grades: [Grade(term: "2025-2026-1", courseName: "高等数学", credit: "4", score: "92", type: "必修")],
+            exams: [],
+            teachingPlan: [],
+            trainingProgram: nil,
+            countdowns: [],
+            learningTasks: [LearningProjectTask(title: "整理复习提纲", note: "周五完成")],
+            postgraduateTargets: [PostgraduateTarget(school: "北京林业大学", major: "计算机技术")],
+            fitnessTests: [FitnessTestRecord(itemRawValue: FitnessTestItem.sprint50m.rawValue, value: 7.2, unitRawValue: FitnessTestUnit.second.rawValue)],
+            qualityRecords: [ComprehensiveQualityRecord(collegeName: "信息学院", academicStandardScore: 90)],
+            medicalEntries: [medicalEntry],
+            communityPosts: [
+                CommunityPost(
+                    id: UUID(),
+                    authorID: UUID(),
+                    title: "学习经验讨论",
+                    body: "公开帖子摘要",
+                    category: "学习",
+                    isAnonymous: true,
+                    commentCount: 1,
+                    likeCount: 2,
+                    status: "published",
+                    createdAt: "2026-07-22T00:00:00Z",
+                    updatedAt: "2026-07-22T00:00:00Z",
+                    viewerHasLiked: false,
+                    author: nil,
+                    images: []
+                )
+            ],
+            settings: .allEnabled,
+            now: now
+        )
+
+        let retrieval = CampusAILocalKnowledgeIndex.search(
+            query: "结合我的学习任务和医疗台账安排近期计划",
+            context: context
+        )
+
+        XCTAssertEqual(Set(retrieval.results.map(\.domain)), Set(CampusAILocalKnowledgeDomain.allCases))
+        XCTAssertLessThanOrEqual(retrieval.results.count, CampusAILocalKnowledgeIndex.defaultMaxResults)
+        XCTAssertTrue(retrieval.results.contains { $0.domain == .learning && $0.title.contains("整理复习提纲") })
+        XCTAssertTrue(retrieval.results.contains { $0.domain == .medical && $0.title.contains("校医院") })
+
+        var withoutMedical = CampusAIContextSettings.allEnabled
+        withoutMedical.includesMedicalLedger = false
+        let redactedContext = CampusAIContextBuilder.build(
+            courses: [],
+            grades: [],
+            exams: [],
+            teachingPlan: [],
+            trainingProgram: nil,
+            countdowns: [],
+            medicalEntries: [medicalEntry],
+            settings: withoutMedical,
+            now: now
+        )
+        let redacted = CampusAILocalKnowledgeIndex.search(query: "医疗台账", context: redactedContext)
+        XCTAssertFalse(redacted.results.contains { $0.domain == .medical })
     }
 
     func testCampusAIServiceKeepsAgentAutoWhenWebSearchIsDisabled() async throws {
@@ -2343,7 +2502,7 @@ final class CampusAIAssistantTests: XCTestCase {
         XCTAssertTrue(settings.webSearchEnabled)
         XCTAssertEqual(settings.systemPrompt, "保留这个偏好")
         XCTAssertNil(defaults.data(forKey: "campusAI.userSettings.v2"))
-        XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v5"))
+        XCTAssertNotNil(defaults.data(forKey: "campusAI.userSettings.v6"))
     }
 
     func testCurrentSettingsPreserveDisabledWebResearch() throws {
@@ -2564,15 +2723,14 @@ final class CampusAIAssistantTests: XCTestCase {
     }
 
     private var allContextSettings: CampusAIContextSettings {
-        CampusAIContextSettings(
-            includesTimetable: true,
-            includesGrades: true,
-            includesExamsAndPlans: true,
-            includesLearningWorkspace: true,
-            includesPostgraduateAndCareer: true,
-            includesHonorsFitnessQuality: true,
-            includesMedicalLedger: true,
-            includesCommunityCache: true
-        )
+        .allEnabled
+    }
+}
+
+private actor CampusAITestCounter {
+    private(set) var value = 0
+
+    func increment() {
+        value += 1
     }
 }

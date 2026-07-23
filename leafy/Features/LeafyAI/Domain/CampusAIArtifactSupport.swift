@@ -210,6 +210,40 @@ nonisolated enum CampusAIDiagnostics {
         logger.info("research request=\(requestID.uuidString, privacy: .public) found=\(found, privacy: .public) read=\(read, privacy: .public) adopted=\(adopted, privacy: .public)")
     }
 
+    static func localContext(
+        settings: CampusAIContextSettings,
+        retrieval: CampusAILocalRetrievalPayload,
+        requestID: UUID
+    ) {
+        let enabled = [
+            settings.includesTimetable ? "timetable" : nil,
+            settings.includesGrades ? "grades" : nil,
+            settings.includesExamsAndPlans ? "exams_plans" : nil,
+            settings.includesLearningWorkspace ? "learning" : nil,
+            settings.includesPostgraduateAndCareer ? "postgraduate_career" : nil,
+            settings.includesHonorsFitnessQuality ? "honors_fitness" : nil,
+            settings.includesMedicalLedger ? "medical" : nil,
+            settings.includesCommunityCache ? "community" : nil
+        ]
+        .compactMap { $0 }
+        .joined(separator: ",")
+        let counts = Dictionary(grouping: retrieval.results, by: \.domain)
+            .map { "\($0.key.rawValue):\($0.value.count)" }
+            .sorted()
+            .joined(separator: ",")
+        logger.info("local_context request=\(requestID.uuidString, privacy: .public) enabled=\(enabled, privacy: .public) retrieval=\(counts, privacy: .public)")
+    }
+
+    static func subscriptionProductFailure(
+        stage: String,
+        productID: String,
+        error: Error? = nil
+    ) {
+        let bundleID = Bundle.main.bundleIdentifier ?? "unknown"
+        let errorType = error.map { String(describing: type(of: $0)) } ?? "none"
+        logger.error("subscription_product stage=\(stage, privacy: .public) product=\(productID, privacy: .public) bundle=\(bundleID, privacy: .public) error=\(errorType, privacy: .public)")
+    }
+
     static func routing(
         route: String,
         usesPersonalContext: Bool,

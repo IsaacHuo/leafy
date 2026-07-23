@@ -490,6 +490,11 @@ nonisolated struct CampusAIService {
             localRetrieval: localRetrieval,
             outputMode: outputMode
         )
+        CampusAIDiagnostics.localContext(
+            settings: normalizedSettings.contextSettings,
+            retrieval: localRetrieval,
+            requestID: request.requestID
+        )
         return streamInvoke(request, normalizedSettings)
     }
 

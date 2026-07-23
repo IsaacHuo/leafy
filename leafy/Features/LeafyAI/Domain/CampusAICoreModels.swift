@@ -676,6 +676,17 @@ nonisolated struct CampusAIContextSettings: Codable, Hashable {
         includesMedicalLedger: false,
         includesCommunityCache: false
     )
+
+    static let allEnabled = CampusAIContextSettings(
+        includesTimetable: true,
+        includesGrades: true,
+        includesExamsAndPlans: true,
+        includesLearningWorkspace: true,
+        includesPostgraduateAndCareer: true,
+        includesHonorsFitnessQuality: true,
+        includesMedicalLedger: true,
+        includesCommunityCache: true
+    )
 }
 
 nonisolated struct CampusAIUserSettings: Codable, Hashable {
@@ -864,7 +875,8 @@ nonisolated enum CampusAISettingsStore {
     请用中文回答，默认简短直接，先给结论和下一步。可以围绕校园学习、生活安排和个人事项整理建议；信息不足时直接说缺什么，不要编造。
     """
 
-    private static let storageKey = "campusAI.userSettings.v5"
+    private static let storageKey = "campusAI.userSettings.v6"
+    private static let managedDefaultMigrationStorageKey = "campusAI.userSettings.v5"
     private static let unsafeDefaultsStorageKey = "campusAI.userSettings.v4"
     private static let previousStorageKey = "campusAI.userSettings.v3"
     private static let olderStorageKey = "campusAI.userSettings.v2"
@@ -878,6 +890,15 @@ nonisolated enum CampusAISettingsStore {
                 save(normalized, userDefaults: userDefaults)
             }
             return normalized
+        }
+
+        if let data = userDefaults.data(forKey: managedDefaultMigrationStorageKey),
+           var settings = try? JSONDecoder().decode(CampusAIUserSettings.self, from: data) {
+            settings.serviceMode = .leafyManaged
+            let migrated = migrateDefaultPrompt(in: settings.normalizedForLocalRuntime)
+            save(migrated, userDefaults: userDefaults)
+            userDefaults.removeObject(forKey: managedDefaultMigrationStorageKey)
+            return migrated
         }
 
         if let data = userDefaults.data(forKey: unsafeDefaultsStorageKey),
@@ -941,6 +962,7 @@ nonisolated enum CampusAISettingsStore {
 
     static func reset(userDefaults: UserDefaults = .standard) -> CampusAIUserSettings {
         userDefaults.removeObject(forKey: storageKey)
+        userDefaults.removeObject(forKey: managedDefaultMigrationStorageKey)
         userDefaults.removeObject(forKey: unsafeDefaultsStorageKey)
         userDefaults.removeObject(forKey: previousStorageKey)
         userDefaults.removeObject(forKey: olderStorageKey)

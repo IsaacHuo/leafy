@@ -222,7 +222,11 @@ nonisolated enum CampusAILocalKnowledgeIndex {
 
         return CampusAILocalRetrievalPayload(
             query: trimmedQuery,
-            results: fit(scored, maxResults: maxResults, characterBudget: characterBudget)
+            results: fitWithDomainCoverage(
+                scored,
+                maxResults: maxResults,
+                characterBudget: characterBudget
+            )
         )
     }
 
@@ -655,28 +659,68 @@ nonisolated enum CampusAILocalKnowledgeIndex {
         return score
     }
 
-    private static func fit(
+    private static func fitWithDomainCoverage(
         _ results: [CampusAILocalKnowledgeResult],
         maxResults: Int,
         characterBudget: Int
     ) -> [CampusAILocalKnowledgeResult] {
+        let domainRepresentatives = CampusAILocalKnowledgeDomain.allCases
+            .compactMap { domain in
+                results.first { $0.domain == domain }
+            }
+            .sorted(by: resultSort)
+
         var remaining = characterBudget
         var fitted: [CampusAILocalKnowledgeResult] = []
-        for result in results.prefix(maxResults) {
-            var next = result
-            let fixedCost = next.title.count + next.domain.title.count + next.sourceID.count + 32
-            let totalCost = fixedCost + next.summary.count
-            if totalCost > remaining {
-                let summaryLimit = remaining - fixedCost
-                guard summaryLimit >= 80 else { break }
-                next.summary = next.summary.clampedForAIContext(summaryLimit)
+        var selectedIDs: Set<String> = []
+
+        func appendIfPossible(_ result: CampusAILocalKnowledgeResult) {
+            guard fitted.count < maxResults,
+                  !selectedIDs.contains(result.id),
+                  let next = fittedResult(result, remaining: remaining)
+            else { return }
+            fitted.append(next.result)
+            selectedIDs.insert(result.id)
+            remaining -= next.cost
+        }
+
+        for result in domainRepresentatives {
+            appendIfPossible(result)
+        }
+        for result in results {
+            appendIfPossible(result)
+            if fitted.count >= maxResults || remaining <= 0 {
+                break
             }
-            let cost = fixedCost + next.summary.count
-            guard cost <= remaining else { break }
-            fitted.append(next)
-            remaining -= cost
         }
         return fitted
+    }
+
+    private static func fittedResult(
+        _ result: CampusAILocalKnowledgeResult,
+        remaining: Int
+    ) -> (result: CampusAILocalKnowledgeResult, cost: Int)? {
+        var next = result
+        let fixedCost = next.title.count + next.domain.title.count + next.sourceID.count + 32
+        let totalCost = fixedCost + next.summary.count
+        if totalCost > remaining {
+            let summaryLimit = remaining - fixedCost
+            guard summaryLimit >= 80 else { return nil }
+            next.summary = next.summary.clampedForAIContext(summaryLimit)
+        }
+        let cost = fixedCost + next.summary.count
+        guard cost <= remaining else { return nil }
+        return (next, cost)
+    }
+
+    private static func resultSort(
+        _ lhs: CampusAILocalKnowledgeResult,
+        _ rhs: CampusAILocalKnowledgeResult
+    ) -> Bool {
+        if lhs.score != rhs.score {
+            return lhs.score > rhs.score
+        }
+        return lhs.title < rhs.title
     }
 
     private static func queryTokens(_ value: String) -> [String] {
